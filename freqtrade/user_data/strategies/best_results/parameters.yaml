@@ -1,0 +1,2054 @@
+long_ranging:
+  - parameter: enter_long_ranging
+    param_type: BooleanParameter
+    optimize: false
+    load: false
+    default: true
+    space: buy
+    max:
+    min:
+    decimals:
+    categories:
+    group1:
+    group2:
+    group3:
+    group4:
+    group5:
+    group6: long_ranging_osc
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: set_trigger_long_ranging
+    param_type: CategoricalParameter
+    optimize: false
+    load: false
+    default: trig_rsi5_30m
+    space: buy
+    max:
+    min:
+    decimals:
+    categories:
+      - trig_rsi5_30m
+      - trig_rsi5_1h
+      - trig_rsi5_4h
+    group1: 
+    group2:
+    group3:
+    group4:
+    group5:
+    group6: long_ranging_osc
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: coin_rsi14_high_30m_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: coin_rsi14_high_1h_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: coin_rsi14_high_4h_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: coin_rsi14_high_1d_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: coin_rsi14_high_3d_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: coin_rsi14_low_30m_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: coin_rsi14_low_1h_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: coin_rsi14_low_4h_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: coin_rsi14_low_1d_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: coin_rsi14_low_3d_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: coin_mfi_high_30m_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: coin_mfi_high_1h_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: coin_mfi_high_4h_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: coin_mfi_high_1d_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: coin_mfi_high_3d_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: coin_mfi_low_30m_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: coin_mfi_low_1h_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: coin_mfi_low_4h_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: coin_mfi_low_1d_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: coin_mfi_low_3d_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: coin_uo_high_30m_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: coin_uo_high_1h_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: coin_uo_high_4h_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: coin_uo_high_1d_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: coin_uo_high_3d_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: coin_uo_low_30m_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: coin_uo_low_1h_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: coin_uo_low_4h_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: coin_uo_low_1d_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: coin_uo_low_3d_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: btc_rsi14_high_30m_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: btc_rsi14_high_1h_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: btc_rsi14_high_4h_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: btc_rsi14_high_1d_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: btc_rsi14_high_3d_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: btc_rsi14_low_30m_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: btc_rsi14_low_1h_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: btc_rsi14_low_4h_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: btc_rsi14_low_1d_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: btc_rsi14_low_3d_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: btc_mfi_high_30m_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: btc_mfi_high_1h_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: btc_mfi_high_4h_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: btc_mfi_high_1d_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: btc_mfi_high_3d_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: btc_mfi_low_30m_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: btc_mfi_low_1h_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: btc_mfi_low_4h_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: btc_mfi_low_1d_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: btc_mfi_low_3d_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: btc_uo_high_30m_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: btc_uo_high_1h_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: btc_uo_high_4h_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: btc_uo_high_1d_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: btc_uo_high_3d_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: btc_uo_low_30m_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: btc_uo_low_1h_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: btc_uo_low_4h_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: btc_uo_low_1d_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: btc_uo_low_3d_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 100
+    min: 1
+    decimals: 
+    categories: 
+    group1: 
+    group2: 
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_osc 
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: leverage_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 7
+    space: buy
+    max: 8.0
+    min: 4.0
+    decimals:
+    categories:
+    group1:
+    group2:
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_dca
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: last_dca_entry_dist_from_SL_long_ranging
+    param_type: DecimalParameter
+    optimize: false
+    load: false
+    default: 0.4
+    space: buy
+    max: 0.5
+    min: 0.1
+    decimals: 1
+    categories:
+    group1:
+    group2:
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_dca
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: max_open_trades_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 20
+    space: buy
+    max: 20.0
+    min: 3.0
+    decimals:
+    categories:
+    group1:
+    group2:
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_dca
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: set_initial_trade_size_long_ranging
+    param_type: DecimalParameter
+    optimize: false
+    load: false
+    default: 0.01
+    space: buy
+    max: 0.01
+    min: 0.003
+    decimals: 3
+    categories:
+    group1:
+    group2:
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_dca
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: set_dca_trade_size_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 4
+    space: buy
+    max: 4.0
+    min: 1.0
+    decimals:
+    categories:
+    group1:
+    group2:
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_dca
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: number_of_additional_entries_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 4
+    space: buy
+    max: 4.0
+    min: 2.0
+    decimals:
+    categories:
+    group1:
+    group2:
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_dca
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: dca_entry2_size_long_ranging
+    param_type: DecimalParameter
+    optimize: false
+    load: false
+    default: 0.9
+    space: buy
+    max: 1.0
+    min: 0.1
+    decimals: 1
+    categories:
+    group1:
+    group2:
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_dca
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: dca_entry3_size_long_ranging
+    param_type: DecimalParameter
+    optimize: false
+    load: false
+    default: 0.2
+    space: buy
+    max: 1.0
+    min: 0.1
+    decimals: 1
+    categories:
+    group1:
+    group2:
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_dca
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: dca_entry4_size_long_ranging
+    param_type: DecimalParameter
+    optimize: false
+    load: false
+    default: 0.9
+    space: buy
+    max: 1.0
+    min: 0.1
+    decimals: 1
+    categories:
+    group1:
+    group2:
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_dca
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: dca_entry5_size_long_ranging
+    param_type: DecimalParameter
+    optimize: false
+    load: false
+    default: 0.4
+    space: buy
+    max: 1.0
+    min: 0.1
+    decimals: 1
+    categories:
+    group1:
+    group2:
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_dca
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: dca_entry2_price_long_ranging
+    param_type: DecimalParameter
+    optimize: false
+    load: false
+    default: 0.3
+    space: buy
+    max: 1.0
+    min: 0.1
+    decimals: 1
+    categories:
+    group1:
+    group2:
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_dca
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: dca_entry3_price_long_ranging
+    param_type: DecimalParameter
+    optimize: false
+    load: false
+    default: 0.9
+    space: buy
+    max: 1.0
+    min: 0.1
+    decimals: 1
+    categories:
+    group1:
+    group2:
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_dca
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: dca_entry4_price_long_ranging
+    param_type: DecimalParameter
+    optimize: false
+    load: false
+    default: 0.6
+    space: buy
+    max: 1.0
+    min: 0.1
+    decimals: 1
+    categories:
+    group1:
+    group2:
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_dca
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: dca_entry5_price_long_ranging
+    param_type: DecimalParameter
+    optimize: false
+    load: false
+    default: 0.8
+    space: buy
+    max: 1.0
+    min: 0.1
+    decimals: 1
+    categories:
+    group1:
+    group2:
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_dca
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: dca_tp_tf_long_ranging
+    param_type: CategoricalParameter
+    optimize: false
+    load: false
+    default: 4h
+    space: buy
+    max:
+    min:
+    decimals:
+    categories:
+      - 30m
+      - 1h
+      - 4h
+    group1:
+    group2:
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_dca
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: number_of_tp_long_ranging
+    param_type: IntParameter
+    optimize: false
+    load: false
+    default: 5
+    space: buy
+    max: 5.0
+    min: 3.0
+    decimals:
+    categories:
+    group1:
+    group2:
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_dca
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: stoploss_long_ranging
+    param_type: DecimalParameter
+    optimize: false
+    load: false
+    default: 0.9
+    space: buy
+    max: 0.9
+    min: 0.5
+    decimals: 1
+    categories:
+    group1:
+    group2:
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_dca
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: tp1_price_long_ranging
+    param_type: DecimalParameter
+    optimize: false
+    load: false
+    default: 0.007
+    space: buy
+    max: 0.02
+    min: 0.005
+    decimals: 3
+    categories:
+    group1:
+    group2:
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_dca
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: tp2_price_long_ranging
+    param_type: DecimalParameter
+    optimize: false
+    load: false
+    default: 0.01
+    space: buy
+    max: 0.03
+    min: 0.01
+    decimals: 2
+    categories:
+    group1:
+    group2:
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_dca
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: tp3_price_long_ranging
+    param_type: DecimalParameter
+    optimize: false
+    load: false
+    default: 0.01
+    space: buy
+    max: 0.03
+    min: 0.01
+    decimals: 2
+    categories:
+    group1:
+    group2:
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_dca
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: tp4_price_long_ranging
+    param_type: DecimalParameter
+    optimize: false
+    load: false
+    default: 0.03
+    space: buy
+    max: 0.03
+    min: 0.01
+    decimals: 2
+    categories:
+    group1:
+    group2:
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_dca
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: tp5_price_long_ranging
+    param_type: DecimalParameter
+    optimize: false
+    load: false
+    default: 0.04
+    space: buy
+    max: 0.05
+    min: 0.01
+    decimals: 2
+    categories:
+    group1:
+    group2:
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_dca
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: tp1_pct_size_long_ranging
+    param_type: DecimalParameter
+    optimize: false
+    load: false
+    default: 0.6
+    space: buy
+    max: 0.7
+    min: 0.2
+    decimals: 1
+    categories:
+    group1:
+    group2:
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_dca
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: tp2_pct_size_long_ranging
+    param_type: DecimalParameter
+    optimize: false
+    load: false
+    default: 0.4
+    space: buy
+    max: 0.4
+    min: 0.1
+    decimals: 1
+    categories:
+    group1:
+    group2:
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_dca
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: tp3_pct_size_long_ranging
+    param_type: DecimalParameter
+    optimize: false
+    load: false
+    default: 0.4
+    space: buy
+    max: 0.4
+    min: 0.2
+    decimals: 1
+    categories:
+    group1:
+    group2:
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_dca
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: tp4_pct_size_long_ranging
+    param_type: DecimalParameter
+    optimize: false
+    load: false
+    default: 0.2
+    space: buy
+    max: 0.4
+    min: 0.1
+    decimals: 1
+    categories:
+    group1:
+    group2:
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_dca
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0
+  - parameter: tp5_pct_size_long_ranging
+    param_type: DecimalParameter
+    optimize: false
+    load: false
+    default: 1.0
+    space: buy
+    max: 1.0
+    min: 0.4
+    decimals: 1
+    categories:
+    group1:
+    group2:
+    group3: 
+    group4: 
+    group5:
+    group6: long_ranging_dca
+    optimize_batch_allowed: true
+    optimize_group_allowed: true
+    optimize_random_allowed: true
+    current_default_change_count: 0
+    current_optimize_count: 0
+    total_default_change_count: 0
+    total_optimize_count: 0

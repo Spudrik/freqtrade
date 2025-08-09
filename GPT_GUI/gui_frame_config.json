@@ -1,0 +1,319 @@
+{
+  "frames": [
+    {
+      "name": "mode_specific_settings",
+      "label": "Mode Specific Settings",
+      "parent": "launch_tab",
+      "row": 0,
+      "column": 1,
+      "rowspan": 1,
+      "columnspan": 2,
+      "generic": false
+    },
+    {
+      "name": "bot_start",
+      "label": "Bot Start Settings",
+      "parent": "launch_tab",
+      "row": 0,
+      "column": 0,
+      "rowspan": 1,
+      "generic": false
+    },
+    {
+      "name": "config_standard",
+      "label": "Configuration File Standard Parameters",
+      "parent": "config_tab",
+      "row": 0,
+      "column": 0,
+      "rowspan": 1,
+      "columnspan": 1,
+      "generic": true
+    },
+    {
+      "name": "entries_config",
+      "label": "Entry Parameters",
+      "parent": "config_standard",
+      "row": 0,
+      "column": 0,
+      "rowspan": 4,
+      "columnspan": 1,
+      "generic": true
+    },
+    {
+      "name": "boolean_config",
+      "label": "On/Off Parameters",
+      "parent": "config_standard",
+      "row": 4,
+      "column": 0,
+      "generic": true
+    },
+    {
+      "name": "unfilledtimeout",
+      "label": "Unfilled Timeout",
+      "parent": "config_standard",
+      "row": 0,
+      "column": 1,
+      "rowspan": 1,
+      "columnspan": 1,
+      "generic": false
+    },
+    {
+      "name": "entry_pricing",
+      "label": "Entry Pricing",
+      "parent": "config_standard",
+      "row": 1,
+      "column": 1,
+      "rowspan": 1,
+      "columnspan": 1,
+      "generic": false
+    },
+    {
+      "name": "check_depth_of_market",
+      "label": "Check Depth Of Market",
+      "parent": "entry_pricing",
+      "row": 4,
+      "column": 0,
+      "rowspan": 1,
+      "columnspan": 1,
+      "generic": false
+    },
+    {
+      "name": "exit_pricing",
+      "label": "Exit Pricing",
+      "parent": "config_standard",
+      "row": 2,
+      "column": 1,
+      "rowspan": 1,
+      "columnspan": 1,
+      "generic": false
+    },
+    {
+      "name": "order_types",
+      "label": "Order Types",
+      "parent": "config_standard",
+      "row": 0,
+      "column": 3,
+      "rowspan": 3,
+      "columnspan": 1,
+      "generic": false
+    },
+        {
+      "name": "order_time_in_force",
+      "label": "Order Time In Force",
+      "parent": "config_standard",
+      "row": 3,
+      "column": 3,
+      "rowspan": 1,
+      "columnspan": 1,
+      "generic": false
+    },
+    {
+      "name": "pairlists",
+      "label": "Pair Lists",
+      "parent": "config_standard",
+      "row": 3,
+      "column": 1,
+      "rowspan": 1,
+      "columnspan": 1,
+      "generic": false
+    },
+    {
+      "name": "freqai",
+      "label": "FreqAI Frame",
+      "parent": "ai_model_config_tab",
+      "row": 0,
+      "column": 0,
+      "rowspan": 1,
+      "generic": false
+    },
+    {
+      "name": "entries_freqai",
+      "label": "FreqAI Parameters (Entry)",
+      "parent": "freqai",
+      "row": 0,
+      "column": 0,
+      "rowspan": 1,
+      "columnspan": 1,
+      "generic": true
+    },
+    {
+      "name": "boolean_freqai",
+      "label": "FreqAI Parameters (Boolean)",
+      "parent": "freqai",
+      "row": 1,
+      "column": 0,
+      "rowspan": 1,
+      "columnspan": 1,
+      "generic": true
+    },
+    {
+      "name": "data_split_parameters",
+      "label": "Data Split Parameters",
+      "parent": "freqai",
+      "row": 1,
+      "column": 1,
+      "rowspan": 1,
+      "columnspan": 1,
+      "generic": false
+    },
+    {
+      "name": "feature_parameters",
+      "label": "AI Feature Parameters",
+      "parent": "freqai",
+      "row": 0,
+      "column": 1,
+      "rowspan": 1,
+      "columnspan": 1,
+      "generic": false
+    },
+    {
+      "name": "entries_freqai_features",
+      "label": "Entry Feature Parameters",
+      "parent": "feature_parameters",
+      "row": 0,
+      "column": 1,
+      "rowspan": 1,
+      "columnspan": 1,
+      "generic": true
+    },
+    {
+      "name": "boolean_freqai_features",
+      "label": "On/Off Feature Parameters",
+      "parent": "feature_parameters",
+      "row": 1,
+      "column": 1,
+      "rowspan": 1,
+      "columnspan": 1,
+      "generic": true
+    },
+    {
+      "name": "extra_returns_per_train",
+      "label": "Extra Returns Per Train",
+      "parent": "feature_parameters",
+      "row": 2,
+      "column": 1,
+      "rowspan": 1,
+      "columnspan": 1,
+      "generic": true
+    },
+    {
+      "name": "model_training_parameters",
+      "label": "Model Training Parameters",
+      "parent": "freqai",
+      "row": 0,
+      "column": 2,
+      "rowspan": 1,
+      "columnspan": 1,
+      "generic": false
+    },
+    {
+      "name": "xgboost",
+      "label": "XGBoost Tree Parameters",
+      "parent": "model_training_parameters",
+      "row": 0,
+      "column": 0,
+      "rowspan": 1,
+      "columnspan": 1,
+      "generic": true
+    },
+    {
+      "name": "xgboost_options",
+      "label": "XGBoost Tree Option Params",
+      "parent": "xgboost",
+      "row": 0,
+      "column": 0,
+      "rowspan": 1,
+      "columnspan": 1,
+      "generic": true
+    },
+    {
+      "name": "xgboost_entries",
+      "label": "XGBoost Tree Entry Params",
+      "parent": "xgboost",
+      "row": 1,
+      "column": 0,
+      "rowspan": 1,
+      "columnspan": 1,
+      "generic": true
+    },
+    {
+      "name": "catboost",
+      "label": "Catboost Parameters",
+      "parent": "model_training_parameters",
+      "row": 0,
+      "column": 1,
+      "rowspan": 1,
+      "columnspan": 1,
+      "generic": true
+    },
+    {
+      "name": "hyperopt",
+      "label": "Hyperopt",
+      "parent": "mode_specific_settings",
+      "row": 0,
+      "column": 0,
+      "generic": false
+    },
+    {
+      "name": "trade",
+      "label": "Trade",
+      "parent": "mode_specific_settings",
+      "row": 0,
+      "column": 1,
+      "generic": false
+    },
+    {
+      "name": "download-data",
+      "label": "Download",
+      "parent": "mode_specific_settings",
+      "row": 2,
+      "column": 0,
+      "generic": false
+    },
+    {
+      "name": "plot",
+      "label": "Plot",
+      "parent": "mode_specific_settings",
+      "row": 1,
+      "column": 0,
+      "generic": false
+    },
+    {
+      "name": "backtest",
+      "label": "Backtest",
+      "parent": "mode_specific_settings",
+      "row": 1,
+      "column": 1,
+      "generic": false
+    },
+    {
+      "name": "exchange",
+      "label": "Exchange",
+      "parent": "config_tab",
+      "row": 0,
+      "column": 4,
+      "rowspan": 1,
+      "columnspan": 1,
+      "generic": false
+    },
+    {
+      "name": "entries_exchange",
+      "label": "Entry Exchange Parameters",
+      "parent": "exchange",
+      "row": 0,
+      "column": 0,
+      "rowspan": 2,
+      "columnspan": 1,
+      "generic": true
+    },
+    {
+      "name": "boolean_exchange",
+      "label": "On/Off Exchange Parameters",
+      "parent": "exchange",
+      "row": 2,
+      "column": 0,
+      "generic": true
+    }
+  ]
+}
+

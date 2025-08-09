@@ -1,0 +1,135 @@
+{
+    "stake_currency": "USDT",
+    "stake_amount": "unlimited",
+    "tradable_balance_ratio": 0.9,
+    "available_capital": 3600.0,
+    "last_stake_amount_min_ratio": 0.5,
+    "amount_reserve_percent": 0.05,
+    "fiat_display_currency": "USD",
+    "dry_run_wallet": 3600.0,
+    "margin_mode": "isolated",
+    "trading_mode": "futures",
+    "unfilledtimeout": {
+        "entry": 10,
+        "exit": 10,
+        "exit_timeout_count": 0,
+        "unit": "minutes"
+    },
+    "entry_pricing": {
+        "price_side": "other",
+        "price_last_balance": 1.0,
+        "order_book_top": 1,
+        "check_depth_of_market": {
+            "bids_to_ask_delta": 1.0,
+            "enabled": true
+        },
+        "use_order_book": true
+    },
+    "exit_pricing": {
+        "price_side": "other",
+        "price_last_balance": 1.0,
+        "order_book_top": 1,
+        "use_order_book": true
+    },
+    "order_types": {
+        "entry": "limit",
+        "exit": "limit",
+        "emergency_exit": "market",
+        "force_exit": "market",
+        "force_entry": "market",
+        "stoploss": "market",
+        "stoploss_price_type": "last",
+        "stoploss_on_exchange_interval": 60,
+        "stoploss_on_exchange_limit_ratio": 0.99,
+        "stoploss_on_exchange": false
+    },
+    "exchange": {
+        "name": "binance",
+        "sandbox": false,
+        "skip_pair_validation": true,
+        "skip_open_order_update": true,
+        "log_responses": true,
+        "block_bad_exchanges": false,
+        "pair_whitelist": [
+            "ADA/USDT:USDT",
+            "SOL/USDT:USDT",
+            "ETH/USDT:USDT",
+            "DOGE/USDT:USDT",
+            "BTC/USDT:USDT",
+            "ALGO/USDT:USDT",
+            "ATOM/USDT:USDT",
+            "BAT/USDT:USDT",
+            "BCH/USDT:USDT",
+            "EOS/USDT:USDT",
+            "IOTA/USDT:USDT",
+            "LINK/USDT:USDT",
+            "LTC/USDT:USDT",
+            "NEO/USDT:USDT",
+            "XMR/USDT:USDT",
+            "XRP/USDT:USDT"
+        ],
+        "pair_blacklist": []
+    },
+    "freqai": {
+        "train_period_days": 30,
+        "backtest_period_days": 10,
+        "live_retrain_hours": 0,
+        "identifier": "basicai1",
+        "purge_old_models": true,
+        "fit_live_predictions_candles": 600,
+        "data_kitchen_thread_count": 12,
+        "feature_parameters": {
+            "include_shifted_candles": 2,
+            "di_threshold": 0.95,
+            "label_period_candles": 100,
+            "weight_factor": 1.0,
+            "plot_feature_importances": 0,
+            "inlier_metric_window": 0,
+            "noise_standard_deviation": 0.02,
+            "buffer_train_data_candles": 400,
+            "principal_component_analysis": false,
+            "use_SVM_to_remove_outliers": false,
+            "use_DBSCAN_to_remove_outliers": false,
+            "reverse_test_train_order": false,
+            "include_corr_pairlist": [
+                "ADA/USDT:USDT",
+                "BTC/USDT:USDT"
+            ],
+            "include_timeframes": [
+                "15m",
+                "1h",
+                "1d"
+            ],
+            "indicator_periods_candles": [
+                4,
+                8,
+                16,
+                32
+            ]
+        },
+        "data_split_parameters": {
+            "test_size": 0.3,
+            "random_state": 1
+        },
+        "enabled": false,
+        "save_backtest_models": true,
+        "continual_learning": true,
+        "track_performance": true,
+        "write_metrics_to_disk": true
+    },
+    "amend_last_stake_amount": true,
+    "dry_run": true,
+    "cancel_open_orders_on_exit": true,
+    "process_only_new_candles": true,
+    "trailing_stop": false,
+    "trailing_only_offset_is_reached": false,
+    "order_time_in_force": {
+        "entry": "GTC",
+        "exit": "GTC"
+    },
+    "pairlists": [
+        {
+            "method": "StaticPairList"
+        }
+    ]
+}
