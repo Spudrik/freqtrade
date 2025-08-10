@@ -41,10 +41,10 @@ def run_hyperopt(job_workers, debug):
     # Prepare the list of CLI arguments
     cli_args = [
         "hyperopt",
-        "--strategy-path", r"C:\FreqTradeStuff\freqtrade\freqtrade\user_data\strategies",
+        "--strategy-path", r"C:\FreqTradeStuff\freqtrade\user_data\strategies",
         "--timerange", timerange,
         "--strategy", "BasicStrategy",
-        "--config", r"C:\FreqTradeStuff\freqtrade\freqtrade\user_data\configs\gui_generated.json",
+        "--config", r"C:\FreqTradeStuff\freqtrade\user_data\configs\gui_generated.json",
         "--config", r"C:\Users\engin\OneDrive\Desktop\config_private.json",
         "--epoch", "2",
         "--pairs",
