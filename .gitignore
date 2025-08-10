@@ -9,6 +9,11 @@ user_data/*
 !user_data/notebooks
 !user_data/models
 !user_data/freqaimodels
+!user_data/strategies
+!user_data/strategies/**
+!user_data/tests
+!user_data/tests/**
+!user_data/__init__.py
 user_data/freqaimodels/*
 user_data/models/*
 user_data/notebooks/*
