@@ -9,6 +9,9 @@ user_data/*
 !user_data/notebooks
 !user_data/models
 !user_data/freqaimodels
+!user_data/strategies/
+!user_data/strategies/mixins/
+!user_data/strategies/mixins/position_adjust_mixin.py
 user_data/freqaimodels/*
 user_data/models/*
 user_data/notebooks/*
