@@ -23,17 +23,20 @@ def load_pairs_from_file(filepath):
 
 def run_hyperopt(job_workers, debug):
     # Load pairs from the JSON file
-    pairs_file_path = r"C:\FreqTradeStuff\freqtrade\user_data\data\binance\pairs_volatile.json"
-    pairs = load_pairs_from_file(pairs_file_path)
+    # pairs_file_path = r"C:\FreqTradeStuff\freqtrade\user_data\data\binance\pairs_volatile.json"
+    # restore pair loading from file by uncmenting line below.
+    # pairs = load_pairs_from_file(pairs_file_path)
+    pairs = [
+                "PEPE/USDT:USDT",
+                "WIF/USDT:USDT",
+                                 ]
     timerange = "20230101-20240105"
 
 
     if debug == 1:
         pairs = [
-            "BTC/USDT:USDT",
-            "ETH/USDT:USDT",
-            "ADA/USDT:USDT",
-            "CELR/USDT:USDT",
+                "PEPE/USDT:USDT",
+                "WIF/USDT:USDT",
                  ]
         timerange = "20230101-20230601"
 
@@ -43,7 +46,7 @@ def run_hyperopt(job_workers, debug):
         "hyperopt",
         "--strategy-path", r"C:\FreqTradeStuff\freqtrade\user_data\strategies",
         "--timerange", timerange,
-        "--strategy", "BasicStrategy",
+        "--strategy", "MyStrategy",
         "--config", r"C:\FreqTradeStuff\freqtrade\user_data\configs\gui_generated.json",
         "--config", r"C:\Users\engin\OneDrive\Desktop\config_private.json",
         "--epoch", "2",

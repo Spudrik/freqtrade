@@ -86,11 +86,14 @@ def apply_indicators(self, dataframe, pair_tf, target_btc=False, full_set=0):
     dataframe.loc[qtpylib.crossed_below(rsi5, rsi5.shift(1)), 'trig_rsi5_bear'] = True
 
 
-    for window in self.rsi_common.opt_range:
+    # RSI values for price
+    for window in [3, 7, 14]:
         dataframe[f'rsi_{window}'] = ta.RSI(dataframe, timeperiod=window)
-    # Used for volume guards analysis
-    for window in self.rsi_common.opt_range:
+
+    # RSI values for volume (used for volume guards analysis)
+    for window in [3, 7, 14]:
         dataframe[f"rsi_vol_{window}"] = ta.RSI(dataframe['volume'], timeperiod=window)
+
 
     #  # Use moving averages to set market conditions
     support_resistance_bands(self, dataframe)

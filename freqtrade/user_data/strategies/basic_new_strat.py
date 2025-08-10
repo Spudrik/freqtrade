@@ -88,8 +88,8 @@ class MyStrategy(HyperoptParamsMixin, IStrategy):
 
     class HyperOpt:
         # Define a custom stoploss space.
-        def stoploss_space() -> List[SKDecimal]:
-            return [SKDecimal(-0.9, -0.5, decimals=1, name='stoploss')]
+        # def stoploss_space() -> List[SKDecimal]:
+        #     return [SKDecimal(-0.9, -0.5, decimals=1, name='stoploss')]
 
         def generate_estimator(dimensions: List['Dimension'], **kwargs):
 
@@ -157,13 +157,10 @@ class MyStrategy(HyperoptParamsMixin, IStrategy):
     compatible_intervals = define_info_intervals(timeframe, coin_pair_intervals)
     coin_pairs_used_with_tf = []
 
-
-
     # Can this strategy go short?
     can_short: bool = True
 
     stoploss = -0.9
-
 
     # Enable position adjustment for Grid Bots and DCA
     position_adjustment_enable = True
