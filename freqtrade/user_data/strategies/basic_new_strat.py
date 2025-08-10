@@ -4,7 +4,7 @@
 # --- Do not remove these libs ---
 import logging
 import time
-
+from .hyperparams_mixin import HyperoptParamsMixin  # if in same package
 import numpy as np  # noqa
 import pandas as pd  # noqa
 import os
@@ -73,82 +73,11 @@ BG_WHITE = "\033[47m"
 # Reset color
 RESET = "\033[0m"
 
-class BasicStrategy(IStrategy):
-
-    # Path to your YAML file
-    yaml_file_path = os.path.join(os.path.dirname(__file__), 'hyperopt_tracking_results.yaml')
-
+class MyStrategy(HyperoptParamsMixin, IStrategy):
     def __init__(self, config):
         super().__init__(config)
         self.load_parameters_from_yaml()
 
-    def load_parameters_from_yaml(self):
-        yaml_loader = YAML()
-
-        with open(self.yaml_file_path, 'r', encoding='utf-8') as file:
-            grouped_params = yaml_loader.load(file) or {}
-
-        for group, params in grouped_params.items():
-            for param in params:
-                param_name = param['parameter']
-                param_type = param['param_type']
-                optimize = param['optimize']
-                space = param['space']  # Directly load from YAML
-                load = param['load'] # Directly load from YAML
-
-                if param_type == 'CategoricalParameter':
-                    categories = param['categories']
-                    default = param['default']
-
-                    setattr(self, param_name, CategoricalParameter(
-                        categories=categories,
-                        default=default,
-                        space=space,
-                        optimize=optimize,
-                        load=load
-                    ))
-
-                elif param_type == 'BooleanParameter':
-                    default = param['default']
-
-                    setattr(self, param_name, BooleanParameter(
-                        default=default,
-                        space=space,
-                        optimize=optimize,
-                        load=load
-                    ))
-
-                elif param_type == 'IntParameter':
-                    min_val = param['min']
-                    max_val = param['max']
-                    default = param['default']
-
-                    setattr(self, param_name, IntParameter(
-                        low=min_val,
-                        high=max_val,
-                        default=default,
-                        load=load,
-                        space=space,
-                        optimize=optimize
-                    ))
-
-                elif param_type == 'DecimalParameter':
-                    min_val = param['min']
-                    max_val = param['max']
-                    decimals = param['decimals']
-                    default = param['default']
-
-                    setattr(self, param_name, DecimalParameter(
-                        low=min_val,
-                        high=max_val,
-                        default=default,
-                        decimals=decimals,
-                        space=space,
-                        load=load,
-                        optimize=optimize
-                    ))
-
-        logger.info(f"{BLUE}Parameters loaded from YAML.{RED}")
     # Strategy interface version - allow new iterations of the strategy interface.
     # Check the documentation or the Sample strategy to get the latest version.
     INTERFACE_VERSION = 3
