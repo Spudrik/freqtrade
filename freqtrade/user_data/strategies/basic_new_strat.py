@@ -4,7 +4,7 @@
 # --- Do not remove these libs ---
 import logging
 import time
-from .hyperparams_mixin import HyperoptParamsMixin  # if in same package
+from freqtrade.user_data.strategies.hyperparams_mixin import HyperoptParamsMixin
 import numpy as np  # noqa
 import pandas as pd  # noqa
 import os
@@ -37,15 +37,19 @@ from freqtrade.strategy import (
     merge_informative_pair,
     stoploss_from_absolute,
     stoploss_from_open,
-) # noqaimport os
+)  # noqaimport os
 
 
-from freqtrade.user_data.strategies.helper_functions import define_info_intervals, save_dca_trade_data
+from freqtrade.user_data.strategies.helper_functions import (
+    define_info_intervals,
+    save_dca_trade_data,
+)
 from freqtrade.user_data.strategies.apply_indicators import apply_indicators
 from freqtrade.optimize.space import Categorical, Dimension, Integer, SKDecimal
 
 # Turns off the fragmented dataframe warning.
 from warnings import simplefilter
+
 simplefilter(action="ignore", category=pd.errors.PerformanceWarning)
 logger = logging.getLogger(__name__)
 
@@ -73,6 +77,7 @@ BG_WHITE = "\033[47m"
 # Reset color
 RESET = "\033[0m"
 
+
 class MyStrategy(HyperoptParamsMixin, IStrategy):
     def __init__(self, config):
         super().__init__(config)
@@ -91,12 +96,12 @@ class MyStrategy(HyperoptParamsMixin, IStrategy):
         # def stoploss_space() -> List[SKDecimal]:
         #     return [SKDecimal(-0.9, -0.5, decimals=1, name='stoploss')]
 
-        def generate_estimator(dimensions: List['Dimension'], **kwargs):
-
+        def generate_estimator(dimensions: List["Dimension"], **kwargs):
             from skopt.learning import ExtraTreesRegressor
+
             # Corresponds to "ET" - but allows additional parameters.
             return ExtraTreesRegressor(
-                n_estimators=200,              # Increased number of trees to capture more patterns and interactions
+                n_estimators=200,  # Increased number of trees to capture more patterns and interactions
                 # criterion='squared_error',      # Using default criterion for regression
                 # # max_depth=None,               # Default Value
                 # max_depth=10,                   # Limit tree depth to prevent overfitting while capturing complex patterns
@@ -121,13 +126,14 @@ class MyStrategy(HyperoptParamsMixin, IStrategy):
 
         """
         n_estimators: This decides how many individual "decision-maker" trees we want in our model. Think of each
-         tree as a separate person giving an opinion. More trees (higher n_estimators) mean the model can combine more 
-         opinions, making its overall prediction stronger and more accurate, as it smooths out mistakes any single 
-         tree might make. However, having more trees also means the model takes longer to train because it has to 
+         tree as a separate person giving an opinion. More trees (higher n_estimators) mean the model can combine more
+         opinions, making its overall prediction stronger and more accurate, as it smooths out mistakes any single
+         tree might make. However, having more trees also means the model takes longer to train because it has to
          ask more "people" before making a decision. This differs from the n_initial_points in freqtrade.hyperopt file.
          n_initial_points controls the number of random params before we start the optimizer.
          so even with 1000 estimators, and 50 epochs we would still get consensus about those 50 tests results from 1000 different perspectives
          """
+
     ########################## Track Open Trades Manually ###########################
 
     trade_data = pd.DataFrame()
@@ -135,22 +141,22 @@ class MyStrategy(HyperoptParamsMixin, IStrategy):
     ################################ timeframe settings ##################################
 
     # Defines base timeframe of the code
-    timeframe = '30m'
+    timeframe = "30m"
     # Due to the ability to change self.timeframe through various methods which affects the populate
     # indicator section. We use self.candle to determine what the current candle actually is. This allows
     # for quicker modifications to the base tf when switching between plotting, backtesting, debugging etc.
     candle = timeframe
 
     coin_pair_intervals = [
-        '1w',
-        '3d',
-        '1d',
+        "1w",
+        "3d",
+        "1d",
         # '12h',
         # '8h',
-        '4h',
+        "4h",
         # '2h',
-        '1h',
-        '30m',
+        "1h",
+        "30m",
         # '15m',
         # '5m',
     ]
@@ -167,9 +173,7 @@ class MyStrategy(HyperoptParamsMixin, IStrategy):
 
     # Minimal ROI designed for the strategy.
     # This attribute will be overridden if the config file contains "minimal_roi".
-    minimal_roi = {
-        "0": 4
-    }
+    minimal_roi = {"0": 4}
     # Stoploss is multiplied by leverage. So lev 20x, with SL @ 0.5 would stop at -2.5% from entry price.
     # SL does not update for DCA safety orders. It's absolute from the entry.
     use_custom_stoploss = True
@@ -192,11 +196,11 @@ class MyStrategy(HyperoptParamsMixin, IStrategy):
         # get access to all pairs available in whitelist.
         pairs = self.dp.current_whitelist()
         # Assign tf to each pair, so they can be downloaded and cached for strategy.
-        informative_pairs = [(pair, '1h') for pair in pairs]
-        informative_pairs += ((pair, '4h') for pair in pairs)
-        informative_pairs += ((pair, '1d') for pair in pairs)
-        informative_pairs += ((pair, '3d') for pair in pairs)
-        #informative_pairs += ((pair, '1w') for pair in pairs)
+        informative_pairs = [(pair, "1h") for pair in pairs]
+        informative_pairs += ((pair, "4h") for pair in pairs)
+        informative_pairs += ((pair, "1d") for pair in pairs)
+        informative_pairs += ((pair, "3d") for pair in pairs)
+        # informative_pairs += ((pair, '1w') for pair in pairs)
 
         return informative_pairs
 
@@ -205,13 +209,13 @@ class MyStrategy(HyperoptParamsMixin, IStrategy):
         # filter out symbols Like ' and [
         input_string = f"{[metadata['pair']]}"
         # Check if target is BTC to help apply indicators decide whether or not to append a timeframe/coinpair data to end of df column names
-        if metadata['pair'] == 'BTC/USDT:USDT':
+        if metadata["pair"] == "BTC/USDT:USDT":
             target_btc = True
         else:
             target_btc = False
-        cleaned_string = input_string.replace('[', '').replace(']', '').replace("'", "")
+        cleaned_string = input_string.replace("[", "").replace("]", "").replace("'", "")
         # Remove the /usdt:usdt part
-        cleaned_string = re.sub(r'/usdt:usdt', '', cleaned_string, flags=re.IGNORECASE)
+        cleaned_string = re.sub(r"/usdt:usdt", "", cleaned_string, flags=re.IGNORECASE)
         default_tf = f"{cleaned_string}_{self.timeframe}"
 
         apply_indicators(self, dataframe, pair_tf=default_tf, target_btc=target_btc, full_set=1)
@@ -222,14 +226,15 @@ class MyStrategy(HyperoptParamsMixin, IStrategy):
             return dataframe
 
         # If the coin being checked is BTC then we need to avoid appending BTC twice.
-        if metadata['pair'] == 'BTC/USDT:USDT':
-            coin_pairs = [metadata['pair'],
-                          ]
+        if metadata["pair"] == "BTC/USDT:USDT":
+            coin_pairs = [
+                metadata["pair"],
+            ]
         else:
-            coin_pairs = [metadata['pair'], 'BTC/USDT:USDT']
+            coin_pairs = [metadata["pair"], "BTC/USDT:USDT"]
 
         # Define the list of informative timeframes you are interested in
-        informative_timeframes = ['3d', '1d', '4h', '1h', '30m']
+        informative_timeframes = ["3d", "1d", "4h", "1h", "30m"]
 
         # Re-assign dataframe to base_dataframe to avoid informative and dataframe overlap errors when pasting functions.
         base_dataframe = dataframe.copy()
@@ -240,23 +245,26 @@ class MyStrategy(HyperoptParamsMixin, IStrategy):
 
                 dataframe = self.dp.get_pair_dataframe(pair=pair, timeframe=inf_tf)
                 # skip btc if the inf_tf matches the strategy timeframe, otherwise we end up with auto named columns with x/y at the end to differentiate them.
-                if metadata['pair'] == "BTC/USDT:USDT" and inf_tf == self.timeframe:
+                if metadata["pair"] == "BTC/USDT:USDT" and inf_tf == self.timeframe:
                     continue
                 # Check if the informative DataFrame is emptY
                 if dataframe.empty:
-                    print(f"Warning: No data available for pair {pair} in timeframe {inf_tf}. Exiting loop.")
+                    print(
+                        f"Warning: No data available for pair {pair} in timeframe {inf_tf}. Exiting loop."
+                    )
                     break  # This will only break out of the inner loop (btc_and_target_pair loop)
                 else:
-
                     ##################### END OF MY INFORMATIVE INDICATORS ##############################
-                    pair_tf = f'{pair}_{inf_tf}'
+                    pair_tf = f"{pair}_{inf_tf}"
                     # filter out symbols Like ' and [
                     input_string = pair_tf
-                    cleaned_string = input_string.replace('[', '').replace(']', '').replace("'", "")
+                    cleaned_string = input_string.replace("[", "").replace("]", "").replace("'", "")
                     # Remove the /usdt:usdt part
-                    cleaned_string = re.sub(r'/usdt:usdt', '', cleaned_string, flags=re.IGNORECASE)
+                    cleaned_string = re.sub(r"/usdt:usdt", "", cleaned_string, flags=re.IGNORECASE)
 
-                    apply_indicators(self, dataframe, pair_tf=cleaned_string, target_btc=False, full_set=1)
+                    apply_indicators(
+                        self, dataframe, pair_tf=cleaned_string, target_btc=False, full_set=1
+                    )
 
                     ##################### END OF MY INFORMATIVE INDICATORS ##############################
 
@@ -264,19 +272,23 @@ class MyStrategy(HyperoptParamsMixin, IStrategy):
                     # The function is expected to rename columns to prevent conflicts and forward fill data
                     # Note use append tf false and use custom suffix to resolve column naming issues from old system
                     # Remove "/USDT:USDT" from the pair string
-                    cleaned_pair = pair.replace('/USDT:USDT', '')
+                    cleaned_pair = pair.replace("/USDT:USDT", "")
 
-                    base_dataframe = merge_informative_pair(base_dataframe, dataframe, self.timeframe, inf_tf,
-                                                            append_timeframe=False,
-                                                            suffix=f"{cleaned_pair}_{inf_tf}", ffill=True)
-
-
+                    base_dataframe = merge_informative_pair(
+                        base_dataframe,
+                        dataframe,
+                        self.timeframe,
+                        inf_tf,
+                        append_timeframe=False,
+                        suffix=f"{cleaned_pair}_{inf_tf}",
+                        ffill=True,
+                    )
 
         return base_dataframe
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        pair = metadata['pair']
-        pair = pair.replace('/USDT:USDT', '')
+        pair = metadata["pair"]
+        pair = pair.replace("/USDT:USDT", "")
         coin1w = f"{pair}_1w"
         coin3d = f"{pair}_3d"
         coin1d = f"{pair}_1d"
@@ -298,14 +310,8 @@ class MyStrategy(HyperoptParamsMixin, IStrategy):
         enter_short_ranging_conditions = []
 
         # Ranging conditions loop
-        indicators = ['rsi_14', 'mfi', 'uo']
-        timeframes = {
-            "30m": coin30m,
-            "1h": coin1h,
-            "4h": coin4h,
-            "1d": coin1d,
-            "3d": coin3d
-        }
+        indicators = ["rsi_14", "mfi", "uo"]
+        timeframes = {"30m": coin30m, "1h": coin1h, "4h": coin4h, "1d": coin1d, "3d": coin3d}
 
         # ----------------------------
         # Handle Enter Long Ranging
@@ -493,8 +499,10 @@ class MyStrategy(HyperoptParamsMixin, IStrategy):
 
             # Trigger Conditions for Long Ranging (Low Reversals)
             tf_trigger_long = self.set_trigger_long_ranging.value
-            period_trigger_long = self.set_trigger_period_long_ranging.value  # Assuming there's a period trigger for long
-            current_rsi_long = dataframe[f'rsi_{period_trigger_long}_{pair}_{tf_trigger_long}']
+            period_trigger_long = (
+                self.set_trigger_period_long_ranging.value
+            )  # Assuming there's a period trigger for long
+            current_rsi_long = dataframe[f"rsi_{period_trigger_long}_{pair}_{tf_trigger_long}"]
 
             # Condition 1: Current RSI >= Previous RSI
             condition_current_long = current_rsi_long >= current_rsi_long.shift(1)
@@ -512,8 +520,13 @@ class MyStrategy(HyperoptParamsMixin, IStrategy):
 
             # Combine all conditions using logical AND
             if enter_long_ranging_conditions:
-                combined_long_ranging_condition = reduce(lambda x, y: x & y, enter_long_ranging_conditions)
-                dataframe.loc[combined_long_ranging_condition, ["enter_long", "enter_tag"]] = (1, "long_ranging")
+                combined_long_ranging_condition = reduce(
+                    lambda x, y: x & y, enter_long_ranging_conditions
+                )
+                dataframe.loc[combined_long_ranging_condition, ["enter_long", "enter_tag"]] = (
+                    1,
+                    "long_ranging",
+                )
 
         # -----------------------------
         # Handle Enter Short Ranging
@@ -702,7 +715,7 @@ class MyStrategy(HyperoptParamsMixin, IStrategy):
             # Trigger Conditions for Short Ranging
             tf_trigger_short = self.set_trigger_tf_short_ranging.value
             period_trigger_short = self.set_trigger_period_short_ranging.value
-            current_rsi_short = dataframe[f'rsi_{period_trigger_short}_{pair}_{tf_trigger_short}']
+            current_rsi_short = dataframe[f"rsi_{period_trigger_short}_{pair}_{tf_trigger_short}"]
 
             # Condition 1: Current RSI <= Previous RSI
             condition_current_short = current_rsi_short <= current_rsi_short.shift(1)
@@ -720,8 +733,13 @@ class MyStrategy(HyperoptParamsMixin, IStrategy):
 
             # Combine all conditions using logical AND
             if enter_short_ranging_conditions:
-                combined_short_ranging_condition = reduce(lambda x, y: x & y, enter_short_ranging_conditions)
-                dataframe.loc[combined_short_ranging_condition, ["enter_short", "enter_tag"]] = (1, "short_ranging")
+                combined_short_ranging_condition = reduce(
+                    lambda x, y: x & y, enter_short_ranging_conditions
+                )
+                dataframe.loc[combined_short_ranging_condition, ["enter_short", "enter_tag"]] = (
+                    1,
+                    "short_ranging",
+                )
 
         # # master flag for enabling bull conditions. repeated at the final enter long check
         # # if True:
@@ -1461,15 +1479,12 @@ class MyStrategy(HyperoptParamsMixin, IStrategy):
         #         ["enter_short", "enter_tag"]
         #     ] = (1, "bear")
 
-
-
         return dataframe
 
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-
         dataframe = dataframe
-        pair = metadata['pair']
-        pair = pair.replace('/USDT:USDT', '')
+        pair = metadata["pair"]
+        pair = pair.replace("/USDT:USDT", "")
         coin1w = f"{pair}_1w"
         coin1d = f"{pair}_1d"
         coin4h = f"{pair}_4h"
@@ -1481,9 +1496,17 @@ class MyStrategy(HyperoptParamsMixin, IStrategy):
 
         return dataframe
 
-    def leverage(self, pair: str, current_time: datetime, current_rate: float,
-                 proposed_leverage: float, max_leverage: float, entry_tag: Optional[str], side: str,
-                 **kwargs) -> float:
+    def leverage(
+        self,
+        pair: str,
+        current_time: datetime,
+        current_rate: float,
+        proposed_leverage: float,
+        max_leverage: float,
+        entry_tag: Optional[str],
+        side: str,
+        **kwargs,
+    ) -> float:
         """
         Customize leverage for each new trade. This method is only called in futures mode.
 
@@ -1496,7 +1519,7 @@ class MyStrategy(HyperoptParamsMixin, IStrategy):
         :param side: "long" or "short" - indicating the direction of the proposed trade
         :return: A leverage amount, which is between 1.0 and max_leverage.
         """
-        # Get dataframe and current candle data incase we want to analyse anything from it
+        # Get dataframe and current candle data in case we want to analyse anything from it
         dataframe, _ = self.dp.get_analyzed_dataframe(pair=pair, timeframe=self.timeframe)
         current_candle = dataframe.iloc[-1].squeeze()
         current_candle_index = dataframe.index[-1]
@@ -1507,10 +1530,19 @@ class MyStrategy(HyperoptParamsMixin, IStrategy):
         return leverage_return
 
     # This is called when placing the initial order (opening trade)
-    def custom_stake_amount(self, pair: str, current_time: datetime, current_rate: float,
-                            proposed_stake: float, min_stake: Optional[float], max_stake: float,
-                            leverage: float, entry_tag: Optional[str], side: str,
-                            **kwargs) -> float:
+    def custom_stake_amount(
+        self,
+        pair: str,
+        current_time: datetime,
+        current_rate: float,
+        proposed_stake: float,
+        min_stake: Optional[float],
+        max_stake: float,
+        leverage: float,
+        entry_tag: Optional[str],
+        side: str,
+        **kwargs,
+    ) -> float:
         """
         Determines the custom stake amount for a trade.
 
@@ -1539,11 +1571,12 @@ class MyStrategy(HyperoptParamsMixin, IStrategy):
 
         try:
             # Filter trades with entries >= 1 and exits < 1
-            if hasattr(Trade, 'trades_open'):
+            if hasattr(Trade, "trades_open"):
                 # Relevant trades are defined as those trades that have not yet been successfully placed but
                 # have not yet hit a TP level which would protect them from ever going negative.
                 relevant_trades = [
-                    t for t in Trade.trades_open
+                    t
+                    for t in Trade.trades_open
                     if t.nr_of_successful_entries >= 1 and t.nr_of_successful_exits < 1
                 ]
 
@@ -1575,21 +1608,19 @@ class MyStrategy(HyperoptParamsMixin, IStrategy):
             logger.error(f"Error in custom_entry: {e}")
             return None  # Prevent entering a new trade in case of error
 
-
-
     def adjust_trade_position(
-            self,
-            trade: Trade,
-            current_time: datetime,
-            current_rate: float,
-            current_profit: float,
-            min_stake: Optional[float],
-            max_stake: float,
-            current_entry_rate: float,
-            current_exit_rate: float,
-            current_entry_profit: float,
-            current_exit_profit: float,
-            **kwargs
+        self,
+        trade: Trade,
+        current_time: datetime,
+        current_rate: float,
+        current_profit: float,
+        min_stake: Optional[float],
+        max_stake: float,
+        current_entry_rate: float,
+        current_exit_rate: float,
+        current_entry_profit: float,
+        current_exit_profit: float,
+        **kwargs,
     ) -> Union[Optional[float], Tuple[Optional[float], Optional[str]]]:
         """
         Adjusts the trade position by evaluating current trade conditions and determining
@@ -1605,17 +1636,24 @@ class MyStrategy(HyperoptParamsMixin, IStrategy):
         try:
             # Retrieve Dynamic Parameters
             entry_tag: str = trade.enter_tag
-            number_of_dca_entries: int = getattr(self, f"number_of_additional_entries_{entry_tag}").value
+            number_of_dca_entries: int = getattr(
+                self, f"number_of_additional_entries_{entry_tag}"
+            ).value
             number_of_tp: int = getattr(self, f"number_of_tp_{entry_tag}").value
-            leverage: int = getattr(self, f"leverage_{entry_tag}").value * 3  # Adjusted for granularity
+            leverage: int = (
+                getattr(self, f"leverage_{entry_tag}").value * 3
+            )  # Adjusted for granularity
 
             # Early Exit Conditions to limit run time.
-            if ((
-                    (not trade.is_open)     # If trade is not open, no action to be taken
-                    or trade.has_open_orders    # If orders are already open we should let them finish
-                    or trade.nr_of_successful_entries < 1   # No entry has been placed so no action can be taken
-                    or trade.nr_of_successful_exits >= number_of_tp) # We have reach max adjust position logic
-                    or current_profit == 0 # No action can be taken if profit is 0
+            if (
+                (
+                    (not trade.is_open)  # If trade is not open, no action to be taken
+                    or trade.has_open_orders  # If orders are already open we should let them finish
+                    or trade.nr_of_successful_entries
+                    < 1  # No entry has been placed so no action can be taken
+                    or trade.nr_of_successful_exits >= number_of_tp
+                )  # We have reach max adjust position logic
+                or current_profit == 0  # No action can be taken if profit is 0
             ):
                 return None
 
@@ -1624,7 +1662,7 @@ class MyStrategy(HyperoptParamsMixin, IStrategy):
             # if direction == 1:
             #     print(f"Long trade detected for {trade.pair}.")
             # Abbreviate Pair Name
-            pair: str = trade.pair.replace('/USDT:USDT', '')
+            pair: str = trade.pair.replace("/USDT:USDT", "")
 
             # Retrieve and Process Dataframe
             dataframe, _ = self.dp.get_analyzed_dataframe(pair=trade.pair, timeframe=self.timeframe)
@@ -1632,7 +1670,7 @@ class MyStrategy(HyperoptParamsMixin, IStrategy):
             previous_candle: Dict[str, Any] = dataframe.iloc[-2].squeeze().to_dict()
 
             # Extract RSI Values
-            tp_tf_value: str = getattr(self, f'dca_tp_tf_{entry_tag}').value
+            tp_tf_value: str = getattr(self, f"dca_tp_tf_{entry_tag}").value
             current_rsi: float = current_candle.get(f"rsi_7_{pair}_{tp_tf_value}", 0.0)
             prev_rsi: float = previous_candle.get(f"rsi_7_{pair}_{tp_tf_value}", 0.0)
 
@@ -1644,11 +1682,11 @@ class MyStrategy(HyperoptParamsMixin, IStrategy):
                 all_custom_data = trade.get_all_custom_data()
 
             # If no custom_dca data exists, we need to generate it.
-            if ((
-                    trade.nr_of_successful_entries == 1
-                    and trade.nr_of_successful_exits == 0
-                    and not trade.get_custom_data(key='custom_dca'))
-                ):
+            if (
+                trade.nr_of_successful_entries == 1
+                and trade.nr_of_successful_exits == 0
+                and not trade.get_custom_data(key="custom_dca")
+            ):
                 # Retrieve or Set Custom DCA Data
                 # RIf first iteration, generate tp and dca values. Else, we use get custom data to retrieve them. etrieve tp_data and dca_data
                 tp_data = self.set_tp(trade, number_of_tp, entry_tag, direction, leverage)
@@ -1656,41 +1694,42 @@ class MyStrategy(HyperoptParamsMixin, IStrategy):
 
                 # Initialize custom_dca with necessary data
                 custom_dca = {
-                    'tp_data': tp_data,
-                    'dca_data': dca_data,
-                    'last_nr_of_entries': trade.nr_of_successful_entries,
+                    "tp_data": tp_data,
+                    "dca_data": dca_data,
+                    "last_nr_of_entries": trade.nr_of_successful_entries,
                 }
                 # Store custom_dca in trade
-                trade.set_custom_data(key='custom_dca', value=custom_dca)
+                trade.set_custom_data(key="custom_dca", value=custom_dca)
             # if custom data exists extract values.
             else:
-                custom_dca = trade.get_custom_data(key='custom_dca')
-                tp_data = custom_dca.get('tp_data')
-                dca_data = custom_dca.get('dca_data')
+                custom_dca = trade.get_custom_data(key="custom_dca")
+                tp_data = custom_dca.get("tp_data")
+                dca_data = custom_dca.get("dca_data")
                 # Update tp targets if a new entry has been made
-                if custom_dca.get('last_nr_of_entries') != trade.nr_of_successful_entries:
-                    custom_dca['tp_data'] = tp_data
-                    custom_dca['last_nr_of_entries'] = trade.nr_of_successful_entries
-                    trade.set_custom_data(key='custom_dca', value=custom_dca)
-
+                if custom_dca.get("last_nr_of_entries") != trade.nr_of_successful_entries:
+                    custom_dca["tp_data"] = tp_data
+                    custom_dca["last_nr_of_entries"] = trade.nr_of_successful_entries
+                    trade.set_custom_data(key="custom_dca", value=custom_dca)
 
             # Handle DCA Entries
             if (
-                    trade.nr_of_successful_exits < 1 and # no entries made if tp has been hit
-                    trade.nr_of_successful_entries < number_of_dca_entries # Limit number of entries
-                    and current_profit < 0 # Ensure profit is negative
+                trade.nr_of_successful_exits < 1  # no entries made if tp has been hit
+                and trade.nr_of_successful_entries
+                < number_of_dca_entries  # Limit number of entries
+                and current_profit < 0  # Ensure profit is negative
             ):
                 for dca_entry in dca_data:
-                    if trade.nr_of_successful_entries == dca_entry['entry_num'] - 1:
-                        if not dca_entry['price_hit']:
-                            if (direction == 1 and current_rate <= dca_entry['price']) or \
-                                    (direction == -1 and current_rate >= dca_entry['price']):
+                    if trade.nr_of_successful_entries == dca_entry["entry_num"] - 1:
+                        if not dca_entry["price_hit"]:
+                            if (direction == 1 and current_rate <= dca_entry["price"]) or (
+                                direction == -1 and current_rate >= dca_entry["price"]
+                            ):
                                 # Update price_hit status
-                                dca_entry['price_hit'] = True
+                                dca_entry["price_hit"] = True
                                 # Update custom_dca in trade
-                                trade.set_custom_data(key='custom_dca', value=custom_dca)
+                                trade.set_custom_data(key="custom_dca", value=custom_dca)
                         # After price is hit, check RSI condition
-                        if dca_entry['price_hit']:
+                        if dca_entry["price_hit"]:
                             rsi_condition_met = False
                             if trade.is_short:
                                 if current_rsi < prev_rsi:
@@ -1700,8 +1739,8 @@ class MyStrategy(HyperoptParamsMixin, IStrategy):
                                     rsi_condition_met = True
                             if rsi_condition_met:
                                 # Place DCA entry
-                                safety_order_stake = max(dca_entry['size'], min_stake * 1.01)
-                                return safety_order_stake, dca_entry['tag']
+                                safety_order_stake = max(dca_entry["size"], min_stake * 1.01)
+                                return safety_order_stake, dca_entry["tag"]
 
             # Handle Take Profits
             # Limit TP logic to only run if we are in profit.
@@ -1709,18 +1748,18 @@ class MyStrategy(HyperoptParamsMixin, IStrategy):
                 # TP1 - Only runs when in profit and no exits have been made
                 if trade.nr_of_successful_exits == 0:
                     # Check if TP1 has not been hit, then verify if the target price is reached
-                    if not tp_data[0]['price_hit']:
+                    if not tp_data[0]["price_hit"]:
                         # Multiply by direction and check for a positive result to determine if target has been reached
                         # This allows for shared logic on long and short positions
-                        if direction * (current_rate - tp_data[0]['target_price']) >= 0:
-                            tp_data[0]['price_hit'] = True
-                            trade.set_custom_data(key='custom_dca', value=custom_dca)
+                        if direction * (current_rate - tp_data[0]["target_price"]) >= 0:
+                            tp_data[0]["price_hit"] = True
+                            trade.set_custom_data(key="custom_dca", value=custom_dca)
                     # Once TP1 price is hit, check for an RSI dip before exiting
-                    if tp_data[0]['price_hit']:
+                    if tp_data[0]["price_hit"]:
                         # Use a check for a negative result to identify an RSI reversal against the trade direction
                         if direction * (current_rsi - prev_rsi) < 0:
                             # TP1 Position Reduction
-                            tp_reduction = tp_data[0]['position_reduction_pct']
+                            tp_reduction = tp_data[0]["position_reduction_pct"]
                             stake_reduction = -trade.stake_amount * tp_reduction
                             if number_of_tp == 1:
                                 # Full exit as the final TP has been hit
@@ -1733,17 +1772,17 @@ class MyStrategy(HyperoptParamsMixin, IStrategy):
                 elif number_of_tp >= 2 and trade.nr_of_successful_exits == 1:
                     if len(tp_data) >= 2:
                         # Check if TP2 has not been hit, then verify if the target price is reached
-                        if not tp_data[1]['price_hit']:
+                        if not tp_data[1]["price_hit"]:
                             # Multiply by direction and check for a positive result to determine if target has been reached
-                            if direction * (current_rate - tp_data[1]['target_price']) >= 0:
-                                tp_data[1]['price_hit'] = True
-                                trade.set_custom_data(key='custom_dca', value=custom_dca)
+                            if direction * (current_rate - tp_data[1]["target_price"]) >= 0:
+                                tp_data[1]["price_hit"] = True
+                                trade.set_custom_data(key="custom_dca", value=custom_dca)
                         # Once TP2 price is hit, check for an RSI dip before exiting
-                        if tp_data[1]['price_hit']:
+                        if tp_data[1]["price_hit"]:
                             # Use a check for a negative result to identify an RSI reversal against the trade direction
                             if direction * (current_rsi - prev_rsi) < 0:
                                 # TP2 Position Reduction
-                                tp_reduction = tp_data[1]['position_reduction_pct']
+                                tp_reduction = tp_data[1]["position_reduction_pct"]
                                 stake_reduction = -trade.stake_amount * tp_reduction
                                 if number_of_tp == 2:
                                     # Full exit as the final TP has been hit
@@ -1756,17 +1795,17 @@ class MyStrategy(HyperoptParamsMixin, IStrategy):
                 elif number_of_tp >= 3 and trade.nr_of_successful_exits == 2:
                     if len(tp_data) >= 3:
                         # Check if TP3 has not been hit, then verify if the target price is reached
-                        if not tp_data[2]['price_hit']:
+                        if not tp_data[2]["price_hit"]:
                             # Multiply by direction and check for a positive result to determine if target has been reached
-                            if direction * (current_rate - tp_data[2]['target_price']) >= 0:
-                                tp_data[2]['price_hit'] = True
-                                trade.set_custom_data(key='custom_dca', value=custom_dca)
+                            if direction * (current_rate - tp_data[2]["target_price"]) >= 0:
+                                tp_data[2]["price_hit"] = True
+                                trade.set_custom_data(key="custom_dca", value=custom_dca)
                         # Once TP3 price is hit, check for an RSI dip before exiting
-                        if tp_data[2]['price_hit']:
+                        if tp_data[2]["price_hit"]:
                             # Use a check for a negative result to identify an RSI reversal against the trade direction
                             if direction * (current_rsi - prev_rsi) < 0:
                                 # TP3 Position Reduction
-                                tp_reduction = tp_data[2]['position_reduction_pct']
+                                tp_reduction = tp_data[2]["position_reduction_pct"]
                                 stake_reduction = -trade.stake_amount * tp_reduction
                                 if number_of_tp == 3:
                                     # Full exit as the final TP has been hit
@@ -1779,17 +1818,17 @@ class MyStrategy(HyperoptParamsMixin, IStrategy):
                 elif number_of_tp >= 4 and trade.nr_of_successful_exits == 3:
                     if len(tp_data) >= 4:
                         # Check if TP4 has not been hit, then verify if the target price is reached
-                        if not tp_data[3]['price_hit']:
+                        if not tp_data[3]["price_hit"]:
                             # Multiply by direction and check for a positive result to determine if target has been reached
-                            if direction * (current_rate - tp_data[3]['target_price']) >= 0:
-                                tp_data[3]['price_hit'] = True
-                                trade.set_custom_data(key='custom_dca', value=custom_dca)
+                            if direction * (current_rate - tp_data[3]["target_price"]) >= 0:
+                                tp_data[3]["price_hit"] = True
+                                trade.set_custom_data(key="custom_dca", value=custom_dca)
                         # Once TP4 price is hit, check for an RSI dip before exiting
-                        if tp_data[3]['price_hit']:
+                        if tp_data[3]["price_hit"]:
                             # Use a check for a negative result to identify an RSI reversal against the trade direction
                             if direction * (current_rsi - prev_rsi) < 0:
                                 # TP4 Position Reduction
-                                tp_reduction = tp_data[3]['position_reduction_pct']
+                                tp_reduction = tp_data[3]["position_reduction_pct"]
                                 stake_reduction = -trade.stake_amount * tp_reduction
                                 if number_of_tp == 4:
                                     # Full exit as the final TP has been hit
@@ -1802,33 +1841,37 @@ class MyStrategy(HyperoptParamsMixin, IStrategy):
                 elif number_of_tp >= 5 and trade.nr_of_successful_exits == 4:
                     if len(tp_data) >= 5:
                         # Check if TP5 has not been hit, then verify if the target price is reached
-                        if not tp_data[4]['price_hit']:
+                        if not tp_data[4]["price_hit"]:
                             # Multiply by direction and check for a positive result to determine if target has been reached
-                            if direction * (current_rate - tp_data[4]['target_price']) >= 0:
-                                tp_data[4]['price_hit'] = True
-                                trade.set_custom_data(key='custom_dca', value=custom_dca)
+                            if direction * (current_rate - tp_data[4]["target_price"]) >= 0:
+                                tp_data[4]["price_hit"] = True
+                                trade.set_custom_data(key="custom_dca", value=custom_dca)
                         # Once TP5 price is hit, check for an RSI dip before exiting
-                        if tp_data[4]['price_hit']:
+                        if tp_data[4]["price_hit"]:
                             # Use a check for a negative result to identify an RSI reversal against the trade direction
                             if direction * (current_rsi - prev_rsi) < 0:
                                 # TP5 is the final take profit level, trigger a full exit
                                 return -trade.stake_amount, f"Full exit at TP5/TP{number_of_tp}"
-
 
             # Handle Trailing Exits
             trailing_condition = False
             if trade.nr_of_successful_exits >= 1:
                 if trade.nr_of_successful_exits == 1:
                     # For the first TP, use dynamic trade.open_rate to get averaged entry price.
-                    trailing_condition = (direction * current_rate <= direction * trade.open_rate)
+                    trailing_condition = direction * current_rate <= direction * trade.open_rate
                 else:
                     # For additional TPs, use the previous TP as the trigger level
                     # todo should this be -2 or -1
                     previous_order: Order = trade.orders[-2]
-                    trailing_condition = (direction * current_rate <= direction * previous_order.price)
+                    trailing_condition = (
+                        direction * current_rate <= direction * previous_order.price
+                    )
 
                 if trailing_condition:
-                    return -trade.stake_amount, f"trailing exit @TP{trade.nr_of_successful_exits - 1}"
+                    return (
+                        -trade.stake_amount,
+                        f"trailing exit @TP{trade.nr_of_successful_exits - 1}",
+                    )
 
             # Default Return
             return None
@@ -1836,8 +1879,9 @@ class MyStrategy(HyperoptParamsMixin, IStrategy):
             print(f"Error in adjust_trade_position: {e}")
             return None
 
-    def set_tp(self, trade: Trade, number_of_tp: int, entry_tag: str, direction: int, leverage: int) -> List[
-        Dict[str, Any]]:
+    def set_tp(
+        self, trade: Trade, number_of_tp: int, entry_tag: str, direction: int, leverage: int
+    ) -> List[Dict[str, Any]]:
         """
         Calculates take profit (TP) levels and returns a list of dictionaries (tp_data), each representing a TP level.
 
@@ -1878,7 +1922,9 @@ class MyStrategy(HyperoptParamsMixin, IStrategy):
             scaling_factor: float = 1 / total_pos_pct
 
         # Scale the position percentages
-        scaled_tp_pcts = [tp_pct_size * scaling_factor for tp_pct_size in tp_pct_sizes[:number_of_tp]]
+        scaled_tp_pcts = [
+            tp_pct_size * scaling_factor for tp_pct_size in tp_pct_sizes[:number_of_tp]
+        ]
 
         # Step 5: Build TP Data and Return
         tp_data = []
@@ -1891,17 +1937,13 @@ class MyStrategy(HyperoptParamsMixin, IStrategy):
                 "position_reduction_pct": position_reduction_pct,
                 "price_hit": False,
                 "target_price": target_price,
-                "tag": f"TP{i + 1}"
+                "tag": f"TP{i + 1}",
             }
             tp_data.append(tp_level)
 
         return tp_data
 
-    def calculate_scaled_dca_entries(
-            self,
-            entry_tag: str,
-            trade: Trade
-    ) -> List[Dict[str, Any]]:
+    def calculate_scaled_dca_entries(self, entry_tag: str, trade: Trade) -> List[Dict[str, Any]]:
         """
         Calculates scaled DCA entry sizes and their corresponding price thresholds.
 
@@ -1915,15 +1957,23 @@ class MyStrategy(HyperoptParamsMixin, IStrategy):
         """
         # Retrieve Strategy Parameters
         stoploss: float = getattr(self, f"stoploss_{entry_tag}").value
-        last_dca_entry_dist_from_SL: float = getattr(self, f"last_dca_entry_dist_from_SL_{entry_tag}").value
+        last_dca_entry_dist_from_SL: float = getattr(
+            self, f"last_dca_entry_dist_from_SL_{entry_tag}"
+        ).value
         leverage: float = getattr(self, f"leverage_{entry_tag}").value * 3
-        number_of_dca_entries: int = getattr(self, f"number_of_additional_entries_{entry_tag}").value
+        number_of_dca_entries: int = getattr(
+            self, f"number_of_additional_entries_{entry_tag}"
+        ).value
         initial_entry_price: float = trade.open_rate  # Use the current open_rate
         direction: int = -1 if trade.is_short else 1
 
         # Calculate Maximum Allowable Price Movement
-        furthest_dca_pct_away_from_open_rate: float = (stoploss - last_dca_entry_dist_from_SL) / leverage
-        maximum_dca_entry_rate: float = initial_entry_price * (1 - direction * furthest_dca_pct_away_from_open_rate)
+        furthest_dca_pct_away_from_open_rate: float = (
+            stoploss - last_dca_entry_dist_from_SL
+        ) / leverage
+        maximum_dca_entry_rate: float = initial_entry_price * (
+            1 - direction * furthest_dca_pct_away_from_open_rate
+        )
         total_range: float = abs(initial_entry_price - maximum_dca_entry_rate)
 
         # Retrieve and Aggregate DCA Entry Prices
@@ -1950,7 +2000,8 @@ class MyStrategy(HyperoptParamsMixin, IStrategy):
 
         # Calculate Scaled DCA Entry Prices
         scaled_dca_entry_prices: List[float] = [
-            initial_entry_price - direction * scaled_drop for scaled_drop in scaled_cumulative_dca_prices
+            initial_entry_price - direction * scaled_drop
+            for scaled_drop in scaled_cumulative_dca_prices
         ]
 
         # Sort Scaled DCA Entry Prices
@@ -1973,23 +2024,28 @@ class MyStrategy(HyperoptParamsMixin, IStrategy):
         dca_data = []
         for idx in range(number_of_dca_entries):
             dca_entry = {
-                'entry_num': idx + 2,  # Entries start from 2
-                'price': scaled_dca_entry_prices[idx],
-                'size': dca_entry_sizes[idx],
-                'price_hit': False,
-                'tag': f'safety_order_{idx + 2}'
+                "entry_num": idx + 2,  # Entries start from 2
+                "price": scaled_dca_entry_prices[idx],
+                "size": dca_entry_sizes[idx],
+                "price_hit": False,
+                "tag": f"safety_order_{idx + 2}",
             }
             dca_data.append(dca_entry)
 
         return dca_data
 
-
-
-    def custom_stoploss(self, pair: str, trade: Trade, current_time: datetime,
-                        current_rate: float, current_profit: float, after_fill: bool,
-                        **kwargs) -> Optional[float]:
+    def custom_stoploss(
+        self,
+        pair: str,
+        trade: Trade,
+        current_time: datetime,
+        current_rate: float,
+        current_profit: float,
+        after_fill: bool,
+        **kwargs,
+    ) -> Optional[float]:
         if after_fill:
-            # Get dataframe and current candle data incase we want to analyse anything from it
+            # Get dataframe and current candle data in case we want to analyse anything from it
             dataframe, _ = self.dp.get_analyzed_dataframe(pair=pair, timeframe=self.timeframe)
             current_candle = dataframe.iloc[-1].squeeze()
             current_candle_index = dataframe.index[-1]
@@ -1999,8 +2055,12 @@ class MyStrategy(HyperoptParamsMixin, IStrategy):
             # After an additional order, start with a stoploss of 10% below the new open rate
             # Open rate its averaged across all entries
             stoploss = getattr(self, f"stoploss_{entry_tag}").value
-            SL_Open = stoploss_from_open(stoploss, current_profit, is_short=trade.is_short, leverage=trade.leverage)
-            SL_ABS = stoploss_from_open(stoploss, current_profit, is_short=trade.is_short, leverage=trade.leverage)
+            SL_Open = stoploss_from_open(
+                stoploss, current_profit, is_short=trade.is_short, leverage=trade.leverage
+            )
+            SL_ABS = stoploss_from_open(
+                stoploss, current_profit, is_short=trade.is_short, leverage=trade.leverage
+            )
             if SL_Open < SL_ABS:
                 print(f"SL_Open: {SL_Open} SL_ABS: {SL_ABS}")
                 return SL_Open
