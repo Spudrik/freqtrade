@@ -12,6 +12,7 @@ import os
 from pandas import DataFrame
 from datetime import datetime, timedelta, timezone
 from functools import reduce
+from pathlib import Path
 from ruamel.yaml import YAML
 
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -81,7 +82,37 @@ RESET = "\033[0m"
 class MyStrategy(HyperoptParamsMixin, IStrategy):
     def __init__(self, config):
         super().__init__(config)
-        self.load_parameters_from_yaml()
+        # Only store basic data types on self to keep the strategy picklable
+        self._params_loaded = False
+
+    def _load_parameters_from_yaml(self) -> None:
+        """Load parameter overrides from the bundled yaml file lazily."""
+        if self._params_loaded:
+            return
+        params_path = Path(__file__).with_name("hyperopt_tracking_results.yaml")
+        if params_path.is_file():
+            yaml_loader = YAML(typ="safe")
+            with params_path.open() as file:
+                data = yaml_loader.load(file) or {}
+            if isinstance(data, dict):
+                items = data.items()
+            elif isinstance(data, list):
+                items = (
+                    (entry.get("parameter"), entry.get("value"))
+                    for entry in data
+                    if isinstance(entry, dict)
+                )
+            else:
+                items = []
+            # Assign only basic data types to self
+            for key, value in items:
+                if key and isinstance(value, (str, int, float, bool, list, dict, type(None))):
+                    setattr(self, key, value)
+        self._params_loaded = True
+
+    def _create_freqai_model(self) -> IFreqaiModel:
+        """Create a new instance of IFreqaiModel on demand."""
+        return IFreqaiModel()
 
     # Strategy interface version - allow new iterations of the strategy interface.
     # Check the documentation or the Sample strategy to get the latest version.
@@ -205,6 +236,8 @@ class MyStrategy(HyperoptParamsMixin, IStrategy):
         return informative_pairs
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        # Lazily load heavy resources required by this method
+        self._load_parameters_from_yaml()
         # Call apply_indicators to get indicators on the target timeframe/pair
         # filter out symbols Like ' and [
         input_string = f"{[metadata['pair']]}"
