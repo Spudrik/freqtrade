@@ -1,0 +1,382 @@
+{
+  "version": 1,
+  "updated_at": "2026-04-22T08:23:13.506023+01:00",
+  "batches": [
+    {
+      "id": "entrytunewithexits",
+      "name": "entryTuneWithExits",
+      "description": "",
+      "schema_version": 1,
+      "resolution_source": "strategy_catalog",
+      "sources": [
+        {
+          "type": "family",
+          "id": "entry_seed_tuning_all",
+          "context": null
+        },
+        {
+          "type": "family",
+          "id": "exit_peel",
+          "context": null
+        },
+        {
+          "type": "family",
+          "id": "extreme_guard",
+          "context": null
+        }
+      ],
+      "excluded_params": [],
+      "resolved_params_snapshot": [
+        "breakout_1d_confirm_bars",
+        "breakout_1d_require_1h_trigger",
+        "breakout_1d_retest_buffer",
+        "breakout_1d_volume_ratio_min",
+        "breakout_1h_confirm_bars",
+        "breakout_1h_require_stabilizing",
+        "breakout_1h_retest_buffer",
+        "breakout_1h_rsi_min",
+        "breakout_1h_use_macd_confirm",
+        "breakout_1h_volume_ratio_min",
+        "crash_recovery_confirm_bars",
+        "crash_recovery_require_stabilizing",
+        "crash_recovery_rsi_max",
+        "crash_recovery_support_reclaim_required",
+        "crash_recovery_use_macd_hist_rising",
+        "crash_recovery_use_rsi_rising",
+        "crash_recovery_use_volume_confirm",
+        "crash_recovery_volume_ratio_min",
+        "enable_breakout_hold_no_peel",
+        "enable_resistance_local_max_peel",
+        "enable_volume_confirmed_full_exit",
+        "exit_target_b1",
+        "exit_target_b2",
+        "exit_target_b3",
+        "extreme_downtrend_adx",
+        "extreme_speed_threshold",
+        "extreme_volume_threshold",
+        "peel_fraction_shared",
+        "peel_profit_pct",
+        "regime_exit_mult_bear",
+        "regime_exit_mult_bull",
+        "regime_exit_mult_chop",
+        "support_bounce_1d_require_1h_trigger",
+        "support_bounce_1h_bb_lower_buffer",
+        "support_bounce_1h_no_undercut_lookback",
+        "support_bounce_1h_require_close_gt_prev",
+        "support_bounce_1h_require_green_candle",
+        "support_bounce_1h_require_stabilizing",
+        "support_bounce_1h_rsi_max",
+        "support_bounce_1h_support_distance_max",
+        "support_bounce_1h_use_bb_lower",
+        "support_bounce_1h_use_below_ema_fast",
+        "support_bounce_1h_use_volume_confirm",
+        "support_bounce_1h_volume_ratio_min",
+        "support_reversal_1d_confirm_bars",
+        "support_reversal_1d_require_1h_trigger",
+        "support_reversal_1h_bb_lower_buffer",
+        "support_reversal_1h_confirm_bars",
+        "support_reversal_1h_reclaim_lookback",
+        "support_reversal_1h_require_stabilizing",
+        "support_reversal_1h_rsi_max",
+        "support_reversal_1h_undercut_buffer",
+        "support_reversal_1h_use_bb_lower",
+        "support_reversal_1h_use_below_ema_fast",
+        "support_reversal_1h_use_macd_hist_rising",
+        "support_reversal_1h_use_rsi_rising",
+        "support_reversal_1h_use_volume_confirm",
+        "support_reversal_1h_volume_ratio_min"
+      ],
+      "spaces_snapshot": [
+        "buy",
+        "sell"
+      ],
+      "stale_sources_snapshot": [],
+      "stale_params_snapshot": [],
+      "stale_excluded_params_snapshot": [],
+      "resolved_at": "2026-04-22T05:15:22.865148+01:00",
+      "created_at": "2026-04-22T05:15:22.865148+01:00",
+      "updated_at": "2026-04-22T05:15:22.865148+01:00"
+    },
+    {
+      "id": "coreregime",
+      "name": "CoreRegime",
+      "description": "",
+      "schema_version": 1,
+      "resolution_source": "strategy_catalog",
+      "sources": [
+        {
+          "type": "family",
+          "id": "regime_detector",
+          "context": null
+        },
+        {
+          "type": "family",
+          "id": "core_indicators",
+          "context": null
+        }
+      ],
+      "excluded_params": [],
+      "resolved_params_snapshot": [
+        "atr_ema_span",
+        "atr_window",
+        "btc_1d_rsi_bear_max",
+        "btc_1d_rsi_bull_min",
+        "enable_pair_1d_context",
+        "regime_adx_trend_min",
+        "regime_bear_atr_spike",
+        "regime_confirm_bars",
+        "support_lookback",
+        "use_btc_1d_rsi_regime",
+        "vol_unit_cap_pct",
+        "vol_unit_floor_pct",
+        "volume_ema_span"
+      ],
+      "spaces_snapshot": [
+        "buy"
+      ],
+      "stale_sources_snapshot": [],
+      "stale_params_snapshot": [],
+      "stale_excluded_params_snapshot": [],
+      "resolved_at": "2026-04-22T05:19:21.770684+01:00",
+      "created_at": "2026-04-22T05:19:18.668307+01:00",
+      "updated_at": "2026-04-22T05:19:21.770684+01:00"
+    },
+    {
+      "id": "featureenable",
+      "name": "FeatureEnable",
+      "description": "",
+      "schema_version": 1,
+      "resolution_source": "strategy_catalog",
+      "sources": [
+        {
+          "type": "family",
+          "id": "feature_enables",
+          "context": null
+        }
+      ],
+      "excluded_params": [],
+      "resolved_params_snapshot": [
+        "breakout_1h_use_volume_confirm",
+        "crash_recovery_require_stabilizing",
+        "crash_recovery_use_volume_confirm",
+        "enable_breakout_hold_no_peel",
+        "enable_breakout_seed_1d",
+        "enable_breakout_seed_1h",
+        "enable_combo_1d_1h_breakout",
+        "enable_combo_1d_1h_support_bounce",
+        "enable_combo_1d_1h_support_reversal",
+        "enable_crash_recovery_seed",
+        "enable_pair_1d_context",
+        "enable_resistance_local_max_peel",
+        "enable_support_bounce_seed_1d",
+        "enable_support_bounce_seed_1h",
+        "enable_support_local_min_rebuy",
+        "enable_support_reversal_seed_1d",
+        "enable_support_reversal_seed_1h",
+        "enable_volume_confirmed_full_exit",
+        "enable_volume_confirmed_rebuy",
+        "rebuy_use_volume_vote",
+        "support_bounce_1h_require_stabilizing",
+        "support_bounce_1h_use_bb_lower",
+        "support_bounce_1h_use_below_ema_fast",
+        "support_bounce_1h_use_hold_support",
+        "support_bounce_1h_use_local_min_bounce",
+        "support_bounce_1h_use_volume_confirm",
+        "support_reversal_1h_require_stabilizing",
+        "support_reversal_1h_use_bb_lower",
+        "support_reversal_1h_use_below_ema_fast",
+        "support_reversal_1h_use_volume_confirm",
+        "use_add_close_gt_prev",
+        "use_btc_1d_rsi_regime",
+        "use_rebuy_crash_guard"
+      ],
+      "spaces_snapshot": [
+        "buy",
+        "sell"
+      ],
+      "stale_sources_snapshot": [],
+      "stale_params_snapshot": [],
+      "stale_excluded_params_snapshot": [],
+      "resolved_at": "2026-04-22T05:21:16.181561+01:00",
+      "created_at": "2026-04-22T05:21:05.956439+01:00",
+      "updated_at": "2026-04-22T05:21:16.181561+01:00"
+    },
+    {
+      "id": "crashwithscalingspacing",
+      "name": "CrashWithScalingSpacing",
+      "description": "",
+      "schema_version": 1,
+      "resolution_source": "strategy_catalog",
+      "sources": [
+        {
+          "type": "namespace_value",
+          "id": "crash_recovery_seed",
+          "namespace": "mode",
+          "value": "crash_recovery_seed"
+        },
+        {
+          "type": "namespace_value",
+          "id": "deep_drawdown_recovery",
+          "namespace": "mode",
+          "value": "deep_drawdown_recovery"
+        },
+        {
+          "type": "namespace_value",
+          "id": "ladder_spacing",
+          "namespace": "mode",
+          "value": "ladder_spacing"
+        },
+        {
+          "type": "namespace_value",
+          "id": "capital_scaling",
+          "namespace": "mode",
+          "value": "capital_scaling"
+        },
+        {
+          "type": "namespace_value",
+          "id": "btc_regime_context",
+          "namespace": "mode",
+          "value": "btc_regime_context"
+        },
+        {
+          "type": "namespace_value",
+          "id": "rebuy_crash_guard",
+          "namespace": "mode",
+          "value": "rebuy_crash_guard"
+        },
+        {
+          "type": "namespace_value",
+          "id": "regime_spacing_response",
+          "namespace": "mode",
+          "value": "regime_spacing_response"
+        }
+      ],
+      "excluded_params": [],
+      "resolved_params_snapshot": [
+        "btc_1d_rsi_bear_max",
+        "btc_1d_rsi_bull_min",
+        "crash_recovery_block_on_hostile_btc_context",
+        "crash_recovery_confirm_bars",
+        "crash_recovery_require_stabilizing",
+        "crash_recovery_rsi_max",
+        "crash_recovery_support_reclaim_required",
+        "crash_recovery_use_macd_hist_rising",
+        "crash_recovery_use_rsi_rising",
+        "crash_recovery_use_volume_confirm",
+        "crash_recovery_volume_ratio_min",
+        "deep_drawdown_l7_pct",
+        "deep_drawdown_step_l8_l9_pct",
+        "enable_crash_recovery_seed",
+        "extreme_downtrend_adx",
+        "extreme_speed_threshold",
+        "extreme_volume_threshold",
+        "fixed_wallet_pct",
+        "gap_mult_l2",
+        "gap_mult_l3",
+        "gap_mult_l4",
+        "gap_mult_l5",
+        "gap_mult_l6",
+        "l1_mult",
+        "l2_mult",
+        "l3_mult",
+        "l5_mult",
+        "l6_mult",
+        "l7_mult",
+        "l8_mult",
+        "l9_mult",
+        "l9_stoploss_pct",
+        "leverage_seed_mult_crash",
+        "leverage_target",
+        "rebuy_adx_crash_min",
+        "rebuy_atr_spike_limit",
+        "rebuy_crash_min_votes",
+        "regime_adx_trend_min",
+        "regime_bear_atr_spike",
+        "regime_confirm_bars",
+        "regime_gap_mult_bear",
+        "regime_gap_mult_bull",
+        "regime_gap_mult_chop",
+        "use_btc_1d_rsi_regime",
+        "use_rebuy_crash_guard",
+        "vol_unit_cap_pct",
+        "vol_unit_floor_pct"
+      ],
+      "spaces_snapshot": [
+        "buy"
+      ],
+      "stale_sources_snapshot": [],
+      "stale_params_snapshot": [],
+      "stale_excluded_params_snapshot": [],
+      "resolved_at": "2026-04-22T08:21:53.384917+01:00",
+      "created_at": "2026-04-22T08:21:53.384917+01:00",
+      "updated_at": "2026-04-22T08:21:53.384917+01:00"
+    },
+    {
+      "id": "regime",
+      "name": "Regime",
+      "description": "",
+      "schema_version": 1,
+      "resolution_source": "strategy_catalog",
+      "sources": [
+        {
+          "type": "namespace_value",
+          "id": "pair_regime_context",
+          "namespace": "mode",
+          "value": "pair_regime_context"
+        },
+        {
+          "type": "namespace_value",
+          "id": "regime_exit_response",
+          "namespace": "mode",
+          "value": "regime_exit_response"
+        },
+        {
+          "type": "namespace_value",
+          "id": "crash_recovery_seed",
+          "namespace": "mode",
+          "value": "crash_recovery_seed"
+        },
+        {
+          "type": "namespace_value",
+          "id": "btc_regime_context",
+          "namespace": "mode",
+          "value": "btc_regime_context"
+        }
+      ],
+      "excluded_params": [],
+      "resolved_params_snapshot": [
+        "btc_1d_rsi_bear_max",
+        "btc_1d_rsi_bull_min",
+        "crash_recovery_block_on_hostile_btc_context",
+        "crash_recovery_confirm_bars",
+        "crash_recovery_require_stabilizing",
+        "crash_recovery_rsi_max",
+        "crash_recovery_support_reclaim_required",
+        "crash_recovery_use_macd_hist_rising",
+        "crash_recovery_use_rsi_rising",
+        "crash_recovery_use_volume_confirm",
+        "crash_recovery_volume_ratio_min",
+        "enable_crash_recovery_seed",
+        "enable_pair_1d_context",
+        "leverage_seed_mult_crash",
+        "regime_adx_trend_min",
+        "regime_bear_atr_spike",
+        "regime_confirm_bars",
+        "regime_exit_mult_bear",
+        "regime_exit_mult_bull",
+        "regime_exit_mult_chop",
+        "use_btc_1d_rsi_regime"
+      ],
+      "spaces_snapshot": [
+        "buy",
+        "sell"
+      ],
+      "stale_sources_snapshot": [],
+      "stale_params_snapshot": [],
+      "stale_excluded_params_snapshot": [],
+      "resolved_at": "2026-04-22T08:23:13.506023+01:00",
+      "created_at": "2026-04-22T08:23:11.766798+01:00",
+      "updated_at": "2026-04-22T08:23:13.506023+01:00"
+    }
+  ]
+}

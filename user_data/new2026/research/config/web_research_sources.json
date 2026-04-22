@@ -1,0 +1,203 @@
+{
+  "version": 1,
+  "poll_interval_seconds": 21600,
+  "request_timeout_seconds": 20,
+  "max_items_per_source": 60,
+  "store_raw_payloads": true,
+  "user_agent": "FreQ-WebResearchCollector/1.0",
+  "sources": [
+    {
+      "id": "binance_support_announcements",
+      "type": "html_links",
+      "enabled": true,
+      "source_group": "exchange_announcements",
+      "region": "global",
+      "topic": "binance_announcements",
+      "market_relevance": "high",
+      "url": "https://www.binance.com/en/support/announcement",
+      "include_url_substrings": ["/support/announcement/"],
+      "exclude_url_substrings": ["/support/announcement?", "#"],
+      "include_text_substrings": ["list", "delist", "launchpool", "futures", "margin", "airdrop", "earn", "support"],
+      "exclude_text_substrings": ["announcement center", "view more"],
+      "min_text_length": 18,
+      "tags": [
+        "source_type:crypto_exchange",
+        "source_priority:critical",
+        "asset_class:crypto",
+        "market_topic:exchange_listing",
+        "market_topic:exchange_delisting",
+        "market_topic:derivatives",
+        "collector_confidence:official_page"
+      ]
+    },
+    {
+      "id": "bybit_announcements",
+      "type": "html_links",
+      "enabled": true,
+      "source_group": "exchange_announcements",
+      "region": "global",
+      "topic": "bybit_announcements",
+      "market_relevance": "high",
+      "url": "https://announcements.bybit.com/en/",
+      "include_url_substrings": ["/en/article/"],
+      "exclude_url_substrings": ["#"],
+      "include_text_substrings": ["list", "delist", "launch", "upgrade", "support", "futures", "margin", "staking"],
+      "exclude_text_substrings": ["announcement"],
+      "min_text_length": 18,
+      "tags": [
+        "source_type:crypto_exchange",
+        "source_priority:high",
+        "asset_class:crypto",
+        "market_topic:exchange_listing",
+        "market_topic:exchange_delisting",
+        "market_topic:derivatives",
+        "collector_confidence:official_page"
+      ]
+    },
+    {
+      "id": "kraken_asset_listings",
+      "type": "html_links",
+      "enabled": true,
+      "source_group": "exchange_announcements",
+      "region": "global",
+      "topic": "kraken_asset_listings",
+      "market_relevance": "high",
+      "url": "https://blog.kraken.com/product/asset-listings",
+      "include_url_substrings": ["/product/asset-listings/"],
+      "exclude_url_substrings": ["#"],
+      "include_text_substrings": ["available for trading", "listing", "trade"],
+      "exclude_text_substrings": ["asset listings"],
+      "min_text_length": 18,
+      "tags": [
+        "source_type:crypto_exchange",
+        "source_priority:critical",
+        "asset_class:crypto",
+        "market_topic:exchange_listing",
+        "collector_confidence:official_page"
+      ]
+    },
+    {
+      "id": "coinbase_blog",
+      "type": "html_links",
+      "enabled": true,
+      "source_group": "exchange_announcements",
+      "region": "us",
+      "topic": "coinbase_blog",
+      "market_relevance": "medium",
+      "url": "https://www.coinbase.com/blog",
+      "include_url_substrings": ["/blog/"],
+      "exclude_url_substrings": ["#", "?"],
+      "include_text_substrings": ["listing", "perpetual", "futures", "staking", "institutional", "usdc", "base", "launch"],
+      "exclude_text_substrings": ["blog"],
+      "min_text_length": 18,
+      "tags": [
+        "source_type:crypto_exchange",
+        "source_priority:high",
+        "asset_class:crypto",
+        "market_topic:exchange_listing",
+        "market_topic:derivatives",
+        "collector_confidence:official_page"
+      ]
+    },
+    {
+      "id": "ethereum_foundation_blog",
+      "type": "html_links",
+      "enabled": true,
+      "source_group": "protocol_foundations",
+      "region": "global",
+      "topic": "ethereum_foundation",
+      "market_relevance": "medium",
+      "url": "https://blog.ethereum.org/",
+      "include_url_substrings": ["/20"],
+      "exclude_url_substrings": ["#"],
+      "include_text_substrings": ["ethereum", "staking", "defi", "protocol", "security", "upgrade"],
+      "exclude_text_substrings": ["subscribe"],
+      "min_text_length": 18,
+      "tags": [
+        "source_type:protocol_foundation",
+        "source_priority:medium",
+        "asset_class:crypto",
+        "market_topic:protocol_upgrade",
+        "collector_confidence:official_page"
+      ]
+    },
+    {
+      "id": "uniswap_blog",
+      "type": "html_links",
+      "enabled": true,
+      "source_group": "defi_protocols",
+      "region": "global",
+      "topic": "uniswap",
+      "market_relevance": "medium",
+      "url": "https://blog.uniswap.org/",
+      "include_url_substrings": ["/"],
+      "exclude_url_substrings": ["#", "/tag/", "/author/", "/cdn-cgi/"],
+      "include_text_substrings": ["uniswap", "governance", "v4", "api", "liquidity", "defi", "launch"],
+      "exclude_text_substrings": ["newsletter", "subscribe"],
+      "min_text_length": 18,
+      "tags": [
+        "source_type:defi_protocol",
+        "source_priority:medium",
+        "asset_class:crypto",
+        "market_topic:protocol_upgrade",
+        "collector_confidence:official_page"
+      ]
+    },
+    {
+      "id": "chainlink_blog",
+      "type": "html_links",
+      "enabled": true,
+      "source_group": "infrastructure",
+      "region": "global",
+      "topic": "chainlink",
+      "market_relevance": "medium",
+      "url": "https://blog.chain.link/",
+      "include_url_substrings": ["/"],
+      "exclude_url_substrings": ["#", "/tag/", "/author/", "/category/"],
+      "include_text_substrings": ["chainlink", "ccip", "oracle", "stablecoin", "runtime", "defi"],
+      "exclude_text_substrings": ["subscribe", "newsletter"],
+      "min_text_length": 18,
+      "tags": [
+        "source_type:infrastructure",
+        "source_priority:medium",
+        "asset_class:crypto",
+        "market_topic:infrastructure",
+        "collector_confidence:official_page"
+      ]
+    },
+    {
+      "id": "coindesk_markets_rss",
+      "type": "rss",
+      "enabled": true,
+      "source_group": "crypto_media",
+      "region": "global",
+      "topic": "markets",
+      "market_relevance": "high",
+      "url": "https://www.coindesk.com/arc/outboundfeeds/rss/",
+      "tags": [
+        "source_type:crypto_media",
+        "source_priority:high",
+        "asset_class:crypto",
+        "market_topic:markets",
+        "collector_confidence:primary_feed"
+      ]
+    },
+    {
+      "id": "cointelegraph_rss",
+      "type": "rss",
+      "enabled": true,
+      "source_group": "crypto_media",
+      "region": "global",
+      "topic": "news",
+      "market_relevance": "high",
+      "url": "https://cointelegraph.com/rss.xml",
+      "tags": [
+        "source_type:crypto_media",
+        "source_priority:high",
+        "asset_class:crypto",
+        "market_topic:markets",
+        "collector_confidence:primary_feed"
+      ]
+    }
+  ]
+}

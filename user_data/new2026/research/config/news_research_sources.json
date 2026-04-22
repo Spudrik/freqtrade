@@ -1,0 +1,725 @@
+{
+  "version": 1,
+  "poll_interval_seconds": 900,
+  "request_timeout_seconds": 20,
+  "max_items_per_source": 100,
+  "store_raw_payloads": true,
+  "user_agent": "FreQ-NewsResearchCollector/1.0",
+  "sources": [
+    {
+      "id": "bank_of_england_news",
+      "type": "rss",
+      "enabled": true,
+      "source_group": "central_banks",
+      "region": "uk",
+      "topic": "boe_news",
+      "market_relevance": "critical",
+      "url": "https://www.bankofengland.co.uk/rss/news",
+      "tags": [
+        "source_type:central_bank",
+        "source_priority:critical",
+        "asset_class:rates",
+        "market_topic:rates",
+        "market_topic:liquidity",
+        "collector_confidence:official_source"
+      ]
+    },
+    {
+      "id": "bank_of_england_speeches",
+      "type": "rss",
+      "enabled": true,
+      "source_group": "central_banks",
+      "region": "uk",
+      "topic": "boe_speeches",
+      "market_relevance": "high",
+      "url": "https://www.bankofengland.co.uk/rss/speeches",
+      "tags": [
+        "source_type:central_bank",
+        "source_priority:high",
+        "asset_class:rates",
+        "market_topic:rates",
+        "collector_confidence:official_source"
+      ]
+    },
+    {
+      "id": "bank_of_japan_statistics",
+      "type": "rss",
+      "enabled": true,
+      "source_group": "central_banks",
+      "region": "japan",
+      "topic": "boj_statistics",
+      "market_relevance": "high",
+      "url": "http://www.boj.or.jp/rss/statistics.xml?id=1003",
+      "tags": [
+        "source_type:central_bank",
+        "source_priority:high",
+        "asset_class:rates",
+        "market_topic:rates",
+        "collector_confidence:official_source"
+      ]
+    },
+    {
+      "id": "bank_of_japan_whats_new",
+      "type": "rss",
+      "enabled": true,
+      "source_group": "central_banks",
+      "region": "japan",
+      "topic": "boj_whats_new",
+      "market_relevance": "high",
+      "url": "http://www.boj.or.jp/rss/whatsnew.xml?id=1001",
+      "tags": [
+        "source_type:central_bank",
+        "source_priority:high",
+        "asset_class:rates",
+        "market_topic:rates",
+        "collector_confidence:official_source"
+      ]
+    },
+    {
+      "id": "fed_press",
+      "type": "rss",
+      "enabled": true,
+      "source_group": "central_banks",
+      "region": "us",
+      "topic": "fed_press",
+      "market_relevance": "critical",
+      "url": "https://www.federalreserve.gov/feeds/press_all.xml",
+      "tags": [
+        "source_type:central_bank",
+        "source_priority:critical",
+        "asset_class:rates",
+        "market_topic:rates",
+        "market_topic:liquidity",
+        "collector_confidence:official_source"
+      ]
+    },
+    {
+      "id": "fed_speeches",
+      "type": "rss",
+      "enabled": true,
+      "source_group": "central_banks",
+      "region": "us",
+      "topic": "fed_speeches",
+      "market_relevance": "high",
+      "url": "https://www.federalreserve.gov/feeds/speeches.xml",
+      "tags": [
+        "source_type:central_bank",
+        "source_priority:high",
+        "asset_class:rates",
+        "market_topic:rates",
+        "collector_confidence:official_source"
+      ]
+    },
+    {
+      "id": "ecb_press",
+      "type": "rss",
+      "enabled": true,
+      "source_group": "central_banks",
+      "region": "euro_area",
+      "topic": "ecb_press",
+      "market_relevance": "high",
+      "url": "https://www.ecb.europa.eu/press/rss/press.html",
+      "tags": [
+        "source_type:central_bank",
+        "source_priority:high",
+        "asset_class:rates",
+        "market_topic:rates",
+        "collector_confidence:official_source"
+      ]
+    },
+    {
+      "id": "ecb_statpress",
+      "type": "rss",
+      "enabled": true,
+      "source_group": "central_banks",
+      "region": "euro_area",
+      "topic": "ecb_statpress",
+      "market_relevance": "high",
+      "url": "https://www.ecb.europa.eu/press/rss/statpress.html",
+      "tags": [
+        "source_type:central_bank",
+        "source_priority:high",
+        "asset_class:rates",
+        "market_topic:inflation",
+        "market_topic:rates",
+        "collector_confidence:official_source"
+      ]
+    },
+    {
+      "id": "bis_central_bank_speeches",
+      "type": "rss",
+      "enabled": true,
+      "source_group": "central_banks",
+      "region": "global",
+      "topic": "bis_central_bank_speeches",
+      "market_relevance": "high",
+      "url": "https://www.bis.org/doclist/cbspeeches.rss",
+      "tags": [
+        "source_type:central_bank",
+        "source_priority:high",
+        "asset_class:rates",
+        "market_topic:rates",
+        "collector_confidence:official_source"
+      ]
+    },
+    {
+      "id": "bis_press_releases",
+      "type": "rss",
+      "enabled": true,
+      "source_group": "central_banks",
+      "region": "global",
+      "topic": "bis_press_releases",
+      "market_relevance": "high",
+      "url": "https://www.bis.org/doclist/all_pressrels.rss",
+      "tags": [
+        "source_type:central_bank",
+        "source_priority:high",
+        "asset_class:rates",
+        "market_topic:market_structure",
+        "collector_confidence:official_source"
+      ]
+    },
+    {
+      "id": "sec_press",
+      "type": "rss",
+      "enabled": true,
+      "source_group": "regulators",
+      "region": "us",
+      "topic": "sec_press",
+      "market_relevance": "critical",
+      "url": "https://www.sec.gov/news/pressreleases.rss",
+      "tags": [
+        "source_type:regulator",
+        "source_priority:critical",
+        "asset_class:crypto",
+        "market_topic:regulation",
+        "market_topic:enforcement",
+        "collector_confidence:official_source"
+      ]
+    },
+    {
+      "id": "cftc_press_releases",
+      "type": "rss",
+      "enabled": true,
+      "source_group": "regulators",
+      "region": "us",
+      "topic": "cftc_press_releases",
+      "market_relevance": "critical",
+      "url": "https://www.cftc.gov/PressRoom/PressReleases/rss",
+      "tags": [
+        "source_type:regulator",
+        "source_priority:critical",
+        "asset_class:crypto",
+        "market_topic:regulation",
+        "collector_confidence:official_source"
+      ]
+    },
+    {
+      "id": "cftc_enforcement",
+      "type": "rss",
+      "enabled": true,
+      "source_group": "regulators",
+      "region": "us",
+      "topic": "cftc_enforcement",
+      "market_relevance": "critical",
+      "url": "https://www.cftc.gov/LawRegulation/EnforcementActions/rss",
+      "tags": [
+        "source_type:regulator",
+        "source_priority:critical",
+        "asset_class:crypto",
+        "market_topic:enforcement",
+        "collector_confidence:official_source"
+      ]
+    },
+    {
+      "id": "cftc_speeches_testimony",
+      "type": "rss",
+      "enabled": true,
+      "source_group": "regulators",
+      "region": "us",
+      "topic": "cftc_speeches_testimony",
+      "market_relevance": "high",
+      "url": "https://www.cftc.gov/PressRoom/SpeechesTestimony/rss",
+      "tags": [
+        "source_type:regulator",
+        "source_priority:high",
+        "asset_class:crypto",
+        "market_topic:regulation",
+        "collector_confidence:official_source"
+      ]
+    },
+    {
+      "id": "ons_release_calendar",
+      "type": "rss",
+      "enabled": true,
+      "source_group": "official_data_releases",
+      "region": "uk",
+      "topic": "ons_release_calendar",
+      "market_relevance": "high",
+      "url": "https://www.ons.gov.uk/releasecalendar",
+      "tags": [
+        "source_type:official_statistics",
+        "source_priority:high",
+        "asset_class:macro",
+        "market_topic:inflation",
+        "market_topic:labor",
+        "collector_confidence:official_source"
+      ]
+    },
+    {
+      "id": "hkex_news_releases",
+      "type": "rss",
+      "enabled": true,
+      "source_group": "market_plumbing",
+      "region": "hong_kong",
+      "topic": "hkex_news_releases",
+      "market_relevance": "high",
+      "url": "https://www.hkex.com.hk/Services/RSS-Feeds/News-Releases?sc_lang=en",
+      "tags": [
+        "source_type:exchange",
+        "source_priority:high",
+        "asset_class:equities",
+        "market_topic:market_structure",
+        "collector_confidence:official_source"
+      ]
+    },
+    {
+      "id": "hkex_regulatory_announcements",
+      "type": "rss",
+      "enabled": true,
+      "source_group": "market_plumbing",
+      "region": "hong_kong",
+      "topic": "hkex_regulatory_announcements",
+      "market_relevance": "critical",
+      "url": "https://www.hkex.com.hk/Services/RSS-Feeds/Regulatory-Announcements?sc_lang=en",
+      "tags": [
+        "source_type:exchange",
+        "source_priority:critical",
+        "asset_class:equities",
+        "market_topic:market_structure",
+        "collector_confidence:official_source"
+      ]
+    },
+    {
+      "id": "nasdaq_trader_headlines",
+      "type": "rss",
+      "enabled": true,
+      "source_group": "market_plumbing",
+      "region": "us",
+      "topic": "nasdaq_trader_headlines",
+      "market_relevance": "high",
+      "url": "http://www.nasdaqtrader.com/rss.aspx?feed=currentheadlines",
+      "tags": [
+        "source_type:exchange",
+        "source_priority:high",
+        "asset_class:equities",
+        "market_topic:market_structure",
+        "collector_confidence:official_source"
+      ]
+    },
+    {
+      "id": "nasdaq_trader_equity_alerts",
+      "type": "rss",
+      "enabled": false,
+      "source_group": "market_plumbing",
+      "region": "us",
+      "topic": "nasdaq_trader_equity_alerts",
+      "market_relevance": "high",
+      "url": "http://www.nasdaqtrader.com/rss.aspx?feed=tradealerts",
+      "tags": [
+        "source_type:exchange",
+        "source_priority:high",
+        "asset_class:equities",
+        "market_topic:market_structure",
+        "collector_confidence:official_source",
+        "notes:url_not_recently_verified_after_restructure"
+      ]
+    },
+    {
+      "id": "marketwatch_topstories",
+      "type": "rss",
+      "enabled": true,
+      "source_group": "macro_economics",
+      "region": "us",
+      "topic": "marketwatch_topstories",
+      "market_relevance": "medium",
+      "url": "http://feeds.marketwatch.com/marketwatch/topstories/",
+      "tags": [
+        "source_type:media",
+        "source_priority:medium",
+        "asset_class:macro",
+        "market_topic:markets",
+        "collector_confidence:primary_feed"
+      ]
+    },
+    {
+      "id": "marketwatch_marketpulse",
+      "type": "rss",
+      "enabled": true,
+      "source_group": "macro_economics",
+      "region": "us",
+      "topic": "marketwatch_marketpulse",
+      "market_relevance": "medium",
+      "url": "http://feeds.marketwatch.com/marketwatch/marketpulse/",
+      "tags": [
+        "source_type:media",
+        "source_priority:medium",
+        "asset_class:macro",
+        "market_topic:markets",
+        "collector_confidence:primary_feed"
+      ]
+    },
+    {
+      "id": "bbc_news_front_page",
+      "type": "rss",
+      "enabled": true,
+      "source_group": "macro_economics",
+      "region": "global",
+      "topic": "bbc_front_page",
+      "market_relevance": "medium",
+      "url": "https://feeds.bbci.co.uk/news/rss.xml",
+      "tags": [
+        "source_type:media",
+        "source_priority:medium",
+        "asset_class:macro",
+        "market_topic:geopolitics",
+        "collector_confidence:primary_feed"
+      ]
+    },
+    {
+      "id": "bbc_business",
+      "type": "rss",
+      "enabled": true,
+      "source_group": "macro_economics",
+      "region": "global",
+      "topic": "bbc_business",
+      "market_relevance": "medium",
+      "url": "https://feeds.bbci.co.uk/news/business/rss.xml",
+      "tags": [
+        "source_type:media",
+        "source_priority:medium",
+        "asset_class:macro",
+        "market_topic:markets",
+        "collector_confidence:primary_feed"
+      ]
+    },
+    {
+      "id": "bbc_world",
+      "type": "rss",
+      "enabled": true,
+      "source_group": "macro_economics",
+      "region": "global",
+      "topic": "bbc_world",
+      "market_relevance": "medium",
+      "url": "https://feeds.bbci.co.uk/news/world/rss.xml",
+      "tags": [
+        "source_type:media",
+        "source_priority:medium",
+        "asset_class:macro",
+        "market_topic:war_geopolitics",
+        "collector_confidence:primary_feed"
+      ]
+    },
+    {
+      "id": "guardian_business",
+      "type": "rss",
+      "enabled": true,
+      "source_group": "macro_economics",
+      "region": "uk",
+      "topic": "guardian_business",
+      "market_relevance": "medium",
+      "url": "https://www.theguardian.com/uk/business/rss",
+      "tags": [
+        "source_type:media",
+        "source_priority:medium",
+        "asset_class:macro",
+        "market_topic:markets",
+        "collector_confidence:primary_feed"
+      ]
+    },
+    {
+      "id": "guardian_world",
+      "type": "rss",
+      "enabled": true,
+      "source_group": "macro_economics",
+      "region": "global",
+      "topic": "guardian_world",
+      "market_relevance": "medium",
+      "url": "https://www.theguardian.com/world/rss",
+      "tags": [
+        "source_type:media",
+        "source_priority:medium",
+        "asset_class:macro",
+        "market_topic:war_geopolitics",
+        "collector_confidence:primary_feed"
+      ]
+    },
+    {
+      "id": "guardian_us",
+      "type": "rss",
+      "enabled": true,
+      "source_group": "macro_economics",
+      "region": "us",
+      "topic": "guardian_us",
+      "market_relevance": "medium",
+      "url": "https://www.theguardian.com/us-news/rss",
+      "tags": [
+        "source_type:media",
+        "source_priority:medium",
+        "asset_class:macro",
+        "market_topic:markets",
+        "collector_confidence:primary_feed"
+      ]
+    },
+    {
+      "id": "guardian_uk",
+      "type": "rss",
+      "enabled": true,
+      "source_group": "macro_economics",
+      "region": "uk",
+      "topic": "guardian_uk",
+      "market_relevance": "medium",
+      "url": "https://www.theguardian.com/uk-news/rss",
+      "tags": [
+        "source_type:media",
+        "source_priority:medium",
+        "asset_class:macro",
+        "market_topic:markets",
+        "collector_confidence:primary_feed"
+      ]
+    },
+    {
+      "id": "guardian_china",
+      "type": "rss",
+      "enabled": true,
+      "source_group": "macro_economics",
+      "region": "china",
+      "topic": "guardian_china",
+      "market_relevance": "medium",
+      "url": "https://www.theguardian.com/world/china/rss",
+      "tags": [
+        "source_type:media",
+        "source_priority:medium",
+        "asset_class:macro",
+        "market_topic:war_geopolitics",
+        "collector_confidence:primary_feed"
+      ]
+    },
+    {
+      "id": "coindesk_rss",
+      "type": "rss",
+      "enabled": true,
+      "source_group": "crypto_media",
+      "region": "global",
+      "topic": "coindesk_markets",
+      "market_relevance": "high",
+      "url": "https://www.coindesk.com/arc/outboundfeeds/rss/",
+      "tags": [
+        "source_type:crypto_media",
+        "source_priority:high",
+        "asset_class:crypto",
+        "market_topic:markets",
+        "collector_confidence:primary_feed"
+      ]
+    },
+    {
+      "id": "google_news_reuters_crypto_markets",
+      "type": "rss",
+      "enabled": true,
+      "source_group": "aggregators",
+      "region": "global",
+      "topic": "reuters_crypto_markets",
+      "market_relevance": "medium",
+      "url": "https://news.google.com/rss/search?q=Reuters+(crypto+OR+bitcoin+OR+ethereum+OR+stablecoin+OR+markets)&hl=en-US&gl=US&ceid=US:en",
+      "tags": [
+        "source_type:aggregator",
+        "source_priority:medium",
+        "asset_class:crypto",
+        "market_topic:markets",
+        "collector_confidence:google_news_fallback",
+        "publisher_filter:reuters"
+      ]
+    },
+    {
+      "id": "google_news_bloomberg_crypto_markets",
+      "type": "rss",
+      "enabled": true,
+      "source_group": "aggregators",
+      "region": "global",
+      "topic": "bloomberg_crypto_markets",
+      "market_relevance": "medium",
+      "url": "https://news.google.com/rss/search?q=Bloomberg+(crypto+OR+bitcoin+OR+ethereum+OR+stablecoin+OR+markets)&hl=en-US&gl=US&ceid=US:en",
+      "tags": [
+        "source_type:aggregator",
+        "source_priority:medium",
+        "asset_class:crypto",
+        "market_topic:markets",
+        "collector_confidence:google_news_fallback",
+        "publisher_filter:bloomberg"
+      ]
+    },
+    {
+      "id": "google_news_ft_crypto_central_banks",
+      "type": "rss",
+      "enabled": true,
+      "source_group": "aggregators",
+      "region": "global",
+      "topic": "ft_crypto_central_banks",
+      "market_relevance": "medium",
+      "url": "https://news.google.com/rss/search?q=%22Financial+Times%22+(crypto+OR+bitcoin+OR+ethereum+OR+central+banks+OR+rates)&hl=en-US&gl=US&ceid=US:en",
+      "tags": [
+        "source_type:aggregator",
+        "source_priority:medium",
+        "asset_class:macro",
+        "market_topic:rates",
+        "collector_confidence:google_news_fallback",
+        "publisher_filter:financial_times"
+      ]
+    },
+    {
+      "id": "google_news_city_london_finance",
+      "type": "rss",
+      "enabled": true,
+      "source_group": "aggregators",
+      "region": "uk",
+      "topic": "city_london_finance",
+      "market_relevance": "medium",
+      "url": "https://news.google.com/rss/search?q=%22City+of+London%22+finance+OR+banks+OR+markets&hl=en-GB&gl=GB&ceid=GB:en",
+      "tags": [
+        "source_type:aggregator",
+        "source_priority:medium",
+        "asset_class:macro",
+        "market_topic:markets",
+        "collector_confidence:google_news_fallback",
+        "publisher_filter:city_of_london"
+      ]
+    },
+    {
+      "id": "google_news_shanghai_markets",
+      "type": "rss",
+      "enabled": true,
+      "source_group": "aggregators",
+      "region": "china",
+      "topic": "shanghai_markets",
+      "market_relevance": "medium",
+      "url": "https://news.google.com/rss/search?q=Shanghai+markets+OR+Shanghai+Stock+Exchange+OR+China+markets&hl=en-US&gl=US&ceid=US:en",
+      "tags": [
+        "source_type:aggregator",
+        "source_priority:medium",
+        "asset_class:equities",
+        "market_topic:markets",
+        "collector_confidence:google_news_fallback",
+        "publisher_filter:shanghai"
+      ]
+    },
+    {
+      "id": "gdelt_crypto_global",
+      "type": "gdelt_doc",
+      "enabled": true,
+      "source_group": "gdelt",
+      "region": "global",
+      "topic": "gdelt_crypto_global",
+      "market_relevance": "medium",
+      "url": "https://api.gdeltproject.org/api/v2/doc/doc",
+      "query": "(bitcoin OR ethereum OR crypto OR stablecoin OR exchange) lang:english",
+      "tags": [
+        "source_type:aggregator",
+        "source_priority:medium",
+        "asset_class:crypto",
+        "market_topic:markets",
+        "collector_confidence:primary_feed"
+      ]
+    },
+    {
+      "id": "gdelt_macro_liquidity",
+      "type": "gdelt_doc",
+      "enabled": true,
+      "source_group": "gdelt",
+      "region": "global",
+      "topic": "gdelt_macro_liquidity",
+      "market_relevance": "medium",
+      "url": "https://api.gdeltproject.org/api/v2/doc/doc",
+      "query": "(federal reserve OR ecb OR bank of england OR liquidity OR yields OR rates OR inflation) lang:english",
+      "tags": [
+        "source_type:aggregator",
+        "source_priority:medium",
+        "asset_class:macro",
+        "market_topic:rates",
+        "collector_confidence:primary_feed"
+      ]
+    },
+    {
+      "id": "gdelt_energy_geopolitics",
+      "type": "gdelt_doc",
+      "enabled": true,
+      "source_group": "gdelt",
+      "region": "global",
+      "topic": "gdelt_energy_geopolitics",
+      "market_relevance": "medium",
+      "url": "https://api.gdeltproject.org/api/v2/doc/doc",
+      "query": "(oil OR opec OR natural gas OR strait of hormuz OR sanctions OR geopolitics) lang:english",
+      "tags": [
+        "source_type:aggregator",
+        "source_priority:medium",
+        "asset_class:macro",
+        "market_topic:energy_shock",
+        "market_topic:war_geopolitics",
+        "collector_confidence:primary_feed"
+      ]
+    },
+    {
+      "id": "gdelt_us_china_risk",
+      "type": "gdelt_doc",
+      "enabled": true,
+      "source_group": "gdelt",
+      "region": "global",
+      "topic": "gdelt_us_china_risk",
+      "market_relevance": "medium",
+      "url": "https://api.gdeltproject.org/api/v2/doc/doc",
+      "query": "((us OR u.s. OR america) AND china AND (tariffs OR sanctions OR chip export controls OR trade war)) lang:english",
+      "tags": [
+        "source_type:aggregator",
+        "source_priority:medium",
+        "asset_class:macro",
+        "market_topic:war_geopolitics",
+        "collector_confidence:primary_feed"
+      ]
+    },
+    {
+      "id": "gdelt_corporate_risk",
+      "type": "gdelt_doc",
+      "enabled": true,
+      "source_group": "gdelt",
+      "region": "global",
+      "topic": "gdelt_corporate_risk",
+      "market_relevance": "medium",
+      "url": "https://api.gdeltproject.org/api/v2/doc/doc",
+      "query": "(bankruptcy OR insolvency OR default OR downgrade OR debt distress OR restructuring) lang:english",
+      "tags": [
+        "source_type:aggregator",
+        "source_priority:medium",
+        "asset_class:macro",
+        "market_topic:banking_stress",
+        "collector_confidence:primary_feed"
+      ]
+    },
+    {
+      "id": "gdelt_semiconductors_ai_supply_chain",
+      "type": "gdelt_doc",
+      "enabled": true,
+      "source_group": "gdelt",
+      "region": "global",
+      "topic": "gdelt_semiconductors_ai_supply_chain",
+      "market_relevance": "medium",
+      "url": "https://api.gdeltproject.org/api/v2/doc/doc",
+      "query": "(semiconductor OR chip supply chain OR foundry OR ai gpu export controls) lang:english",
+      "tags": [
+        "source_type:aggregator",
+        "source_priority:medium",
+        "asset_class:equities",
+        "market_topic:market_structure",
+        "collector_confidence:primary_feed"
+      ]
+    }
+  ]
+}

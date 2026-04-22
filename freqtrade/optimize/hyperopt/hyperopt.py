@@ -30,6 +30,7 @@ from freqtrade.util import get_progress_tracker
 
 
 logger = logging.getLogger(__name__)
+MAX_HYPEROPT_EPOCHS = 800
 
 
 class Hyperopt:
@@ -59,7 +60,16 @@ class Hyperopt:
         self.data_pickle_file = (
             self.config["user_data_dir"] / "hyperopt_results" / "hyperopt_tickerdata.pkl"
         )
-        self.total_epochs = config.get("epochs", 0)
+        configured_epochs = int(config.get("epochs", 0) or 0)
+        if configured_epochs > MAX_HYPEROPT_EPOCHS:
+            logger.warning(
+                "Configured hyperopt epochs (%s) exceeds max allowed (%s). Capping to %s.",
+                configured_epochs,
+                MAX_HYPEROPT_EPOCHS,
+                MAX_HYPEROPT_EPOCHS,
+            )
+        self.total_epochs = min(configured_epochs, MAX_HYPEROPT_EPOCHS)
+        self.config["epochs"] = self.total_epochs
 
         self.current_best_loss = 100
 
@@ -209,12 +219,240 @@ class Hyperopt:
         val["is_best"] = is_best
         val["is_random"] = is_random
         self.print_results(val)
+        self._log_epoch_metrics(val)
 
         if is_best:
             self.current_best_loss = val["loss"]
             self.current_best_epoch = val
 
         self._save_result(val)
+
+    @staticmethod
+    def _extract_grid_usage_metrics(val: dict[str, Any]) -> dict[str, Any]:
+        """
+        Extract per-epoch virtual level usage metrics from trade order tags.
+        Works best with strategies that use tags like:
+        - seed_mean_reversion (EN1)
+        - add_L02 ... add_L09
+        - rebuy_L02 ... rebuy_L09
+        """
+        metrics = val.get("results_metrics", {}) or {}
+        trades = metrics.get("trades")
+        if not isinstance(trades, list):
+            return {
+                "trade_obs": 0,
+                "avg_adds_per_trade": 0.0,
+                "avg_rebuys_per_trade": 0.0,
+                "avg_peels_per_trade": 0.0,
+                "max_adds_single_trade": 0,
+                "max_peels_single_trade": 0,
+                "max_rebuys_single_trade": 0,
+                "level_trade_hits": [0] * 9,
+                "rebuy_level_trade_hits": [0] * 9,
+                "peel_level_trade_hits": [0] * 9,
+            }
+
+        level_trade_hits = [0] * 9
+        rebuy_level_trade_hits = [0] * 9
+        peel_level_trade_hits = [0] * 9
+        adds_per_trade: list[int] = []
+        peels_per_trade: list[int] = []
+        rebuys_per_trade: list[int] = []
+
+        for trade in trades:
+            if not isinstance(trade, dict):
+                continue
+            orders = trade.get("orders")
+            if not isinstance(orders, list):
+                continue
+
+            reached_levels: set[int] = set()
+            rebought_levels: set[int] = set()
+            peeled_levels: set[int] = set()
+            add_count = 0
+            peel_count = 0
+            rebuy_count = 0
+
+            for order in orders:
+                if not isinstance(order, dict):
+                    continue
+
+                tag = str(order.get("ft_order_tag") or "")
+                is_entry = bool(order.get("ft_is_entry", False))
+                side = str(order.get("ft_order_side") or "")
+
+                if tag.startswith("seed") and is_entry and side == "buy":
+                    reached_levels.add(1)
+                    continue
+
+                if tag.startswith("add_L") and is_entry and side == "buy":
+                    try:
+                        level = int(tag.split("add_L", 1)[1][:2])
+                    except (ValueError, IndexError):
+                        continue
+                    if 1 <= level <= 9:
+                        reached_levels.add(level)
+                        add_count += 1
+                    continue
+
+                if tag.startswith("rebuy_L") and is_entry and side == "buy":
+                    try:
+                        level = int(tag.split("rebuy_L", 1)[1][:2])
+                    except (ValueError, IndexError):
+                        continue
+                    if 1 <= level <= 9:
+                        reached_levels.add(level)
+                        rebought_levels.add(level)
+                        rebuy_count += 1
+                    continue
+
+                if tag.startswith("peel_L") and (not is_entry) and side == "sell":
+                    try:
+                        level = int(tag.split("peel_L", 1)[1][:2])
+                    except (ValueError, IndexError):
+                        continue
+                    if 1 <= level <= 9:
+                        peeled_levels.add(level)
+                        peel_count += 1
+
+            if reached_levels:
+                for level in reached_levels:
+                    level_trade_hits[level - 1] += 1
+
+            if peeled_levels:
+                for level in peeled_levels:
+                    peel_level_trade_hits[level - 1] += 1
+
+            if rebought_levels:
+                for level in rebought_levels:
+                    rebuy_level_trade_hits[level - 1] += 1
+
+            adds_per_trade.append(add_count)
+            peels_per_trade.append(peel_count)
+            rebuys_per_trade.append(rebuy_count)
+
+        trade_obs = len(adds_per_trade)
+        if trade_obs == 0:
+            return {
+                "trade_obs": 0,
+                "avg_adds_per_trade": 0.0,
+                "avg_rebuys_per_trade": 0.0,
+                "avg_peels_per_trade": 0.0,
+                "max_adds_single_trade": 0,
+                "max_peels_single_trade": 0,
+                "max_rebuys_single_trade": 0,
+                "level_trade_hits": [0] * 9,
+                "rebuy_level_trade_hits": [0] * 9,
+                "peel_level_trade_hits": [0] * 9,
+            }
+
+        return {
+            "trade_obs": trade_obs,
+            "avg_adds_per_trade": float(sum(adds_per_trade) / trade_obs),
+            "avg_rebuys_per_trade": float(sum(rebuys_per_trade) / trade_obs),
+            "avg_peels_per_trade": float(sum(peels_per_trade) / trade_obs),
+            "max_adds_single_trade": int(max(adds_per_trade)),
+            "max_peels_single_trade": int(max(peels_per_trade)),
+            "max_rebuys_single_trade": int(max(rebuys_per_trade)),
+            "level_trade_hits": level_trade_hits,
+            "rebuy_level_trade_hits": rebuy_level_trade_hits,
+            "peel_level_trade_hits": peel_level_trade_hits,
+        }
+
+    def _log_epoch_metrics(self, val: dict[str, Any]) -> None:
+        """
+        Emit one structured summary per epoch for launcher monitoring.
+        """
+        full_report = 0
+
+        metrics = val.get("results_metrics", {}) or {}
+        total_trades = int(metrics.get("total_trades") or 0)
+        wins = int(metrics.get("wins") or 0)
+        draws = int(metrics.get("draws") or 0)
+        losses = int(metrics.get("losses") or 0)
+        winrate = float(metrics.get("winrate") or 0.0)
+        profit_abs = float(metrics.get("profit_total_abs") or 0.0)
+        profit_pct = float(metrics.get("profit_total") or 0.0)
+        max_dd_account = float(metrics.get("max_drawdown_account") or 0.0)
+        trades_per_day = float(metrics.get("trades_per_day") or 0.0)
+        holding_avg = metrics.get("holding_avg")
+
+        epoch_num = int(val.get("current_epoch") or 0)
+        total_epochs = int(self.total_epochs)
+        is_best = bool(val.get("is_best", False))
+        is_random = bool(val.get("is_random", False))
+        loss = float(val.get("loss") or 0.0)
+
+        if not full_report:
+            logger.info(
+                (
+                    "\n-Epoch=%d/%d "
+                    "-Best=%s "
+                    "-Loss=%.6f "
+                    "-Trades=%d "
+                    "-Winrate=%.2f%% "
+                    "-Profit_abs=%.8f "
+                    "-Profit_pct=%.3f%% "
+                    "-Max_dd=%.3f%%"
+                ),
+                epoch_num,
+                total_epochs,
+                is_best,
+                loss,
+                total_trades,
+                winrate * 100.0,
+                profit_abs,
+                profit_pct * 100.0,
+                max_dd_account * 100.0,
+            )
+            return
+
+        grid = self._extract_grid_usage_metrics(val)
+        en_1_9 = " ".join([f"EN{i + 1}={int(grid['level_trade_hits'][i])}" for i in range(9)])
+        rebuy_1_9 = " ".join(
+            [f"REBUY_L{i + 1}={int(grid['rebuy_level_trade_hits'][i])}" for i in range(9)]
+        )
+        peel_1_9 = " ".join(
+            [f"PEEL_L{i + 1}={int(grid['peel_level_trade_hits'][i])}" for i in range(9)]
+        )
+
+        logger.info(
+            (
+                "epoch_metrics\n"
+                "  epoch=%d/%d best=%s random=%s loss=%.6f\n"
+                "  trades total=%d wins=%d draws=%d losses=%d winrate=%.2f%% tpd=%.3f hold_avg=%s\n"
+                "  pnl profit_abs=%.8f profit_pct=%.3f%% max_dd=%.3f%%\n"
+                "  grid avg_adds=%.3f avg_rebuys=%.3f avg_peels=%.3f "
+                "  max_adds=%d max_rebuys=%d max_peels=%d\n"
+                "  levels_en_1_9 %s\n"
+                "  levels_rebuy_1_9 %s\n"
+                "  levels_peel_1_9 %s"
+            ),
+            epoch_num,
+            total_epochs,
+            is_best,
+            is_random,
+            loss,
+            total_trades,
+            wins,
+            draws,
+            losses,
+            winrate * 100.0,
+            trades_per_day,
+            str(holding_avg),
+            profit_abs,
+            profit_pct * 100.0,
+            max_dd_account * 100.0,
+            float(grid["avg_adds_per_trade"]),
+            float(grid["avg_rebuys_per_trade"]),
+            float(grid["avg_peels_per_trade"]),
+            int(grid["max_adds_single_trade"]),
+            int(grid["max_rebuys_single_trade"]),
+            int(grid["max_peels_single_trade"]),
+            en_1_9,
+            rebuy_1_9,
+            peel_1_9,
+        )
 
     def start(self) -> None:
         self.random_state = self._set_random_state(self.config.get("hyperopt_random_state"))

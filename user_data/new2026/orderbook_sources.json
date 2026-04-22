@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "exchange": "binance_usdm_futures",
+  "market_type": "futures",
+  "use_launcher_whitelist": true,
+  "stream_mode": "partial_depth",
+  "depth_levels": 20,
+  "stream_update_ms": 500,
+  "metric_interval_seconds": 1,
+  "bar_intervals_seconds": [
+    60,
+    300,
+    3600
+  ],
+  "snapshot_interval_seconds": 60,
+  "store_snapshots": true,
+  "store_raw_events": false,
+  "max_symbols": 12,
+  "capacity_warning_mb": 500,
+  "capacity_critical_mb": 2000,
+  "wall_score_threshold": 4.0,
+  "pressure_threshold": 0.35,
+  "extreme_pressure_threshold": 0.6,
+  "liquidity_bps_bands": [
+    5,
+    10,
+    25,
+    50
+  ],
+  "user_agent": "FreQ-OrderBookCollector/1.0"
+}

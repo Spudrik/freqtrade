@@ -1,0 +1,353 @@
+﻿{
+    "description":  "Explorer market windows manifest for HybridRecoveryGridStrategy.",
+    "market_windows":  [
+                           {
+                               "name":  "pre_covid_range_2020",
+                               "regime":  "chop",
+                               "segment_type":  "market_state",
+                               "market_state":  "chop",
+                               "timerange":  "20200101-20200215",
+                               "segment_length_months":  1.5,
+                               "rationale":  "Pre-crash range before the COVID liquidity shock."
+                           },
+                           {
+                               "name":  "covid_liquidity_crash",
+                               "regime":  "crash",
+                               "segment_type":  "market_state",
+                               "market_state":  "crash",
+                               "timerange":  "20200215-20200401",
+                               "segment_length_months":  1.5,
+                               "rationale":  "Fast pandemic/liquidity drawdown and recovery start."
+                           },
+                           {
+                               "name":  "post_covid_recovery_bull",
+                               "regime":  "bull",
+                               "segment_type":  "market_state",
+                               "market_state":  "bull",
+                               "timerange":  "20200401-20200901",
+                               "segment_length_months":  5,
+                               "rationale":  "Post-crash recovery and DeFi-era risk expansion."
+                           },
+                           {
+                               "name":  "late_2020_consolidation",
+                               "regime":  "chop",
+                               "segment_type":  "market_state",
+                               "market_state":  "chop",
+                               "timerange":  "20200901-20201015",
+                               "segment_length_months":  1.5,
+                               "rationale":  "Range before the Q4 2020 breakout."
+                           },
+                           {
+                               "name":  "institutional_retail_bull_2020_21",
+                               "regime":  "bull",
+                               "segment_type":  "market_state",
+                               "market_state":  "bull",
+                               "timerange":  "20201015-20210415",
+                               "segment_length_months":  6,
+                               "rationale":  "Late-2020/Q1-2021 bull trend into the first 2021 cycle peak."
+                           },
+                           {
+                               "name":  "spring_2021_crash",
+                               "regime":  "crash",
+                               "segment_type":  "market_state",
+                               "market_state":  "crash",
+                               "timerange":  "20210415-20210721",
+                               "segment_length_months":  3.2,
+                               "rationale":  "Sharp May-July 2021 drawdown and liquidation regime."
+                           },
+                           {
+                               "name":  "second_leg_bull_2021",
+                               "regime":  "bull",
+                               "segment_type":  "market_state",
+                               "market_state":  "bull",
+                               "timerange":  "20210721-20211110",
+                               "segment_length_months":  3.7,
+                               "rationale":  "Recovery into the November 2021 all-time high."
+                           },
+                           {
+                               "name":  "post_ath_bear_2021_22",
+                               "regime":  "bear",
+                               "segment_type":  "market_state",
+                               "market_state":  "bear",
+                               "timerange":  "20211110-20220315",
+                               "segment_length_months":  4.1,
+                               "rationale":  "Sustained drawdown after the November 2021 top."
+                           },
+                           {
+                               "name":  "pre_luna_range_2022",
+                               "regime":  "chop",
+                               "segment_type":  "market_state",
+                               "market_state":  "chop",
+                               "timerange":  "20220315-20220510",
+                               "segment_length_months":  1.9,
+                               "rationale":  "Range/fragile consolidation before Terra/Luna contagion."
+                           },
+                           {
+                               "name":  "luna_3ac_contagion_crash",
+                               "regime":  "crash",
+                               "segment_type":  "market_state",
+                               "market_state":  "crash",
+                               "timerange":  "20220510-20220618",
+                               "segment_length_months":  1.3,
+                               "rationale":  "Terra/Luna and forced deleveraging crash window."
+                           },
+                           {
+                               "name":  "summer_2022_relief_range",
+                               "regime":  "chop",
+                               "segment_type":  "market_state",
+                               "market_state":  "chop",
+                               "timerange":  "20220618-20220815",
+                               "segment_length_months":  1.9,
+                               "rationale":  "Relief/range after June 2022 capitulation."
+                           },
+                           {
+                               "name":  "autumn_2022_bear_drift",
+                               "regime":  "bear",
+                               "segment_type":  "market_state",
+                               "market_state":  "bear",
+                               "timerange":  "20220815-20221105",
+                               "segment_length_months":  2.7,
+                               "rationale":  "Weak downtrend before the FTX breakdown."
+                           },
+                           {
+                               "name":  "ftx_breakdown_crash",
+                               "regime":  "crash",
+                               "segment_type":  "market_state",
+                               "market_state":  "crash",
+                               "timerange":  "20221105-20221231",
+                               "segment_length_months":  1.9,
+                               "rationale":  "FTX/Alameda insolvency shock and late-2022 capitulation."
+                           },
+                           {
+                               "name":  "q1_2023_recovery_bull",
+                               "regime":  "bull",
+                               "segment_type":  "market_state",
+                               "market_state":  "bull",
+                               "timerange":  "20230101-20230415",
+                               "segment_length_months":  3.5,
+                               "rationale":  "Early-2023 recovery from cycle lows."
+                           },
+                           {
+                               "name":  "spring_2023_range",
+                               "regime":  "chop",
+                               "segment_type":  "market_state",
+                               "market_state":  "chop",
+                               "timerange":  "20230415-20230615",
+                               "segment_length_months":  2,
+                               "rationale":  "Sideways consolidation after the Q1 recovery."
+                           },
+                           {
+                               "name":  "summer_2023_breakout_attempt",
+                               "regime":  "bull",
+                               "segment_type":  "market_state",
+                               "market_state":  "bull",
+                               "timerange":  "20230615-20230817",
+                               "segment_length_months":  2.1,
+                               "rationale":  "ETF-filing inspired breakout attempt before August risk-off."
+                           },
+                           {
+                               "name":  "autumn_2023_compression",
+                               "regime":  "chop",
+                               "segment_type":  "market_state",
+                               "market_state":  "chop",
+                               "timerange":  "20230817-20231015",
+                               "segment_length_months":  2,
+                               "rationale":  "Compressed/ranging market after the August 2023 selloff."
+                           },
+                           {
+                               "name":  "etf_approval_bull_2023_24",
+                               "regime":  "bull",
+                               "segment_type":  "market_state",
+                               "market_state":  "bull",
+                               "timerange":  "20231015-20240315",
+                               "segment_length_months":  5,
+                               "rationale":  "ETF anticipation/approval rally into the March 2024 high."
+                           },
+                           {
+                               "name":  "post_halving_cooldown_range",
+                               "regime":  "chop",
+                               "segment_type":  "market_state",
+                               "market_state":  "chop",
+                               "timerange":  "20240315-20240805",
+                               "segment_length_months":  4.7,
+                               "rationale":  "ETF profit-taking, halving consolidation and repeated range behaviour."
+                           },
+                           {
+                               "name":  "august_2024_drawdown",
+                               "regime":  "bear",
+                               "segment_type":  "market_state",
+                               "market_state":  "bear",
+                               "timerange":  "20240805-20240910",
+                               "segment_length_months":  1.2,
+                               "rationale":  "Short bearish drawdown before Q4 recovery."
+                           },
+                           {
+                               "name":  "q4_2024_jan_2025_bull",
+                               "regime":  "bull",
+                               "segment_type":  "market_state",
+                               "market_state":  "bull",
+                               "timerange":  "20240910-20250120",
+                               "segment_length_months":  4.3,
+                               "rationale":  "Late-2024 rally through the post-ETF/post-halving cycle advance."
+                           },
+                           {
+                               "name":  "early_2025_cooldown_range",
+                               "regime":  "chop",
+                               "segment_type":  "market_state",
+                               "market_state":  "chop",
+                               "timerange":  "20250120-20250415",
+                               "segment_length_months":  2.8,
+                               "rationale":  "Cooling/ranging phase after early-2025 strength."
+                           },
+                           {
+                               "name":  "mid_2025_bull_to_ath",
+                               "regime":  "bull",
+                               "segment_type":  "market_state",
+                               "market_state":  "bull",
+                               "timerange":  "20250415-20251014",
+                               "segment_length_months":  6,
+                               "rationale":  "Institutional/ETF-led rally into the October 2025 peak."
+                           },
+                           {
+                               "name":  "late_2025_liquidation_crash",
+                               "regime":  "crash",
+                               "segment_type":  "market_state",
+                               "market_state":  "crash",
+                               "timerange":  "20251014-20260101",
+                               "segment_length_months":  2.6,
+                               "rationale":  "Post-October-2025 liquidation/selloff regime into year-end."
+                           },
+                           {
+                               "name":  "crossover_chop_crash_bull_covid",
+                               "regime":  "crossover",
+                               "segment_type":  "crossover",
+                               "market_state":  "chop_crash_bull",
+                               "timerange":  "20200201-20200501",
+                               "segment_length_months":  3,
+                               "source_names":  [
+                                                    "pre_covid_range_2020",
+                                                    "covid_liquidity_crash",
+                                                    "post_covid_recovery_bull"
+                                                ],
+                               "rationale":  "Transition through range, crash, and initial recovery."
+                           },
+                           {
+                               "name":  "crossover_chop_to_bull_late_2020",
+                               "regime":  "crossover",
+                               "segment_type":  "crossover",
+                               "market_state":  "chop_to_bull",
+                               "timerange":  "20200901-20201215",
+                               "segment_length_months":  3.5,
+                               "source_names":  [
+                                                    "late_2020_consolidation",
+                                                    "institutional_retail_bull_2020_21"
+                                                ],
+                               "rationale":  "Range compression into Q4 2020 breakout."
+                           },
+                           {
+                               "name":  "crossover_bull_to_crash_2021",
+                               "regime":  "crossover",
+                               "segment_type":  "crossover",
+                               "market_state":  "bull_to_crash",
+                               "timerange":  "20210315-20210721",
+                               "segment_length_months":  4.2,
+                               "source_names":  [
+                                                    "institutional_retail_bull_2020_21",
+                                                    "spring_2021_crash"
+                                                ],
+                               "rationale":  "Tests behaviour around the first 2021 top and crash."
+                           },
+                           {
+                               "name":  "crossover_bull_to_bear_2021_22",
+                               "regime":  "crossover",
+                               "segment_type":  "crossover",
+                               "market_state":  "bull_to_bear",
+                               "timerange":  "20211015-20220215",
+                               "segment_length_months":  4,
+                               "source_names":  [
+                                                    "second_leg_bull_2021",
+                                                    "post_ath_bear_2021_22"
+                                                ],
+                               "rationale":  "Transition from ATH strength into sustained bear drawdown."
+                           },
+                           {
+                               "name":  "crossover_bear_to_crash_2022",
+                               "regime":  "crossover",
+                               "segment_type":  "crossover",
+                               "market_state":  "bear_to_crash",
+                               "timerange":  "20220315-20220630",
+                               "segment_length_months":  3.5,
+                               "source_names":  [
+                                                    "pre_luna_range_2022",
+                                                    "luna_3ac_contagion_crash"
+                                                ],
+                               "rationale":  "Fragile range into Terra/Luna forced deleveraging."
+                           },
+                           {
+                               "name":  "crossover_bear_crash_to_bull_2022_23",
+                               "regime":  "crossover",
+                               "segment_type":  "crossover",
+                               "market_state":  "bear_crash_to_bull",
+                               "timerange":  "20221001-20230215",
+                               "segment_length_months":  4.5,
+                               "source_names":  [
+                                                    "autumn_2022_bear_drift",
+                                                    "ftx_breakdown_crash",
+                                                    "q1_2023_recovery_bull"
+                                                ],
+                               "rationale":  "FTX crash through early recovery."
+                           },
+                           {
+                               "name":  "crossover_chop_to_bull_2023",
+                               "regime":  "crossover",
+                               "segment_type":  "crossover",
+                               "market_state":  "chop_to_bull",
+                               "timerange":  "20230801-20231115",
+                               "segment_length_months":  3.5,
+                               "source_names":  [
+                                                    "autumn_2023_compression",
+                                                    "etf_approval_bull_2023_24"
+                                                ],
+                               "rationale":  "Compression into ETF-anticipation breakout."
+                           },
+                           {
+                               "name":  "crossover_bull_to_chop_2024",
+                               "regime":  "crossover",
+                               "segment_type":  "crossover",
+                               "market_state":  "bull_to_chop",
+                               "timerange":  "20240301-20240831",
+                               "segment_length_months":  6,
+                               "source_names":  [
+                                                    "etf_approval_bull_2023_24",
+                                                    "post_halving_cooldown_range"
+                                                ],
+                               "rationale":  "March 2024 high into halving/post-halving range."
+                           },
+                           {
+                               "name":  "crossover_bear_to_bull_2024",
+                               "regime":  "crossover",
+                               "segment_type":  "crossover",
+                               "market_state":  "bear_to_bull",
+                               "timerange":  "20240801-20250120",
+                               "segment_length_months":  5.6,
+                               "source_names":  [
+                                                    "august_2024_drawdown",
+                                                    "q4_2024_jan_2025_bull"
+                                                ],
+                               "rationale":  "Short bear drawdown into late-2024 rally."
+                           },
+                           {
+                               "name":  "crossover_bull_to_crash_2025",
+                               "regime":  "crossover",
+                               "segment_type":  "crossover",
+                               "market_state":  "bull_to_crash",
+                               "timerange":  "20250901-20260101",
+                               "segment_length_months":  4,
+                               "source_names":  [
+                                                    "mid_2025_bull_to_ath",
+                                                    "late_2025_liquidation_crash"
+                                                ],
+                               "rationale":  "Late-cycle bull into October/November 2025 liquidation selloff."
+                           }
+                       ]
+}
