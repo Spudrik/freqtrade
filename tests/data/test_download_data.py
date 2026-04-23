@@ -4,7 +4,7 @@ import pytest
 
 from freqtrade.configuration.config_setup import setup_utils_configuration
 from freqtrade.data.history.history_utils import download_data_main
-from freqtrade.enums import RunMode
+from freqtrade.enums import RunMode, TradingMode
 from freqtrade.exceptions import OperationalException
 from tests.conftest import EXMS, log_has_re, patch_exchange
 
@@ -87,6 +87,34 @@ def test_download_data_main_trades(mocker):
     config["exchange"]["name"] = "bybit"
     with pytest.raises(OperationalException, match=r"Trade history not available for .*"):
         download_data_main(config)
+
+
+def test_download_data_main_orderbook(mocker):
+    dl_mock = mocker.patch(
+        "freqtrade.data.history.history_utils.refresh_backtest_orderbook_data",
+        MagicMock(return_value=[]),
+    )
+    patch_exchange(mocker, exchange="bybit")
+    mocker.patch(f"{EXMS}.get_markets", return_value={"ETH/USDT:USDT": {"id": "ETHUSDT"}})
+    config = setup_utils_configuration(
+        {"exchange": "bybit", "trading_mode": "futures"}, RunMode.UTIL_EXCHANGE
+    )
+    config.update(
+        {
+            "days": 20,
+            "pairs": ["ETH/USDT:USDT"],
+            "download_orderbook": True,
+            "orderbook_depth": 500,
+            "orderbook_category": "linear",
+            "trading_mode": TradingMode.FUTURES,
+        }
+    )
+    download_data_main(config)
+
+    assert dl_mock.call_count == 1
+    assert dl_mock.call_args.kwargs["depth"] == 500
+    assert dl_mock.call_args.kwargs["category"] == "linear"
+    assert dl_mock.call_args.kwargs["timerange"].starttype == "date"
 
 
 def test_download_data_main_data_invalid(mocker):

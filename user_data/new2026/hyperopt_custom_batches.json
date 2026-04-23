@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-04-22T08:23:13.506023+01:00",
+  "updated_at": "2026-04-22T22:02:26.800539+01:00",
   "batches": [
     {
       "id": "entrytunewithexits",
@@ -95,7 +95,10 @@
       "stale_excluded_params_snapshot": [],
       "resolved_at": "2026-04-22T05:15:22.865148+01:00",
       "created_at": "2026-04-22T05:15:22.865148+01:00",
-      "updated_at": "2026-04-22T05:15:22.865148+01:00"
+      "updated_at": "2026-04-22T05:15:22.865148+01:00",
+      "strategy_file": "C:\\FreqTradeStuff\\_worktrees\\freqtrade-new2026-clean\\user_data\\strategies\\HybridRecoveryGridStrategy_v11.py",
+      "strategy_class": "HybridRecoveryGridStrategy",
+      "strategy_file_name": "HybridRecoveryGridStrategy_v11.py"
     },
     {
       "id": "coreregime",
@@ -139,7 +142,10 @@
       "stale_excluded_params_snapshot": [],
       "resolved_at": "2026-04-22T05:19:21.770684+01:00",
       "created_at": "2026-04-22T05:19:18.668307+01:00",
-      "updated_at": "2026-04-22T05:19:21.770684+01:00"
+      "updated_at": "2026-04-22T05:19:21.770684+01:00",
+      "strategy_file": "C:\\FreqTradeStuff\\_worktrees\\freqtrade-new2026-clean\\user_data\\strategies\\HybridRecoveryGridStrategy_v11.py",
+      "strategy_class": "HybridRecoveryGridStrategy",
+      "strategy_file_name": "HybridRecoveryGridStrategy_v11.py"
     },
     {
       "id": "featureenable",
@@ -199,7 +205,10 @@
       "stale_excluded_params_snapshot": [],
       "resolved_at": "2026-04-22T05:21:16.181561+01:00",
       "created_at": "2026-04-22T05:21:05.956439+01:00",
-      "updated_at": "2026-04-22T05:21:16.181561+01:00"
+      "updated_at": "2026-04-22T05:21:16.181561+01:00",
+      "strategy_file": "C:\\FreqTradeStuff\\_worktrees\\freqtrade-new2026-clean\\user_data\\strategies\\HybridRecoveryGridStrategy_v11.py",
+      "strategy_class": "HybridRecoveryGridStrategy",
+      "strategy_file_name": "HybridRecoveryGridStrategy_v11.py"
     },
     {
       "id": "crashwithscalingspacing",
@@ -309,7 +318,10 @@
       "stale_excluded_params_snapshot": [],
       "resolved_at": "2026-04-22T08:21:53.384917+01:00",
       "created_at": "2026-04-22T08:21:53.384917+01:00",
-      "updated_at": "2026-04-22T08:21:53.384917+01:00"
+      "updated_at": "2026-04-22T08:21:53.384917+01:00",
+      "strategy_file": "C:\\FreqTradeStuff\\_worktrees\\freqtrade-new2026-clean\\user_data\\strategies\\HybridRecoveryGridStrategy_v11.py",
+      "strategy_class": "HybridRecoveryGridStrategy",
+      "strategy_file_name": "HybridRecoveryGridStrategy_v11.py"
     },
     {
       "id": "regime",
@@ -376,7 +388,694 @@
       "stale_excluded_params_snapshot": [],
       "resolved_at": "2026-04-22T08:23:13.506023+01:00",
       "created_at": "2026-04-22T08:23:11.766798+01:00",
-      "updated_at": "2026-04-22T08:23:13.506023+01:00"
+      "updated_at": "2026-04-22T08:23:13.506023+01:00",
+      "strategy_file": "C:\\FreqTradeStuff\\_worktrees\\freqtrade-new2026-clean\\user_data\\strategies\\HybridRecoveryGridStrategy_v11.py",
+      "strategy_class": "HybridRecoveryGridStrategy",
+      "strategy_file_name": "HybridRecoveryGridStrategy_v11.py"
+    },
+    {
+      "id": "dailyfeatureenables",
+      "name": "DailyFeatureEnables",
+      "description": "Daily strategy enable toggles only: entry modes, adds, volume sizing, peel/opposite-level exits.",
+      "schema_version": 1,
+      "resolution_source": "strategy_catalog",
+      "strategy_file": "C:\\FreqTradeStuff\\_worktrees\\freqtrade-new2026-clean\\user_data\\strategies\\DailyStructureLadderStrategy.py",
+      "strategy_class": "DailyStructureLadderStrategy",
+      "strategy_file_name": "DailyStructureLadderStrategy.py",
+      "sources": [
+        {
+          "type": "namespace_value",
+          "id": "enables",
+          "namespace": "batch",
+          "value": "enables"
+        }
+      ],
+      "excluded_params": [],
+      "resolved_params_snapshot": [
+        "enable_long_adds",
+        "enable_long_res_break",
+        "enable_long_sup_hold",
+        "enable_short_adds",
+        "enable_short_res_fail",
+        "enable_short_sup_break",
+        "enable_volume_filter",
+        "enable_volume_size_scaling",
+        "full_exit_at_d1_opposite_level",
+        "peel_at_h1_level"
+      ],
+      "spaces_snapshot": [
+        "buy",
+        "sell"
+      ],
+      "stale_sources_snapshot": [],
+      "stale_params_snapshot": [],
+      "stale_excluded_params_snapshot": [],
+      "resolved_at": "2026-04-22T20:03:16.312478+01:00",
+      "created_at": "2026-04-22T20:03:16.312478+01:00",
+      "updated_at": "2026-04-22T20:03:16.312478+01:00"
+    },
+    {
+      "id": "dailystakeleverage",
+      "name": "DailyStakeLeverage",
+      "description": "Daily strategy stake, leverage, and volume-size scaling controls.",
+      "schema_version": 1,
+      "resolution_source": "strategy_catalog",
+      "strategy_file": "C:\\FreqTradeStuff\\_worktrees\\freqtrade-new2026-clean\\user_data\\strategies\\DailyStructureLadderStrategy.py",
+      "strategy_class": "DailyStructureLadderStrategy",
+      "strategy_file_name": "DailyStructureLadderStrategy.py",
+      "sources": [
+        {
+          "type": "namespace_value",
+          "id": "stake_leverage",
+          "namespace": "batch",
+          "value": "stake_leverage"
+        }
+      ],
+      "excluded_params": [],
+      "resolved_params_snapshot": [
+        "enable_volume_size_scaling",
+        "leverage_opt",
+        "stake_fraction",
+        "volume_size_mult_max"
+      ],
+      "spaces_snapshot": [
+        "buy"
+      ],
+      "stale_sources_snapshot": [],
+      "stale_params_snapshot": [],
+      "stale_excluded_params_snapshot": [],
+      "resolved_at": "2026-04-22T20:03:16.312478+01:00",
+      "created_at": "2026-04-22T20:03:16.312478+01:00",
+      "updated_at": "2026-04-22T20:03:16.312478+01:00"
+    },
+    {
+      "id": "dailystructurespacing",
+      "name": "DailyStructureSpacing",
+      "description": "Daily strategy level width, breakout buffer, and H1/D1 level alignment spacing.",
+      "schema_version": 1,
+      "resolution_source": "strategy_catalog",
+      "strategy_file": "C:\\FreqTradeStuff\\_worktrees\\freqtrade-new2026-clean\\user_data\\strategies\\DailyStructureLadderStrategy.py",
+      "strategy_class": "DailyStructureLadderStrategy",
+      "strategy_file_name": "DailyStructureLadderStrategy.py",
+      "sources": [
+        {
+          "type": "namespace_value",
+          "id": "structure_spacing",
+          "namespace": "batch",
+          "value": "structure_spacing"
+        }
+      ],
+      "excluded_params": [],
+      "resolved_params_snapshot": [
+        "breakout_buffer_pct",
+        "d1_zone_atr_mult",
+        "d1_zone_pct_min",
+        "h1_level_near_daily_pct"
+      ],
+      "spaces_snapshot": [
+        "buy"
+      ],
+      "stale_sources_snapshot": [],
+      "stale_params_snapshot": [],
+      "stale_excluded_params_snapshot": [],
+      "resolved_at": "2026-04-22T20:03:16.312478+01:00",
+      "created_at": "2026-04-22T20:03:16.312478+01:00",
+      "updated_at": "2026-04-22T20:03:16.312478+01:00"
+    },
+    {
+      "id": "dailyvolumepressure",
+      "name": "DailyVolumePressure",
+      "description": "Daily strategy volume window, volume ratio, directional pressure, and volume filter toggle.",
+      "schema_version": 1,
+      "resolution_source": "strategy_catalog",
+      "strategy_file": "C:\\FreqTradeStuff\\_worktrees\\freqtrade-new2026-clean\\user_data\\strategies\\DailyStructureLadderStrategy.py",
+      "strategy_class": "DailyStructureLadderStrategy",
+      "strategy_file_name": "DailyStructureLadderStrategy.py",
+      "sources": [
+        {
+          "type": "namespace_value",
+          "id": "volume_pressure",
+          "namespace": "batch",
+          "value": "volume_pressure"
+        }
+      ],
+      "excluded_params": [],
+      "resolved_params_snapshot": [
+        "enable_volume_filter",
+        "pressure_min",
+        "volume_ratio_min",
+        "volume_window"
+      ],
+      "spaces_snapshot": [
+        "buy"
+      ],
+      "stale_sources_snapshot": [],
+      "stale_params_snapshot": [],
+      "stale_excluded_params_snapshot": [],
+      "resolved_at": "2026-04-22T20:03:16.312478+01:00",
+      "created_at": "2026-04-22T20:03:16.312478+01:00",
+      "updated_at": "2026-04-22T20:03:16.312478+01:00"
+    },
+    {
+      "id": "dailysupportholdretest",
+      "name": "DailySupportHoldRetest",
+      "description": "Retest support-hold logic with structure levels, spacing, volume pressure, and long support mode enabled/tunable.",
+      "schema_version": 1,
+      "resolution_source": "strategy_catalog",
+      "strategy_file": "C:\\FreqTradeStuff\\_worktrees\\freqtrade-new2026-clean\\user_data\\strategies\\DailyStructureLadderStrategy.py",
+      "strategy_class": "DailyStructureLadderStrategy",
+      "strategy_file_name": "DailyStructureLadderStrategy.py",
+      "sources": [
+        {
+          "type": "namespace_value",
+          "id": "long_sup_hold",
+          "namespace": "mode",
+          "value": "long_sup_hold"
+        },
+        {
+          "type": "namespace_value",
+          "id": "structure_levels",
+          "namespace": "batch",
+          "value": "structure_levels"
+        },
+        {
+          "type": "namespace_value",
+          "id": "structure_spacing",
+          "namespace": "batch",
+          "value": "structure_spacing"
+        },
+        {
+          "type": "namespace_value",
+          "id": "volume_pressure",
+          "namespace": "batch",
+          "value": "volume_pressure"
+        }
+      ],
+      "excluded_params": [],
+      "resolved_params_snapshot": [
+        "breakout_buffer_pct",
+        "d1_level_lookback",
+        "d1_zone_atr_mult",
+        "d1_zone_pct_min",
+        "enable_long_sup_hold",
+        "enable_volume_filter",
+        "h1_level_near_daily_pct",
+        "h1_local_lookback",
+        "long_support_mode",
+        "pressure_min",
+        "volume_ratio_min",
+        "volume_window"
+      ],
+      "spaces_snapshot": [
+        "buy"
+      ],
+      "stale_sources_snapshot": [],
+      "stale_params_snapshot": [],
+      "stale_excluded_params_snapshot": [],
+      "resolved_at": "2026-04-22T20:03:16.312478+01:00",
+      "created_at": "2026-04-22T20:03:16.312478+01:00",
+      "updated_at": "2026-04-22T20:03:16.312478+01:00"
+    },
+    {
+      "id": "dailynewentryenables",
+      "name": "DailyNewEntryEnables",
+      "description": "Only the four new Daily entry-family enable switches, useful after tuning all new-entry knobs with the switches forced on.",
+      "schema_version": 1,
+      "resolution_source": "strategy_catalog",
+      "strategy_file": "C:\\FreqTradeStuff\\_worktrees\\freqtrade-new2026-clean\\user_data\\strategies\\DailyStructureLadderStrategy.py",
+      "strategy_class": "DailyStructureLadderStrategy",
+      "strategy_file_name": "DailyStructureLadderStrategy.py",
+      "sources": [
+        {
+          "type": "family_tag_intersection",
+          "id": "entry_enables|batch:trap_reclaims",
+          "family": "entry_enables",
+          "tag": "batch:trap_reclaims"
+        },
+        {
+          "type": "family_tag_intersection",
+          "id": "entry_enables|batch:structure_retests",
+          "family": "entry_enables",
+          "tag": "batch:structure_retests"
+        }
+      ],
+      "excluded_params": [],
+      "created_at": "2026-04-22T21:59:23.470209+01:00",
+      "updated_at": "2026-04-22T21:59:23.470209+01:00",
+      "resolved_params_snapshot": [
+        "enable_long_res_retest_hold",
+        "enable_long_sup_reclaim",
+        "enable_short_res_reclaim",
+        "enable_short_sup_retest_reject"
+      ],
+      "spaces_snapshot": [
+        "buy"
+      ],
+      "stale_sources_snapshot": [],
+      "stale_params_snapshot": [],
+      "stale_excluded_params_snapshot": [],
+      "resolved_at": "2026-04-22T21:59:23.470209+01:00"
+    },
+    {
+      "id": "dailytrapreclaims",
+      "name": "DailyTrapReclaims",
+      "description": "Support-loss and resistance-break reclaim entries with shared structure spacing and volume-pressure gates.",
+      "schema_version": 1,
+      "resolution_source": "strategy_catalog",
+      "strategy_file": "C:\\FreqTradeStuff\\_worktrees\\freqtrade-new2026-clean\\user_data\\strategies\\DailyStructureLadderStrategy.py",
+      "strategy_class": "DailyStructureLadderStrategy",
+      "strategy_file_name": "DailyStructureLadderStrategy.py",
+      "sources": [
+        {
+          "type": "namespace_value",
+          "id": "trap_reclaims",
+          "namespace": "batch",
+          "value": "trap_reclaims"
+        },
+        {
+          "type": "namespace_value",
+          "id": "structure_levels",
+          "namespace": "batch",
+          "value": "structure_levels"
+        },
+        {
+          "type": "namespace_value",
+          "id": "structure_spacing",
+          "namespace": "batch",
+          "value": "structure_spacing"
+        },
+        {
+          "type": "namespace_value",
+          "id": "volume_pressure",
+          "namespace": "batch",
+          "value": "volume_pressure"
+        }
+      ],
+      "excluded_params": [
+        "entry_retest_buffer_pct"
+      ],
+      "created_at": "2026-04-22T21:59:23.470209+01:00",
+      "updated_at": "2026-04-22T22:02:26.799540+01:00",
+      "resolved_params_snapshot": [
+        "breakout_buffer_pct",
+        "d1_level_lookback",
+        "d1_zone_atr_mult",
+        "d1_zone_pct_min",
+        "enable_long_sup_reclaim",
+        "enable_short_res_reclaim",
+        "enable_volume_filter",
+        "h1_level_near_daily_pct",
+        "h1_local_lookback",
+        "pressure_min",
+        "reclaim_buffer_pct",
+        "reclaim_lookback_bars",
+        "reclaim_require_volume_pressure",
+        "volume_ratio_min",
+        "volume_window"
+      ],
+      "spaces_snapshot": [
+        "buy"
+      ],
+      "stale_sources_snapshot": [],
+      "stale_params_snapshot": [],
+      "stale_excluded_params_snapshot": [],
+      "resolved_at": "2026-04-22T22:02:26.799540+01:00"
+    },
+    {
+      "id": "dailystructureretests",
+      "name": "DailyStructureRetests",
+      "description": "Broken daily level retests: old resistance holding as support and old support rejecting as resistance.",
+      "schema_version": 1,
+      "resolution_source": "strategy_catalog",
+      "strategy_file": "C:\\FreqTradeStuff\\_worktrees\\freqtrade-new2026-clean\\user_data\\strategies\\DailyStructureLadderStrategy.py",
+      "strategy_class": "DailyStructureLadderStrategy",
+      "strategy_file_name": "DailyStructureLadderStrategy.py",
+      "sources": [
+        {
+          "type": "namespace_value",
+          "id": "structure_retests",
+          "namespace": "batch",
+          "value": "structure_retests"
+        },
+        {
+          "type": "namespace_value",
+          "id": "structure_levels",
+          "namespace": "batch",
+          "value": "structure_levels"
+        },
+        {
+          "type": "namespace_value",
+          "id": "structure_spacing",
+          "namespace": "batch",
+          "value": "structure_spacing"
+        },
+        {
+          "type": "namespace_value",
+          "id": "volume_pressure",
+          "namespace": "batch",
+          "value": "volume_pressure"
+        }
+      ],
+      "excluded_params": [
+        "reclaim_buffer_pct"
+      ],
+      "created_at": "2026-04-22T21:59:23.470209+01:00",
+      "updated_at": "2026-04-22T22:02:26.799540+01:00",
+      "resolved_params_snapshot": [
+        "breakout_buffer_pct",
+        "d1_level_lookback",
+        "d1_zone_atr_mult",
+        "d1_zone_pct_min",
+        "enable_long_res_retest_hold",
+        "enable_short_sup_retest_reject",
+        "enable_volume_filter",
+        "entry_retest_buffer_pct",
+        "entry_retest_lookback_bars",
+        "h1_level_near_daily_pct",
+        "h1_local_lookback",
+        "pressure_min",
+        "retest_require_volume_pressure",
+        "volume_ratio_min",
+        "volume_window"
+      ],
+      "spaces_snapshot": [
+        "buy"
+      ],
+      "stale_sources_snapshot": [],
+      "stale_params_snapshot": [],
+      "stale_excluded_params_snapshot": [],
+      "resolved_at": "2026-04-22T22:02:26.799540+01:00"
+    },
+    {
+      "id": "dailyentryexpansionall",
+      "name": "DailyEntryExpansionAll",
+      "description": "All Daily entry families plus shared structure and volume knobs, for testing the expanded entry surface together.",
+      "schema_version": 1,
+      "resolution_source": "strategy_catalog",
+      "strategy_file": "C:\\FreqTradeStuff\\_worktrees\\freqtrade-new2026-clean\\user_data\\strategies\\DailyStructureLadderStrategy.py",
+      "strategy_class": "DailyStructureLadderStrategy",
+      "strategy_file_name": "DailyStructureLadderStrategy.py",
+      "sources": [
+        {
+          "type": "namespace_value",
+          "id": "entry_modes",
+          "namespace": "batch",
+          "value": "entry_modes"
+        },
+        {
+          "type": "namespace_value",
+          "id": "trap_reclaims",
+          "namespace": "batch",
+          "value": "trap_reclaims"
+        },
+        {
+          "type": "namespace_value",
+          "id": "structure_retests",
+          "namespace": "batch",
+          "value": "structure_retests"
+        },
+        {
+          "type": "namespace_value",
+          "id": "structure_levels",
+          "namespace": "batch",
+          "value": "structure_levels"
+        },
+        {
+          "type": "namespace_value",
+          "id": "structure_spacing",
+          "namespace": "batch",
+          "value": "structure_spacing"
+        },
+        {
+          "type": "namespace_value",
+          "id": "volume_pressure",
+          "namespace": "batch",
+          "value": "volume_pressure"
+        }
+      ],
+      "excluded_params": [],
+      "created_at": "2026-04-22T21:59:23.470209+01:00",
+      "updated_at": "2026-04-22T21:59:23.470209+01:00",
+      "resolved_params_snapshot": [
+        "breakout_buffer_pct",
+        "d1_level_lookback",
+        "d1_zone_atr_mult",
+        "d1_zone_pct_min",
+        "enable_long_res_break",
+        "enable_long_res_retest_hold",
+        "enable_long_sup_hold",
+        "enable_long_sup_reclaim",
+        "enable_short_res_fail",
+        "enable_short_res_reclaim",
+        "enable_short_sup_break",
+        "enable_short_sup_retest_reject",
+        "enable_volume_filter",
+        "entry_retest_buffer_pct",
+        "entry_retest_lookback_bars",
+        "h1_level_near_daily_pct",
+        "h1_local_lookback",
+        "long_breakout_confirm_mode",
+        "long_breakout_retest_bars",
+        "long_support_mode",
+        "pressure_min",
+        "reclaim_buffer_pct",
+        "reclaim_lookback_bars",
+        "reclaim_require_volume_pressure",
+        "retest_require_volume_pressure",
+        "short_break_confirm_mode",
+        "short_break_retest_bars",
+        "short_fail_require_volume_pressure",
+        "short_fail_wick_min_pct",
+        "volume_ratio_min",
+        "volume_window"
+      ],
+      "spaces_snapshot": [
+        "buy"
+      ],
+      "stale_sources_snapshot": [],
+      "stale_params_snapshot": [],
+      "stale_excluded_params_snapshot": [],
+      "resolved_at": "2026-04-22T21:59:23.470209+01:00"
+    },
+    {
+      "id": "dailysupportreclaimretest",
+      "name": "DailySupportReclaimRetest",
+      "description": "Support-focused retest batch: original support holds, long support reclaims, and short retests of broken support.",
+      "schema_version": 1,
+      "resolution_source": "strategy_catalog",
+      "strategy_file": "C:\\FreqTradeStuff\\_worktrees\\freqtrade-new2026-clean\\user_data\\strategies\\DailyStructureLadderStrategy.py",
+      "strategy_class": "DailyStructureLadderStrategy",
+      "strategy_file_name": "DailyStructureLadderStrategy.py",
+      "sources": [
+        {
+          "type": "namespace_value",
+          "id": "long_sup_hold",
+          "namespace": "mode",
+          "value": "long_sup_hold"
+        },
+        {
+          "type": "namespace_value",
+          "id": "long_sup_reclaim",
+          "namespace": "mode",
+          "value": "long_sup_reclaim"
+        },
+        {
+          "type": "namespace_value",
+          "id": "short_sup_retest_reject",
+          "namespace": "mode",
+          "value": "short_sup_retest_reject"
+        },
+        {
+          "type": "namespace_value",
+          "id": "structure_levels",
+          "namespace": "batch",
+          "value": "structure_levels"
+        },
+        {
+          "type": "namespace_value",
+          "id": "structure_spacing",
+          "namespace": "batch",
+          "value": "structure_spacing"
+        },
+        {
+          "type": "namespace_value",
+          "id": "volume_pressure",
+          "namespace": "batch",
+          "value": "volume_pressure"
+        }
+      ],
+      "excluded_params": [],
+      "created_at": "2026-04-22T21:59:23.470209+01:00",
+      "updated_at": "2026-04-22T21:59:23.470209+01:00",
+      "resolved_params_snapshot": [
+        "breakout_buffer_pct",
+        "d1_level_lookback",
+        "d1_zone_atr_mult",
+        "d1_zone_pct_min",
+        "enable_long_sup_hold",
+        "enable_long_sup_reclaim",
+        "enable_short_sup_retest_reject",
+        "enable_volume_filter",
+        "entry_retest_buffer_pct",
+        "entry_retest_lookback_bars",
+        "h1_level_near_daily_pct",
+        "h1_local_lookback",
+        "long_support_mode",
+        "pressure_min",
+        "reclaim_buffer_pct",
+        "reclaim_lookback_bars",
+        "reclaim_require_volume_pressure",
+        "retest_require_volume_pressure",
+        "volume_ratio_min",
+        "volume_window"
+      ],
+      "spaces_snapshot": [
+        "buy"
+      ],
+      "stale_sources_snapshot": [],
+      "stale_params_snapshot": [],
+      "stale_excluded_params_snapshot": [],
+      "resolved_at": "2026-04-22T21:59:23.470209+01:00"
+    },
+    {
+      "id": "dailyresistancereclaimretest",
+      "name": "DailyResistanceReclaimRetest",
+      "description": "Resistance-focused retest batch: resistance rejects, short resistance reclaims, breakouts, and long retests of broken resistance.",
+      "schema_version": 1,
+      "resolution_source": "strategy_catalog",
+      "strategy_file": "C:\\FreqTradeStuff\\_worktrees\\freqtrade-new2026-clean\\user_data\\strategies\\DailyStructureLadderStrategy.py",
+      "strategy_class": "DailyStructureLadderStrategy",
+      "strategy_file_name": "DailyStructureLadderStrategy.py",
+      "sources": [
+        {
+          "type": "namespace_value",
+          "id": "short_res_fail",
+          "namespace": "mode",
+          "value": "short_res_fail"
+        },
+        {
+          "type": "namespace_value",
+          "id": "short_res_reclaim",
+          "namespace": "mode",
+          "value": "short_res_reclaim"
+        },
+        {
+          "type": "namespace_value",
+          "id": "long_res_break",
+          "namespace": "mode",
+          "value": "long_res_break"
+        },
+        {
+          "type": "namespace_value",
+          "id": "long_res_retest_hold",
+          "namespace": "mode",
+          "value": "long_res_retest_hold"
+        },
+        {
+          "type": "namespace_value",
+          "id": "structure_levels",
+          "namespace": "batch",
+          "value": "structure_levels"
+        },
+        {
+          "type": "namespace_value",
+          "id": "structure_spacing",
+          "namespace": "batch",
+          "value": "structure_spacing"
+        },
+        {
+          "type": "namespace_value",
+          "id": "volume_pressure",
+          "namespace": "batch",
+          "value": "volume_pressure"
+        }
+      ],
+      "excluded_params": [],
+      "created_at": "2026-04-22T21:59:23.470209+01:00",
+      "updated_at": "2026-04-22T21:59:23.470209+01:00",
+      "resolved_params_snapshot": [
+        "breakout_buffer_pct",
+        "d1_level_lookback",
+        "d1_zone_atr_mult",
+        "d1_zone_pct_min",
+        "enable_long_res_break",
+        "enable_long_res_retest_hold",
+        "enable_short_res_fail",
+        "enable_short_res_reclaim",
+        "enable_volume_filter",
+        "entry_retest_buffer_pct",
+        "entry_retest_lookback_bars",
+        "h1_level_near_daily_pct",
+        "h1_local_lookback",
+        "long_breakout_confirm_mode",
+        "long_breakout_retest_bars",
+        "pressure_min",
+        "reclaim_buffer_pct",
+        "reclaim_lookback_bars",
+        "reclaim_require_volume_pressure",
+        "retest_require_volume_pressure",
+        "short_fail_require_volume_pressure",
+        "short_fail_wick_min_pct",
+        "volume_ratio_min",
+        "volume_window"
+      ],
+      "spaces_snapshot": [
+        "buy"
+      ],
+      "stale_sources_snapshot": [],
+      "stale_params_snapshot": [],
+      "stale_excluded_params_snapshot": [],
+      "resolved_at": "2026-04-22T21:59:23.470209+01:00"
+    }
+  ],
+  "future_batch_templates": [
+    {
+      "id": "dailyvolatilityleveragefuture",
+      "name": "DailyVolatilityLeverageFuture",
+      "description": "Template only. Enable the commented volatility leverage adapter parameters in DailyStructureLadderStrategy.py, then move this template into batches and refresh Explorer.",
+      "strategy_class": "DailyStructureLadderStrategy",
+      "strategy_file_name": "DailyStructureLadderStrategy.py",
+      "sources": [
+        {
+          "type": "namespace_value",
+          "id": "volatility_leverage",
+          "namespace": "batch",
+          "value": "volatility_leverage"
+        },
+        {
+          "type": "namespace_value",
+          "id": "stake_leverage",
+          "namespace": "batch",
+          "value": "stake_leverage"
+        }
+      ]
+    },
+    {
+      "id": "dailytargetedd1exitsfuture",
+      "name": "DailyTargetedD1ExitsFuture",
+      "description": "Template only. Enable the commented targeted daily-level exit parameters in DailyStructureLadderStrategy.py, then move this template into batches and refresh Explorer.",
+      "strategy_class": "DailyStructureLadderStrategy",
+      "strategy_file_name": "DailyStructureLadderStrategy.py",
+      "sources": [
+        {
+          "type": "namespace_value",
+          "id": "targeted_d1_exits",
+          "namespace": "batch",
+          "value": "targeted_d1_exits"
+        },
+        {
+          "type": "namespace_value",
+          "id": "exit_peel",
+          "namespace": "batch",
+          "value": "exit_peel"
+        },
+        {
+          "type": "namespace_value",
+          "id": "stop_trail",
+          "namespace": "batch",
+          "value": "stop_trail"
+        }
+      ]
     }
   ]
 }

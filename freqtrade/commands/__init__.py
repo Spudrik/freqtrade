@@ -12,6 +12,7 @@ from freqtrade.commands.arguments import Arguments
 from freqtrade.commands.build_config_commands import start_new_config, start_show_config
 from freqtrade.commands.data_commands import (
     start_convert_data,
+    start_convert_orderbook,
     start_convert_trades,
     start_download_data,
     start_list_data,

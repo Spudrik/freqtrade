@@ -8,6 +8,12 @@ from freqtrade.data.converter.converter import (
     trim_dataframe,
     trim_dataframes,
 )
+from freqtrade.data.converter.orderbook import (
+    convert_bybit_orderbook_archive_to_features,
+    load_orderbook_features,
+    orderbook_feature_filename,
+    store_orderbook_features,
+)
 from freqtrade.data.converter.orderflow import populate_dataframe_with_trades
 from freqtrade.data.converter.trade_converter import (
     convert_trades_format,
@@ -31,7 +37,11 @@ __all__ = [
     "trim_dataframes",
     "convert_trades_format",
     "convert_trades_to_ohlcv",
+    "convert_bybit_orderbook_archive_to_features",
+    "load_orderbook_features",
+    "orderbook_feature_filename",
     "populate_dataframe_with_trades",
+    "store_orderbook_features",
     "trades_convert_types",
     "trades_df_remove_duplicates",
     "trades_dict_to_list",

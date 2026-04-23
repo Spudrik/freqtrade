@@ -512,6 +512,9 @@ class DownloadDataPayload(ExchangeModePayloadMixin, BaseModel):
     timerange: str | None = None
     erase: bool = False
     download_trades: bool = False
+    download_orderbook: bool = False
+    orderbook_depth: int = 500
+    orderbook_category: Literal["linear"] = "linear"
     candle_types: list[str] | None = None
     prepend_data: bool = False
 
@@ -520,6 +523,8 @@ class DownloadDataPayload(ExchangeModePayloadMixin, BaseModel):
         timeframes, days = values.get("timerange"), values.get("days")
         if timeframes and days:
             raise ValueError("Only one of timeframes or days can be provided, not both.")
+        if values.get("download_trades") and values.get("download_orderbook"):
+            raise ValueError("Only one of download_trades or download_orderbook can be provided.")
         return values
 
 

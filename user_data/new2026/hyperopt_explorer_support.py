@@ -129,6 +129,34 @@ def save_custom_batches(path: Path | str, payload: dict[str, Any]) -> None:
     save_json(Path(path), payload)
 
 
+def strategy_identity(strategy_file: str | Path, strategy_class: str) -> dict[str, str]:
+    path = Path(strategy_file).resolve()
+    return {
+        "strategy_file": str(path),
+        "strategy_class": str(strategy_class or ""),
+        "strategy_file_name": path.name,
+    }
+
+
+def batch_matches_strategy(batch: dict[str, Any], catalog: dict[str, Any]) -> bool:
+    """Return true when a custom batch belongs to the catalog strategy."""
+    batch_file = str(batch.get("strategy_file") or "").strip()
+    batch_class = str(batch.get("strategy_class") or "").strip()
+    if not batch_file and not batch_class:
+        return True
+
+    catalog_file = str(catalog.get("strategy_file") or "").strip()
+    catalog_class = str(catalog.get("strategy_class") or "").strip()
+    if batch_class and catalog_class and batch_class != catalog_class:
+        return False
+    if batch_file and catalog_file:
+        try:
+            return Path(batch_file).resolve() == Path(catalog_file).resolve()
+        except Exception:
+            return Path(batch_file).name == Path(catalog_file).name
+    return True
+
+
 def custom_batch_source_label(source: dict[str, Any]) -> str:
     source_type = str(source.get("type") or "")
     source_id = str(source.get("id") or "")

@@ -25,6 +25,7 @@ from freqtrade.enums import CandleType, TradingMode
 from freqtrade.exceptions import OperationalException
 from freqtrade.exchange import Exchange
 from freqtrade.exchange.exchange_utils import date_minus_candles
+from freqtrade.misc import file_dump_json
 from freqtrade.plugins.pairlist.pairlist_helpers import dynamic_expand_pairlist
 from freqtrade.util import dt_now, dt_ts, format_ms_time, format_ms_time_det
 from freqtrade.util.migrations import migrate_data
@@ -648,6 +649,213 @@ def refresh_backtest_trades_data(
     return pairs_not_available
 
 
+def refresh_backtest_orderbook_data(
+    exchange: Exchange,
+    pairs: list[str],
+    datadir: Path,
+    timerange: TimeRange,
+    trading_mode: TradingMode,
+    *,
+    new_pairs_days: int = 30,
+    erase: bool = False,
+    depth: int = 500,
+    category: str = "linear",
+    progress_tracker: CustomProgress | None = None,
+) -> list[str]:
+    """
+    Refresh stored raw order book archives for backtesting research.
+    Used by freqtrade download-data subcommand with --dl-orderbook.
+    :return: List of pairs that are not available or failed.
+    """
+    progress_tracker = retrieve_progress_tracker(progress_tracker)
+    pairs_not_available = []
+
+    if exchange.name.lower() != "bybit":
+        raise OperationalException(
+            "Historical order book downloads are currently only supported for Bybit."
+        )
+    if TradingMode(trading_mode) != TradingMode.FUTURES:
+        raise OperationalException(
+            "Bybit historical order book downloads currently support futures/linear data only. "
+            "Use `--trading-mode futures`."
+        )
+
+    until = None
+    since = 0
+    if timerange:
+        if timerange.starttype == "date":
+            since = timerange.startts * 1000
+        if timerange.stoptype == "date":
+            until = timerange.stopts * 1000
+
+    if not since:
+        since = dt_ts(dt_now() - timedelta(days=new_pairs_days))
+
+    from freqtrade.exchange.bybit_public_data import (
+        bybit_orderbook_availability_filename,
+        download_archive_orderbook,
+        scan_archive_orderbook_availability,
+    )
+
+    with progress_tracker as progress:
+        pair_task = progress.add_task("Downloading order book data...", total=len(pairs))
+        for pair in pairs:
+            progress.update(pair_task, description=f"Downloading order book [{pair}]")
+            if pair not in exchange.markets:
+                pairs_not_available.append(f"{pair}: Pair not available on exchange.")
+                logger.info(f"Skipping pair {pair}...")
+                progress.update(pair_task, advance=1)
+                continue
+
+            market = exchange.markets[pair]
+            symbol = market.get("id")
+            if not symbol:
+                pairs_not_available.append(f"{pair}: Exchange symbol not available.")
+                progress.update(pair_task, advance=1)
+                continue
+
+            logger.info(f"Downloading Bybit order book archives for pair {pair}.")
+            try:
+                _pair, availability = exchange.loop.run_until_complete(
+                    scan_archive_orderbook_availability(
+                        pair=pair,
+                        symbol=symbol,
+                        category=category,
+                        depth=depth,
+                        since_ms=since,
+                        until_ms=until,
+                    )
+                )
+                availability_file = bybit_orderbook_availability_filename(
+                    datadir, category, symbol, depth
+                )
+                availability_file.parent.mkdir(parents=True, exist_ok=True)
+                file_dump_json(availability_file, availability)
+                logger.info(
+                    "Bybit order book availability for %s: %s day(s) available, %s missing.",
+                    pair,
+                    availability["available_count"],
+                    availability["missing_count"],
+                )
+                if availability["available_count"] == 0:
+                    pairs_not_available.append(
+                        f"{pair}: No Bybit order book archives available for requested range."
+                    )
+                    progress.update(pair_task, advance=1)
+                    continue
+
+                _pair, downloaded = exchange.loop.run_until_complete(
+                    download_archive_orderbook(
+                        pair=pair,
+                        symbol=symbol,
+                        datadir=datadir,
+                        category=category,
+                        depth=depth,
+                        since_ms=since,
+                        until_ms=until,
+                        erase=erase,
+                        available_days=[
+                            datetime.fromisoformat(day).date()
+                            for day in availability["available_dates"]
+                        ],
+                    )
+                )
+                logger.info(
+                    f"Available Bybit order book archives for {pair}: {len(downloaded)}."
+                )
+            except Exception as e:
+                logger.exception(f'Failed to download order book data for pair: "{pair}".')
+                pairs_not_available.append(f"{pair}: {str(e)}")
+
+            progress.update(pair_task, advance=1)
+
+    return pairs_not_available
+
+
+def _download_data_dispatch(
+    config: Config,
+    exchange: Exchange,
+    expanded_pairs: list[str],
+    timerange: TimeRange,
+    progress_tracker: CustomProgress | None,
+) -> list[str]:
+    if config.get("download_orderbook"):
+        return refresh_backtest_orderbook_data(
+            exchange,
+            pairs=expanded_pairs,
+            datadir=config["datadir"],
+            timerange=timerange,
+            trading_mode=config.get("trading_mode", TradingMode.SPOT),
+            new_pairs_days=config["new_pairs_days"],
+            erase=bool(config.get("erase")),
+            depth=config.get("orderbook_depth", 500),
+            category=config.get("orderbook_category", "linear"),
+            progress_tracker=progress_tracker,
+        )
+
+    if config.get("download_trades"):
+        if not exchange.get_option("trades_has_history", True):
+            raise OperationalException(
+                f"Trade history not available for {exchange.name}. "
+                "You cannot use --dl-trades for this exchange."
+            )
+        pairs_not_available = refresh_backtest_trades_data(
+            exchange,
+            pairs=expanded_pairs,
+            datadir=config["datadir"],
+            timerange=timerange,
+            new_pairs_days=config["new_pairs_days"],
+            erase=bool(config.get("erase")),
+            data_format=config["dataformat_trades"],
+            trading_mode=config.get("trading_mode", TradingMode.SPOT),
+            progress_tracker=progress_tracker,
+        )
+
+        if config.get("convert_trades") or not exchange.get_option("ohlcv_has_history", True):
+            # Convert downloaded trade data to different timeframes
+            # Only auto-convert for exchanges without historic klines
+            convert_trades_to_ohlcv(
+                pairs=expanded_pairs,
+                timeframes=config["timeframes"],
+                datadir=config["datadir"],
+                timerange=timerange,
+                erase=bool(config.get("erase")),
+                data_format_ohlcv=config["dataformat_ohlcv"],
+                data_format_trades=config["dataformat_trades"],
+                candle_type=config.get("candle_type_def", CandleType.SPOT),
+            )
+        return pairs_not_available
+
+    if not exchange.get_option("ohlcv_has_history", True):
+        if not exchange.get_option("trades_has_history", True):
+            raise OperationalException(
+                f"Historic data not available for {exchange.name}. "
+                f"{exchange.name} does not support downloading trades or ohlcv data."
+            )
+        raise OperationalException(
+            f"Historic klines not available for {exchange.name}. "
+            "Please use `--dl-trades` instead for this exchange "
+            "(will unfortunately take a long time)."
+        )
+
+    migrate_data(config, exchange)
+    return refresh_backtest_ohlcv_data(
+        exchange,
+        pairs=expanded_pairs,
+        timeframes=config["timeframes"],
+        datadir=config["datadir"],
+        timerange=timerange,
+        new_pairs_days=config["new_pairs_days"],
+        erase=bool(config.get("erase")),
+        data_format=config["dataformat_ohlcv"],
+        trading_mode=config.get("trading_mode", "spot"),
+        prepend=config.get("prepend_data", False),
+        progress_tracker=progress_tracker,
+        candle_types=config.get("candle_types"),
+        no_parallel_download=config.get("no_parallel_download", False),
+    )
+
+
 def get_timerange(data: dict[str, DataFrame]) -> tuple[datetime, datetime]:
     """
     Get the maximum common timerange for the given backtest data.
@@ -745,77 +953,22 @@ def download_data(
         )
         return
 
-    logger.info(
-        f"About to download pairs: {expanded_pairs}, "
-        f"intervals: {config['timeframes']} to {config['datadir']}"
-    )
+    if config.get("download_orderbook"):
+        logger.info(f"About to download order book data for pairs: {expanded_pairs}.")
+    else:
+        logger.info(
+            f"About to download pairs: {expanded_pairs}, "
+            f"intervals: {config['timeframes']} to {config['datadir']}"
+        )
 
-    for timeframe in config["timeframes"]:
-        exchange.validate_timeframes(timeframe)
+    if not config.get("download_orderbook"):
+        for timeframe in config["timeframes"]:
+            exchange.validate_timeframes(timeframe)
 
-    # Start downloading
     try:
-        if config.get("download_trades"):
-            if not exchange.get_option("trades_has_history", True):
-                raise OperationalException(
-                    f"Trade history not available for {exchange.name}. "
-                    "You cannot use --dl-trades for this exchange."
-                )
-            pairs_not_available = refresh_backtest_trades_data(
-                exchange,
-                pairs=expanded_pairs,
-                datadir=config["datadir"],
-                timerange=timerange,
-                new_pairs_days=config["new_pairs_days"],
-                erase=bool(config.get("erase")),
-                data_format=config["dataformat_trades"],
-                trading_mode=config.get("trading_mode", TradingMode.SPOT),
-                progress_tracker=progress_tracker,
-            )
-
-            if config.get("convert_trades") or not exchange.get_option("ohlcv_has_history", True):
-                # Convert downloaded trade data to different timeframes
-                # Only auto-convert for exchanges without historic klines
-
-                convert_trades_to_ohlcv(
-                    pairs=expanded_pairs,
-                    timeframes=config["timeframes"],
-                    datadir=config["datadir"],
-                    timerange=timerange,
-                    erase=bool(config.get("erase")),
-                    data_format_ohlcv=config["dataformat_ohlcv"],
-                    data_format_trades=config["dataformat_trades"],
-                    candle_type=config.get("candle_type_def", CandleType.SPOT),
-                )
-        else:
-            if not exchange.get_option("ohlcv_has_history", True):
-                if not exchange.get_option("trades_has_history", True):
-                    raise OperationalException(
-                        f"Historic data not available for {exchange.name}. "
-                        f"{exchange.name} does not support downloading trades or ohlcv data."
-                    )
-                else:
-                    raise OperationalException(
-                        f"Historic klines not available for {exchange.name}. "
-                        "Please use `--dl-trades` instead for this exchange "
-                        "(will unfortunately take a long time)."
-                    )
-            migrate_data(config, exchange)
-            pairs_not_available = refresh_backtest_ohlcv_data(
-                exchange,
-                pairs=expanded_pairs,
-                timeframes=config["timeframes"],
-                datadir=config["datadir"],
-                timerange=timerange,
-                new_pairs_days=config["new_pairs_days"],
-                erase=bool(config.get("erase")),
-                data_format=config["dataformat_ohlcv"],
-                trading_mode=config.get("trading_mode", "spot"),
-                prepend=config.get("prepend_data", False),
-                progress_tracker=progress_tracker,
-                candle_types=config.get("candle_types"),
-                no_parallel_download=config.get("no_parallel_download", False),
-            )
+        pairs_not_available = _download_data_dispatch(
+            config, exchange, expanded_pairs, timerange, progress_tracker
+        )
     finally:
         if pairs_not_available:
             errors = "\n" + ("\n".join(pairs_not_available))

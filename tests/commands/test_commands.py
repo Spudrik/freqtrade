@@ -7,12 +7,14 @@ from pathlib import Path
 from unittest.mock import MagicMock, PropertyMock
 from zipfile import ZipFile
 
+import pandas as pd
 import pytest
 
 from freqtrade.commands import (
     start_backtesting_show,
     start_convert_data,
     start_convert_db,
+    start_convert_orderbook,
     start_convert_trades,
     start_create_userdir,
     start_download_data,
@@ -1780,6 +1782,53 @@ def test_convert_data_trades(mocker, testdatadir):
     assert trades_mock.call_args[1]["convert_from"] == "jsongz"
     assert trades_mock.call_args[1]["convert_to"] == "json"
     assert trades_mock.call_args[1]["erase"] is False
+
+
+def test_convert_orderbook(mocker, testdatadir):
+    convert_mock = mocker.patch(
+        "freqtrade.data.converter.convert_bybit_orderbook_archive_to_features",
+        return_value=pd.DataFrame({"date": [1, 2]}),
+    )
+    store_mock = mocker.patch(
+        "freqtrade.data.converter.store_orderbook_features",
+        return_value=(
+            testdatadir
+            / "orderbook_features"
+            / "linear"
+            / "XRP_USDT_USDT-1h-ob500.feather"
+        ),
+    )
+    list_mock = mocker.patch(
+        "freqtrade.exchange.bybit_public_data.list_orderbook_archive_files",
+        return_value=[testdatadir / "dummy_ob500.zip"],
+    )
+    patch_exchange(mocker, exchange="bybit")
+    mocker.patch(f"{EXMS}.get_markets", return_value={"XRP/USDT:USDT": {"id": "XRPUSDT"}})
+
+    args = [
+        "orderbook-to-features",
+        "--exchange",
+        "bybit",
+        "--trading-mode",
+        "futures",
+        "--pairs",
+        "XRP/USDT:USDT",
+        "--timeframes",
+        "1h",
+        "--datadir",
+        str(testdatadir),
+        "--max-rows",
+        "1000",
+    ]
+    pargs = get_args(args)
+    pargs["config"] = None
+    start_convert_orderbook(pargs)
+
+    assert list_mock.call_count == 1
+    assert convert_mock.call_count == 1
+    assert convert_mock.call_args.args[1] == "1h"
+    assert convert_mock.call_args.kwargs["max_rows"] == 1000
+    assert store_mock.call_count == 1
 
 
 def test_start_list_data(testdatadir, capsys):

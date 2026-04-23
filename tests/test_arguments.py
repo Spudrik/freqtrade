@@ -206,6 +206,11 @@ def test_download_data_options() -> None:
         "30",
         "--exchange",
         "binance",
+        "--dl-orderbook",
+        "--orderbook-depth",
+        "500",
+        "--orderbook-category",
+        "linear",
     ]
     pargs = Arguments(args).get_parsed_arg()
 
@@ -213,6 +218,9 @@ def test_download_data_options() -> None:
     assert pargs["datadir"] == "datadir/directory"
     assert pargs["days"] == 30
     assert pargs["exchange"] == "binance"
+    assert pargs["download_orderbook"] is True
+    assert pargs["orderbook_depth"] == 500
+    assert pargs["orderbook_category"] == "linear"
 
 
 def test_plot_dataframe_options() -> None:
@@ -238,6 +246,34 @@ def test_plot_dataframe_options() -> None:
     assert pargs["indicators2"] == ["macd", "fastd", "fastk"]
     assert pargs["plot_limit"] == 30
     assert pargs["pairs"] == ["UNITTEST/BTC"]
+
+
+def test_orderbook_to_features_options() -> None:
+    args = [
+        "orderbook-to-features",
+        "--datadir",
+        "datadir/directory",
+        "--exchange",
+        "bybit",
+        "--pairs",
+        "XRP/USDT:USDT",
+        "--timeframes",
+        "1h",
+        "--timerange",
+        "20241201-20241201",
+        "--data-format-orderbook-features",
+        "parquet",
+        "--max-rows",
+        "1000",
+    ]
+    pargs = Arguments(args).get_parsed_arg()
+
+    assert pargs["command"] == "orderbook-to-features"
+    assert pargs["exchange"] == "bybit"
+    assert pargs["pairs"] == ["XRP/USDT:USDT"]
+    assert pargs["timeframes"] == ["1h"]
+    assert pargs["dataformat_orderbook_features"] == "parquet"
+    assert pargs["orderbook_max_rows"] == 1000
 
 
 @pytest.mark.parametrize("auto_open_arg", [True, False])

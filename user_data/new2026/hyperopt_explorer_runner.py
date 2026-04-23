@@ -17,7 +17,6 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
 import json
-import math
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
@@ -49,6 +48,7 @@ from hyperopt_explorer_support import (
     latest_result_file,
     load_json,
     load_custom_batches,
+    batch_matches_strategy,
     marker_latest_file,
     metric_summary,
     numeric_metric,
@@ -491,11 +491,13 @@ def build_selection_targets(
         batches_by_id = {
             str(batch.get("id")): batch
             for batch in payload.get("batches") or []
-            if isinstance(batch, dict) and str(batch.get("id") or "")
+            if isinstance(batch, dict)
+            and str(batch.get("id") or "")
+            and batch_matches_strategy(batch, catalog)
         }
         missing_ids = [batch_id for batch_id in batch_ids if batch_id not in batches_by_id]
         if missing_ids:
-            raise SystemExit("Custom batch IDs not found: " + ", ".join(missing_ids))
+            raise SystemExit("Custom batch IDs not found for current strategy: " + ", ".join(missing_ids))
         selected_batches: list[dict[str, Any]] = []
         for batch_id in batch_ids:
             batch = batches_by_id[batch_id]
@@ -1433,129 +1435,6 @@ def candidate_sort_key(candidate: dict[str, Any]) -> tuple[float, int, float]:
 
 
 
-def safe_filename_token(value: Any) -> str:
-    token = str(value or "")
-    token = re.sub(r'[<>:"/\\|?*\s]+', "_", token)
-    token = re.sub(r"_+", "_", token).strip("_")
-    return token or "unknown"
-
-
-
-def format_profit_token(value: float) -> str:
-    rounded = int(round(float(value)))
-    magnitude = f"{abs(rounded):06d}"
-    if rounded < 0:
-        return f"PROFITm{magnitude}"
-    return f"PROFIT{magnitude}"
-
-
-
-def keeper_decision(summary: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
-    keeper_enabled = not bool(getattr(args, "keeper_disable", False))
-    keeper_win_numerator = max(1, int(getattr(args, "keeper_win_numerator", 5) or 5))
-    keeper_win_denominator = max(1, int(getattr(args, "keeper_win_denominator", 6) or 6))
-    keeper_min_profit_per_window = max(0.0, float(getattr(args, "keeper_min_profit_per_window", 200.0) or 200.0))
-
-    total_windows = int(summary.get("backtest_window_count") or 0)
-    loss_windows = int(summary.get("challenger_loss_window_count") or 0)
-    winning_windows = max(0, total_windows - loss_windows)
-    required_winning_windows = int(math.ceil(float(total_windows) * float(keeper_win_numerator) / float(keeper_win_denominator))) if total_windows > 0 else 0
-    challenger_profit_total = float(summary.get("challenger_profit_total") or 0.0)
-    required_profit = float(total_windows) * keeper_min_profit_per_window
-
-    reasons: list[str] = []
-    if not keeper_enabled:
-        reasons.append("disabled")
-    if not bool(summary.get("accepted")):
-        reasons.append("not_accepted")
-    if total_windows <= 0:
-        reasons.append("no_windows")
-    if total_windows > 0 and winning_windows < required_winning_windows:
-        reasons.append("win_ratio")
-    if total_windows > 0 and challenger_profit_total < required_profit:
-        reasons.append("profit")
-
-    return {
-        "keeper_enabled": keeper_enabled,
-        "keeper_passed": len(reasons) == 0,
-        "reasons": reasons,
-        "total_windows": total_windows,
-        "winning_windows": winning_windows,
-        "loss_windows": loss_windows,
-        "required_winning_windows": required_winning_windows,
-        "challenger_profit_total": challenger_profit_total,
-        "required_profit": required_profit,
-        "keeper_win_numerator": keeper_win_numerator,
-        "keeper_win_denominator": keeper_win_denominator,
-        "keeper_min_profit_per_window": keeper_min_profit_per_window,
-    }
-
-
-
-def save_keeper_snapshot(
-    snapshot: dict[str, Any],
-    save_dir: Path,
-    strategy_param_file: Path,
-    candidate: dict[str, Any],
-    summary: dict[str, Any],
-    decision: dict[str, Any],
-    validation_segments: list[dict[str, Any]],
-) -> Path:
-    payload = deepcopy(snapshot)
-    timestamp = datetime.now().astimezone()
-    timestamp_token = timestamp.strftime("%Y%m%d_%H%M%S")
-    strategy_stem = safe_filename_token(strategy_param_file.stem)
-    candidate_id_safe = safe_filename_token(candidate.get("candidate_id"))
-    profit_token = format_profit_token(float(decision.get("challenger_profit_total") or 0.0))
-    winning_windows = int(decision.get("winning_windows") or 0)
-    total_windows = int(decision.get("total_windows") or 0)
-    base_name = f"{profit_token}_WR{winning_windows:02d}_{total_windows:02d}_{strategy_stem}__{timestamp_token}__{candidate_id_safe}"
-
-    path = save_dir / f"{base_name}.json"
-    suffix = 2
-    while path.exists():
-        path = save_dir / f"{base_name}__{suffix:02d}.json"
-        suffix += 1
-
-    keeper_meta = {
-        "created_at": timestamp.isoformat(),
-        "candidate_id": candidate.get("candidate_id"),
-        "selection_type": candidate.get("selection_type"),
-        "selection_label": candidate.get("selection_label"),
-        "family": candidate.get("family"),
-        "tag": candidate.get("tag"),
-        "accepted_by_explorer": bool(summary.get("accepted")),
-        "keeper_passed": bool(decision.get("keeper_passed")),
-        "reasons": list(decision.get("reasons") or []),
-        "total_windows": total_windows,
-        "winning_windows": winning_windows,
-        "loss_windows": int(decision.get("loss_windows") or 0),
-        "required_winning_windows": int(decision.get("required_winning_windows") or 0),
-        "challenger_profit_total": float(decision.get("challenger_profit_total") or 0.0),
-        "required_profit": float(decision.get("required_profit") or 0.0),
-        "keeper_win_numerator": int(decision.get("keeper_win_numerator") or 0),
-        "keeper_win_denominator": int(decision.get("keeper_win_denominator") or 1),
-        "keeper_min_profit_per_window": float(decision.get("keeper_min_profit_per_window") or 0.0),
-        "profit_total_delta": float(summary.get("profit_total_delta") or 0.0),
-        "params_changed_count": int(summary.get("params_changed_count") or candidate.get("params_changed_count") or 0),
-        "changes": deepcopy(candidate.get("changes") or []),
-        "hyperopt_window": deepcopy(candidate.get("hyperopt_window", candidate.get("source_segment"))),
-        "source_segment": deepcopy(candidate.get("source_segment")),
-        "validation_windows": [
-            {
-                "name": str(segment.get("name") or ""),
-                "timerange": str(segment.get("timerange") or ""),
-            }
-            for segment in (validation_segments or [])
-        ],
-        "saved_path": str(path),
-    }
-    payload["explorer_keeper"] = keeper_meta
-    save_json(path, payload)
-    return path
-
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run random explorer hyperopt loops.")
     parser.add_argument("--preset", default="test-hyperopt", help="Launcher preset name to reuse.")
@@ -1584,11 +1463,6 @@ def main() -> int:
     parser.add_argument("--strategy-param-file", default="", help="Strategy parameter JSON file to read and update.")
     parser.add_argument("--backtest-workers", type=int, default=12, help="Maximum parallel Explorer validation backtests. 1 preserves serial execution. Default 12.")
     parser.add_argument("--temp-backtest-root", default="", help="Parent directory for isolated Explorer worker strategy/result folders.")
-    parser.add_argument("--keeper-disable", action="store_true", help="Disable keeper snapshot saving.")
-    parser.add_argument("--keeper-save-dir", default="", help="Directory where keeper snapshots are saved.")
-    parser.add_argument("--keeper-win-numerator", type=int, default=5, help="Keeper required winning-window ratio numerator.")
-    parser.add_argument("--keeper-win-denominator", type=int, default=6, help="Keeper required winning-window ratio denominator.")
-    parser.add_argument("--keeper-min-profit-per-window", type=float, default=200.0, help="Keeper required minimum total profit per completed backtest window.")
     args = parser.parse_args()
     backtest_workers = max(1, int(args.backtest_workers or 12))
     temp_backtest_root = (
@@ -1653,12 +1527,6 @@ def main() -> int:
     print(f"Selection mode: {args.selection_mode}")
     if args.selection_mode == "random_namespace":
         print(f"Target namespace: {args.target_namespace or '-'}")
-    print(
-        "Keeper settings: "
-        f"enabled={not args.keeper_disable} "
-        f"ratio={args.keeper_win_numerator}/{args.keeper_win_denominator} "
-        f"min_profit_per_window={float(args.keeper_min_profit_per_window):.2f}"
-    )
     print_family_catalog(catalog)
 
     base_child_env = build_child_env(os.environ.copy(), cwd)
@@ -1671,13 +1539,7 @@ def main() -> int:
             "tag_usage_counts": {},
             "custom_batch_usage_counts": {},
             "accepted_changes": [],
-            "keeper_snapshots": [],
         },
-    )
-    keeper_save_dir = (
-        Path(str(args.keeper_save_dir)).expanduser()
-        if str(args.keeper_save_dir or "").strip()
-        else RUNTIME_DIR / "explorer_keeper_params" / strategy_param_file.stem
     )
     champion_backtest_cache: dict[tuple[str, str, str, str, str, str], dict[str, Any]] = {}
     active_champion_cache_hash: str | None = None
@@ -1760,12 +1622,6 @@ def main() -> int:
         "tag_usage_counts": dict(sorted((state.get("tag_usage_counts") or {}).items())),
         "custom_batch_usage_counts": dict(sorted((state.get("custom_batch_usage_counts") or {}).items())),
         "summary": {},
-        "keeper_save_dir": str(keeper_save_dir),
-        "keeper_enabled": not args.keeper_disable,
-        "keeper_win_numerator": int(args.keeper_win_numerator),
-        "keeper_win_denominator": int(args.keeper_win_denominator),
-        "keeper_min_profit_per_window": float(args.keeper_min_profit_per_window),
-        "keeper_snapshots": [],
     }
     save_json(
         run_temp_root / "manifest.json",
@@ -1904,6 +1760,7 @@ def main() -> int:
                     "tag": loop_target.get("tag"),
                     "hyperopt_window": status_segment_label(source_segment),
                     "hyperopt_window_detail": describe_segment(source_segment),
+                    "hyperopt_regime": source_segment.get("regime"),
                     "backtest_windows": [status_segment_label(segment) for segment in validation_segments],
                     "backtest_window_count": len(validation_segments),
                     "selection_mode": args.selection_mode,
@@ -2184,6 +2041,9 @@ def main() -> int:
                         "target": candidate.get("selection_label"),
                         "hyperopt_window": status_segment_label(candidate.get("hyperopt_window", candidate.get("source_segment"))),
                         "hyperopt_window_detail": describe_segment(candidate.get("hyperopt_window", candidate.get("source_segment", {}))),
+                        "hyperopt_regime": (candidate.get("hyperopt_window") or candidate.get("source_segment") or {}).get("regime")
+                        if isinstance(candidate.get("hyperopt_window") or candidate.get("source_segment"), dict)
+                        else None,
                         "backtest_windows": [status_segment_label(segment) for segment in validation_segments],
                         "backtest_window_count": int(summary["backtest_window_count"]),
                         "champion_score": float(summary["champion_weighted_acceptance_score"]),
@@ -2216,56 +2076,6 @@ def main() -> int:
             if best_candidate is not None:
                 current_champion_snapshot = merge_params_into_snapshot(current_champion_snapshot, best_candidate["params"])
                 current_champion_label = best_candidate["candidate_id"]
-                summary = best_candidate.get("validation") or {}
-                decision = keeper_decision(summary, args)
-                best_candidate["keeper"] = decision
-                decision_reasons = [str(reason) for reason in (decision.get("reasons") or [])]
-                keeper_saved_path: Path | None = None
-                if bool(decision.get("keeper_passed")):
-                    try:
-                        keeper_saved_path = save_keeper_snapshot(
-                            snapshot=current_champion_snapshot,
-                            save_dir=keeper_save_dir,
-                            strategy_param_file=strategy_param_file,
-                            candidate=best_candidate,
-                            summary=summary,
-                            decision=decision,
-                            validation_segments=validation_segments,
-                        )
-                    except Exception as exc:
-                        print(f"Warning: keeper snapshot save failed: {exc}")
-                    else:
-                        decision["saved_path"] = str(keeper_saved_path)
-                        keeper_record = {
-                            "saved_at": datetime.now().astimezone().isoformat(),
-                            "candidate_id": best_candidate.get("candidate_id"),
-                            "selection_label": best_candidate.get("selection_label"),
-                            "path": str(keeper_saved_path),
-                            "winning_windows": int(decision.get("winning_windows") or 0),
-                            "total_windows": int(decision.get("total_windows") or 0),
-                            "challenger_profit_total": float(decision.get("challenger_profit_total") or 0.0),
-                            "required_profit": float(decision.get("required_profit") or 0.0),
-                        }
-                        metadata.setdefault("keeper_snapshots", []).append(keeper_record)
-                        state.setdefault("keeper_snapshots", []).append(keeper_record)
-                if keeper_saved_path is not None:
-                    print(
-                        "Keeper check: PASS "
-                        f"profit={float(decision.get('challenger_profit_total') or 0.0):.2f} "
-                        f"required={float(decision.get('required_profit') or 0.0):.2f} "
-                        f"WR={int(decision.get('winning_windows') or 0)}/{int(decision.get('total_windows') or 0)} "
-                        f"required={int(decision.get('required_winning_windows') or 0)} "
-                        f"saved={keeper_saved_path}"
-                    )
-                else:
-                    print(
-                        "Keeper check: SKIP "
-                        f"profit={float(decision.get('challenger_profit_total') or 0.0):.2f} "
-                        f"required={float(decision.get('required_profit') or 0.0):.2f} "
-                        f"WR={int(decision.get('winning_windows') or 0)}/{int(decision.get('total_windows') or 0)} "
-                        f"required={int(decision.get('required_winning_windows') or 0)} "
-                        f"reasons={','.join(decision_reasons) if decision_reasons else 'none'}"
-                    )
                 loop_record["loop_applied"] = True
                 loop_record["applied_candidate_id"] = best_candidate["candidate_id"]
                 save_json(strategy_param_file, current_champion_snapshot)

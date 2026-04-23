@@ -1,6 +1,7 @@
 import logging
 import sys
 from collections import defaultdict
+from datetime import datetime, timedelta
 from typing import Any
 
 from freqtrade.constants import DATETIME_PRINT_FORMAT, DL_DATA_TIMEFRAMES, Config
@@ -17,6 +18,9 @@ def _check_data_config_download_sanity(config: Config) -> None:
         raise ConfigurationError(
             "--days and --timerange are mutually exclusive. You can only specify one or the other."
         )
+
+    if config.get("download_trades") and config.get("download_orderbook"):
+        raise ConfigurationError("--dl-trades and --dl-orderbook are mutually exclusive.")
 
     if "pairs" not in config:
         raise ConfigurationError(
@@ -110,6 +114,91 @@ def start_convert_data(args: dict[str, Any], ohlcv: bool = True) -> None:
             convert_to=args["format_to"],
             erase=args["erase"],
         )
+
+
+def start_convert_orderbook(args: dict[str, Any]) -> None:
+    from freqtrade.configuration import TimeRange, setup_utils_configuration
+    from freqtrade.data.converter import (
+        convert_bybit_orderbook_archive_to_features,
+        store_orderbook_features,
+    )
+    from freqtrade.exchange.bybit_public_data import list_orderbook_archive_files
+    from freqtrade.resolvers import ExchangeResolver
+
+    config = setup_utils_configuration(args, RunMode.UTIL_EXCHANGE)
+    config["stake_currency"] = ""
+    config["dataformat_orderbook_features"] = args.get("dataformat_orderbook_features") or "feather"
+    config["orderbook_depth"] = args.get("orderbook_depth") or 500
+    config["orderbook_category"] = args.get("orderbook_category") or "linear"
+    config["trading_mode"] = TradingMode(config.get("trading_mode", "futures") or "futures")
+
+    exchange = ExchangeResolver.load_exchange(config, validate=False)
+    available_markets = exchange.get_markets(
+        tradable_only=True, active_only=not config.get("include_inactive")
+    )
+    available_pairs = [p for p in available_markets.keys()]
+    expanded_pairs = dynamic_expand_pairlist(config, available_pairs)
+
+    timerange = TimeRange()
+    since_ms = None
+    until_ms = None
+    if args.get("timerange"):
+        timerange = TimeRange.parse_timerange(args["timerange"])
+        if timerange.starttype == "date":
+            since_ms = timerange.startts * 1000
+        if timerange.stoptype == "date":
+            until_ms = timerange.stopts * 1000
+    elif args.get("days"):
+        since_ms = int((datetime.now() - timedelta(days=args["days"])).timestamp() * 1000)
+
+    if "timeframes" not in config or not config["timeframes"]:
+        config["timeframes"] = ["1h"]
+
+    for pair in expanded_pairs:
+        symbol = available_markets.get(pair, {}).get("id")
+        if not symbol:
+            logger.warning("Skipping %s because the exchange symbol could not be resolved.", pair)
+            continue
+
+        archive_files = list_orderbook_archive_files(
+            config["datadir"],
+            symbol,
+            category=config["orderbook_category"],
+            depth=config["orderbook_depth"],
+            since_ms=since_ms,
+            until_ms=until_ms,
+        )
+        if not archive_files:
+            logger.warning("No raw order book archives found for %s.", pair)
+            continue
+
+        for timeframe in config["timeframes"]:
+            features = convert_bybit_orderbook_archive_to_features(
+                archive_files, timeframe, max_rows=args.get("orderbook_max_rows")
+            )
+            if features.empty:
+                logger.warning(
+                    "No order book features could be generated for %s on %s.",
+                    pair,
+                    timeframe,
+                )
+                continue
+            filename = store_orderbook_features(
+                config["datadir"],
+                pair,
+                timeframe,
+                features,
+                category=config["orderbook_category"],
+                depth=config["orderbook_depth"],
+                data_format=config["dataformat_orderbook_features"],
+            )
+            logger.info(
+                "Stored %s order book feature rows for %s on %s in %s.",
+                len(features),
+                pair,
+                timeframe,
+                filename,
+            )
 
 
 def start_list_data(args: dict[str, Any]) -> None:

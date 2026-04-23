@@ -15,6 +15,7 @@ PARAMETER_CALL_NAMES = {
 PREFERRED_NAMESPACE_ORDER = [
     "family",
     "mode",
+    "batch",
     "domain",
     "action",
     "switch",
@@ -23,6 +24,8 @@ PREFERRED_NAMESPACE_ORDER = [
     "scope",
     "regime",
     "role",
+    "side",
+    "timeframe",
 ]
 
 

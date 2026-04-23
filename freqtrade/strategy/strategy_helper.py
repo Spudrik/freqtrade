@@ -116,6 +116,31 @@ def merge_informative_pair(
     return dataframe
 
 
+def merge_orderbook_features(
+    dataframe: pd.DataFrame,
+    informative: pd.DataFrame,
+    timeframe: str,
+    timeframe_inf: str,
+    ffill: bool = True,
+    suffix: str = "ob",
+) -> pd.DataFrame:
+    """
+    Merge order book feature dataframes into a strategy dataframe.
+
+    This is a thin wrapper around `merge_informative_pair` that defaults to a stable
+    `ob` suffix, keeping feature names such as `mid_close_ob` or `imbalance_25_mean_ob`.
+    """
+    return merge_informative_pair(
+        dataframe,
+        informative,
+        timeframe,
+        timeframe_inf,
+        ffill=ffill,
+        append_timeframe=False,
+        suffix=suffix,
+    )
+
+
 def stoploss_from_open(
     open_relative_stop: float, current_profit: float, is_short: bool = False, leverage: float = 1.0
 ) -> float:

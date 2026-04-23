@@ -14,6 +14,7 @@ from .history_utils import (
     get_timerange,
     load_data,
     load_pair_history,
+    refresh_backtest_orderbook_data,
     refresh_backtest_ohlcv_data,
     refresh_backtest_trades_data,
     refresh_data,

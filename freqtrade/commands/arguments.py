@@ -155,6 +155,19 @@ ARGS_CONVERT_TRADES = [
     "trading_mode",
 ]
 
+ARGS_ORDERBOOK_FEATURES = [
+    "pairs",
+    "exchange",
+    "timeframes",
+    "timerange",
+    "erase",
+    "trading_mode",
+    "orderbook_depth",
+    "orderbook_category",
+    "dataformat_orderbook_features",
+    "orderbook_max_rows",
+]
+
 ARGS_LIST_DATA = [
     "exchange",
     "dataformat_ohlcv",
@@ -174,6 +187,9 @@ ARGS_DOWNLOAD_DATA = [
     "no_parallel_download",
     "timerange",
     "download_trades",
+    "download_orderbook",
+    "orderbook_depth",
+    "orderbook_category",
     "convert_trades",
     "exchange",
     "timeframes",
@@ -287,6 +303,7 @@ NO_CONF_REQURIED = [
     "hyperopt-list",
     "hyperopt-show",
     "list-data",
+    "orderbook-to-features",
     "list-freqaimodels",
     "list-hyperoptloss",
     "list-markets",
@@ -388,6 +405,7 @@ class Arguments:
             start_backtesting_show,
             start_convert_data,
             start_convert_db,
+            start_convert_orderbook,
             start_convert_trades,
             start_create_userdir,
             start_download_data,
@@ -498,6 +516,14 @@ class Arguments:
         )
         convert_trade_data_cmd.set_defaults(func=start_convert_trades)
         self._build_args(optionlist=ARGS_CONVERT_TRADES, parser=convert_trade_data_cmd)
+
+        orderbook_features_cmd = subparsers.add_parser(
+            "orderbook-to-features",
+            help="Convert raw order book archives to aggregated feature data.",
+            parents=[_common_parser],
+        )
+        orderbook_features_cmd.set_defaults(func=start_convert_orderbook)
+        self._build_args(optionlist=ARGS_ORDERBOOK_FEATURES, parser=orderbook_features_cmd)
 
         # Add list-data subcommand
         list_data_cmd = subparsers.add_parser(

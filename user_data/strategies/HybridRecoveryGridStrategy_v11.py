@@ -1688,6 +1688,10 @@ class HybridRecoveryGridStrategy(IStrategy):
                 "regime_bear_score": {},
                 "regime_chop_score": {},
                 "regime_crash_score": {},
+                "regime_bull_pressure": {},
+                "regime_bear_pressure": {},
+                "regime_crash_pressure": {},
+                "regime_directional_pressure": {},
             },
             "Regime Inputs": {
                 "regime_adx": {},
@@ -1701,6 +1705,8 @@ class HybridRecoveryGridStrategy(IStrategy):
                 "regime_gap_mult_active": {},
                 "regime_exit_mult_active": {},
                 "regime_stake_mult_active": {},
+                "regime_spacing_mult_active": {},
+                "regime_peel_fraction_mult_active": {},
             },
             "Structure": {
                 "touches_local_min_8": {},
@@ -3309,6 +3315,19 @@ class HybridRecoveryGridStrategy(IStrategy):
             return {"stake_mult": 0.75, "spacing_mult": 1.5, "peel_fraction_mult": 1.4}
         return {"stake_mult": 1.0, "spacing_mult": 1.1, "peel_fraction_mult": 1.2}
 
+    def _regime_profile_from_candle(self, last_candle: pd.Series) -> dict[str, Any]:
+        stake_mult = self._num(last_candle, "regime_stake_mult_active")
+        spacing_mult = self._num(last_candle, "regime_spacing_mult_active")
+        peel_fraction_mult = self._num(last_candle, "regime_peel_fraction_mult_active")
+        values = (stake_mult, spacing_mult, peel_fraction_mult)
+        if all(value is not None and np.isfinite(value) and value > 0.0 for value in values):
+            return {
+                "stake_mult": float(stake_mult),
+                "spacing_mult": float(spacing_mult),
+                "peel_fraction_mult": float(peel_fraction_mult),
+            }
+        return self._regime_profile(self._regime(last_candle))
+
     def _danger_overlay(self, last_candle: pd.Series | dict[str, Any]) -> dict[str, Any]:
         if not self._is_extreme_condition(last_candle):
             return {}
@@ -3351,7 +3370,7 @@ class HybridRecoveryGridStrategy(IStrategy):
         profile = self._merge_trade_profiles(
             base,
             self._timeframe_profile(seed_timeframe, bool(entry_context.get("seed_combo", False))),
-            self._regime_profile(str(view.get("regime") or "chop")),
+            self._regime_profile_from_candle(view["last"]),
             self._context_profile(ledger, view),
             self._danger_overlay(view["last"]),
         )

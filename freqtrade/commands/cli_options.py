@@ -498,6 +498,23 @@ AVAILABLE_CLI_OPTIONS = {
         help="Download trades instead of OHLCV data.",
         action="store_true",
     ),
+    "download_orderbook": Arg(
+        "--dl-orderbook",
+        help="Download historical order book archives instead of OHLCV data. "
+        "Currently supports Bybit linear ob500 archives.",
+        action="store_true",
+    ),
+    "orderbook_depth": Arg(
+        "--orderbook-depth",
+        help="Historical order book archive depth to download. Default: `500`.",
+        type=check_int_positive,
+        metavar="INT",
+    ),
+    "orderbook_category": Arg(
+        "--orderbook-category",
+        help="Historical order book archive category. Default: `linear`.",
+        choices=["linear"],
+    ),
     "trades": Arg(
         "--trades",
         help="Work on trades data instead of OHLCV data.",
@@ -539,6 +556,11 @@ AVAILABLE_CLI_OPTIONS = {
         help="Storage format for downloaded trades data. (default: `feather`).",
         choices=constants.AVAILABLE_DATAHANDLERS,
     ),
+    "dataformat_orderbook_features": Arg(
+        "--data-format-orderbook-features",
+        help="Storage format for aggregated order book feature data. (default: `feather`).",
+        choices=["feather", "parquet"],
+    ),
     "show_timerange": Arg(
         "--show-timerange",
         help="Show timerange available for available data. (May take a while to calculate).",
@@ -553,6 +575,12 @@ AVAILABLE_CLI_OPTIONS = {
         "--timeframes",
         help="Specify which tickers to download. Space-separated list. Default: `1m 5m`.",
         nargs="+",
+    ),
+    "orderbook_max_rows": Arg(
+        "--max-rows",
+        help="Limit the number of raw order book updates to process when building features.",
+        type=check_int_positive,
+        metavar="INT",
     ),
     "prepend_data": Arg(
         "--prepend",

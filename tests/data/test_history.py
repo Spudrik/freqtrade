@@ -1,5 +1,6 @@
 # pragma pylint: disable=missing-docstring, protected-access, C0103
 
+import asyncio
 import json
 import logging
 import uuid
@@ -26,6 +27,7 @@ from freqtrade.data.history.history_utils import (
     load_data,
     load_pair_history,
     refresh_backtest_ohlcv_data,
+    refresh_backtest_orderbook_data,
     refresh_backtest_trades_data,
     refresh_data,
     validate_backtest_data,
@@ -669,6 +671,59 @@ def test_refresh_backtest_trades_data(mocker, default_conf, markets, caplog, tes
     assert log_has("Downloading trades for pair ETH/BTC.", caplog)
     assert [p for p in unavailable_pairs if "XRP/ETH" in p]
     assert log_has("Skipping pair XRP/ETH...", caplog)
+
+
+def test_refresh_backtest_orderbook_data(mocker, caplog, tmp_path):
+    async def mock_scan_archive_orderbook_availability(**kwargs):
+        return kwargs["pair"], {
+            "available_dates": ["2024-12-01"],
+            "missing_dates": ["2024-12-02"],
+            "available_count": 1,
+            "missing_count": 1,
+            "first_available": "2024-12-01",
+            "last_available": "2024-12-01",
+        }
+
+    async def mock_download_archive_orderbook(**kwargs):
+        return kwargs["pair"], [tmp_path / "archive.zip"]
+
+    scan_mock = mocker.patch(
+        "freqtrade.exchange.bybit_public_data.scan_archive_orderbook_availability",
+        side_effect=mock_scan_archive_orderbook_availability,
+    )
+    dl_mock = mocker.patch(
+        "freqtrade.exchange.bybit_public_data.download_archive_orderbook",
+        side_effect=mock_download_archive_orderbook,
+    )
+    loop = asyncio.new_event_loop()
+    exchange = MagicMock()
+    exchange.name = "Bybit"
+    exchange.markets = {"XRP/USDT:USDT": {"id": "XRPUSDT"}}
+    exchange.loop = loop
+    timerange = TimeRange.parse_timerange("20241201-20241202")
+
+    try:
+        unavailable_pairs = refresh_backtest_orderbook_data(
+            exchange=exchange,
+            pairs=["XRP/USDT:USDT", "ETH/USDT:USDT"],
+            datadir=tmp_path,
+            timerange=timerange,
+            trading_mode=TradingMode.FUTURES,
+            depth=500,
+            category="linear",
+        )
+    finally:
+        loop.close()
+
+    assert scan_mock.call_count == 1
+    assert dl_mock.call_count == 1
+    assert dl_mock.call_args.kwargs["pair"] == "XRP/USDT:USDT"
+    assert dl_mock.call_args.kwargs["symbol"] == "XRPUSDT"
+    assert dl_mock.call_args.kwargs["category"] == "linear"
+    assert dl_mock.call_args.kwargs["depth"] == 500
+    assert dl_mock.call_args.kwargs["available_days"][0].isoformat() == "2024-12-01"
+    assert "ETH/USDT:USDT: Pair not available on exchange." in unavailable_pairs
+    assert log_has("Skipping pair ETH/USDT:USDT...", caplog)
 
 
 def test_download_trades_history(

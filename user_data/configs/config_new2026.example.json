@@ -62,16 +62,6 @@
         "token": "",
         "chat_id": ""
     },
-    "api_server": {
-        "enabled": true,
-        "listen_ip_address": "127.0.0.1",
-        "listen_port": 8080,
-        "verbosity": "error",
-        "jwt_secret_key": "change-me-new2026-jwt-secret",
-        "CORS_origins": [],
-        "username": "freqtrader",
-        "password": "change-me"
-    },
     "bot_name": "freqtrade-new2026",
     "initial_state": "running",
     "force_entry_enable": false,

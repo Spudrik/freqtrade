@@ -34,6 +34,7 @@ import json
 import os
 import queue
 import random
+import re
 import runpy
 import shlex
 import signal
@@ -91,6 +92,7 @@ WEB_LOG_FILE = "web_collector.log"
 ORDERBOOK_COLLECTOR_FILE = "orderbook_collector.py"
 ORDERBOOK_SOURCES_FILE = "orderbook_sources.json"
 ORDERBOOK_DATA_DIR = "../runtime/orderbook"
+ORDERBOOK_HISTORY_DATA_DIR = "../data/bybit_orderbook"
 ORDERBOOK_DB_FILE = "orderbook_events.sqlite"
 ORDERBOOK_STATUS_FILE = "collector_status.json"
 ORDERBOOK_PID_FILE = "collector.pid"
@@ -114,8 +116,18 @@ EXPLORER_MARKET_WINDOWS_FILE = "explorer_market_windows.json"
 EXPLORER_METADATA_DIR = "../runtime/explorer_metadata"
 EXPLORER_LATEST_SUMMARY_FILE = "latest_summary.json"
 EXPLORER_CUSTOM_BATCH_FILE = "hyperopt_custom_batches.json"
+EXPLORER_LOOP_EXPORT_DIR = "../runtime/explorer_keeper"
 EXPLORER_SELECTION_MODES = ["Random families", "Random tags", "Random namespace values", "Custom batches"]
+DAILY_NEW_ENTRY_CUSTOM_BATCH_IDS = {
+    "dailynewentryenables",
+    "dailytrapreclaims",
+    "dailystructureretests",
+    "dailyentryexpansionall",
+    "dailysupportreclaimretest",
+    "dailyresistancereclaimretest",
+}
 MAX_HYPEROPT_EPOCHS = 800
+EXPLORER_REVIEW_MAX_COMPARE_LOOPS = 3
 
 
 def app_path(relative_path: str | Path) -> Path:
@@ -810,6 +822,12 @@ class FreqtradeLauncher(tk.Tk):
         self.hyperopt_loss_combo: ttk.Combobox | None = None
         self.explorer_hyperopt_loss_combo: ttk.Combobox | None = None
         self.explorer_tab_run_button: ttk.Button | None = None
+        self.explorer_review_run_combo: ttk.Combobox | None = None
+        self.explorer_review_loop_listbox: tk.Listbox | None = None
+        self.explorer_review_summary_tree: ttk.Treeview | None = None
+        self.explorer_review_acceptance_tree: ttk.Treeview | None = None
+        self.explorer_review_backtest_tree: ttk.Treeview | None = None
+        self.explorer_review_params_tree: ttk.Treeview | None = None
         self.explorer_target_count_label_widget: ttk.Label | None = None
         self.explorer_target_count_entry_widget: ttk.Entry | None = None
         self.explorer_namespace_label_widget: ttk.Label | None = None
@@ -819,6 +837,8 @@ class FreqtradeLauncher(tk.Tk):
         self.web_source_health_tree: ttk.Treeview | None = None
         self.orderbook_pair_preview_tree: ttk.Treeview | None = None
         self.orderbook_latest_metrics_tree: ttk.Treeview | None = None
+        self.orderbook_history_pairs_text: scrolledtext.ScrolledText | None = None
+        self.orderbook_history_summary_tree: ttk.Treeview | None = None
         self.frequi_launch_button: ttk.Button | None = None
         self._orderbook_last_capacity_popup_level = "ok"
 
@@ -826,13 +846,21 @@ class FreqtradeLauncher(tk.Tk):
         self.explorer_current_run = 0
         self.explorer_last_status: dict[str, Any] = {}
         self.explorer_current_hyperopt_window = "-"
+        self.explorer_current_hyperopt_window_detail = "-"
         self.explorer_accepted_count = 0
         self.explorer_rejected_count = 0
         self.explorer_loop_count = 0
         self.explorer_loop_log_entries = 0
         self.explorer_current_loop_targets: dict[int, dict[str, Any]] = {}
+        self.explorer_loop_hyperopt_windows: dict[int, dict[str, str]] = {}
+        self.explorer_hyperopt_regime_counts: dict[str, int] = {}
         self.explorer_initial_champion_stats: dict[str, Any] = {}
         self.explorer_current_champion_stats: dict[str, Any] = {}
+        self.explorer_review_run_choices: dict[str, list[Path]] = {}
+        self.explorer_review_loaded_entries: list[dict[str, Any]] = []
+        self.explorer_review_loop_index_map: dict[int, int] = {}
+        self.explorer_review_syncing_selection = False
+        self.explorer_review_sort_descending: dict[tuple[int, str], bool] = {}
         self.active_run_type: str = ""
 
         self._build_variables()
@@ -846,6 +874,7 @@ class FreqtradeLauncher(tk.Tk):
         self.refresh_web_status()
         self.refresh_orderbook_pair_preview()
         self.refresh_orderbook_status(show_popup=False)
+        self.refresh_orderbook_history_summary()
         self.after(100, self._drain_output_queue)
 
     # ------------------------------------------------------------------
@@ -931,11 +960,7 @@ class FreqtradeLauncher(tk.Tk):
         self.explorer_family_count_var = tk.StringVar(value="3")
         self.explorer_tag_count_var = tk.StringVar(value="5")
         self.explorer_min_param_count_var = tk.StringVar(value="0")
-        self.explorer_keeper_enabled_var = tk.BooleanVar(value=True)
-        self.explorer_keeper_save_dir_var = tk.StringVar(value="")
-        self.explorer_keeper_win_numerator_var = tk.StringVar(value="5")
-        self.explorer_keeper_win_denominator_var = tk.StringVar(value="6")
-        self.explorer_keeper_min_profit_per_window_var = tk.StringVar(value="200")
+        self.explorer_saved_loops_dir_var = tk.StringVar(value=str(app_path(EXPLORER_LOOP_EXPORT_DIR)))
         self.catalog_view_var = tk.StringVar(value="By Family")
         self.catalog_search_var = tk.StringVar(value="")
         self.catalog_filter_var = tk.StringVar(value="Show all")
@@ -975,6 +1000,11 @@ class FreqtradeLauncher(tk.Tk):
         self.explorer_summary_follow_tail_var = tk.BooleanVar(value=True)
         self.explorer_summary_context_var = tk.StringVar(value="Loss: - | HyperOpt window: -")
         self.explorer_tally_var = tk.StringVar(value=self._default_explorer_tally_text())
+        self.explorer_review_run_var = tk.StringVar(value="")
+        self.explorer_review_status_var = tk.StringVar(value="Select Explorer run metadata, choose up to 3 accepted loops, then compare.")
+        self.explorer_review_param_hint_var = tk.StringVar(value="")
+        self.explorer_review_show_delta_var = tk.BooleanVar(value=False)
+        self.explorer_review_hide_identical_params_var = tk.BooleanVar(value=False)
 
         self.download_exchange_var = tk.StringVar(value="")
         self.download_pairs_file_var = tk.StringVar(value="")
@@ -1095,6 +1125,21 @@ class FreqtradeLauncher(tk.Tk):
         self.orderbook_preview_pair_count_var = tk.StringVar(value="0")
         self.orderbook_preview_symbol_count_var = tk.StringVar(value="0")
         self.orderbook_pair_warning_var = tk.StringVar(value="")
+        self.orderbook_history_datadir_var = tk.StringVar(value=str(app_path(ORDERBOOK_HISTORY_DATA_DIR)))
+        self.orderbook_history_exchange_var = tk.StringVar(value="bybit")
+        self.orderbook_history_trading_mode_var = tk.StringVar(value="futures")
+        self.orderbook_history_category_var = tk.StringVar(value="linear")
+        self.orderbook_history_depth_var = tk.StringVar(value="500")
+        self.orderbook_history_timerange_var = tk.StringVar(value="")
+        self.orderbook_history_feature_timeframes_var = tk.StringVar(value="1h")
+        self.orderbook_history_feature_format_var = tk.StringVar(value="feather")
+        self.orderbook_history_max_rows_var = tk.StringVar(value="")
+        self.orderbook_history_erase_var = tk.BooleanVar(value=False)
+        self.orderbook_history_download_preview_var = tk.StringVar(value="")
+        self.orderbook_history_convert_preview_var = tk.StringVar(value="")
+        self.orderbook_history_status_var = tk.StringVar(
+            value="Download raw archives to create availability reports, then refresh the summary."
+        )
 
         self.review_hyperopt_file_var = tk.StringVar(value="")
         self.review_hyperopt_limit_var = tk.StringVar(value="20")
@@ -1236,6 +1281,40 @@ class FreqtradeLauncher(tk.Tk):
             "Example: 20240101-20240331 or -200.",
             timerange_label,
             timerange_entry,
+        )
+
+        frequi_url_label = ttk.Label(controls, text="FreqUI URL")
+        frequi_url_label.grid(row=2, column=0, sticky="w", padx=8, pady=(0, 8))
+        frequi_url_entry = ttk.Entry(controls, textvariable=self.frequi_url_var)
+        frequi_url_entry.grid(row=2, column=1, columnspan=3, sticky="ew", padx=8, pady=(0, 8))
+        frequi_open_check = ttk.Checkbutton(controls, text="Open after launch", variable=self.frequi_open_after_launch_var)
+        frequi_open_check.grid(row=2, column=4, sticky="w", padx=8, pady=(0, 8))
+        self.frequi_launch_button = ttk.Button(controls, text="Launch FreqUI", command=self.on_launch_frequi)
+        self.frequi_launch_button.grid(row=2, column=5, sticky="ew", padx=8, pady=(0, 8))
+        frequi_open_button = ttk.Button(controls, text="Open FreqUI", command=self.open_frequi_url)
+        frequi_open_button.grid(row=2, column=6, sticky="ew", padx=8, pady=(0, 8))
+        frequi_status_label = ttk.Label(controls, textvariable=self.frequi_status_var)
+        frequi_status_label.grid(row=2, column=7, sticky="w", padx=8, pady=(0, 8))
+        self._add_tooltips(
+            "Context: Local FreqUI address. Outcome: Used for readiness checks and browser opening after the webserver starts. "
+            "Example: http://127.0.0.1:8080.",
+            frequi_url_label,
+            frequi_url_entry,
+        )
+        self._add_tooltips(
+            "Context: Browser convenience toggle. Outcome: Opens the FreqUI URL once the webserver answers its ping endpoint. "
+            "Example: Leave enabled for normal launcher use.",
+            frequi_open_check,
+        )
+        self._add_tooltips(
+            "Context: Starts Freqtrade's webserver/FreqUI using the current config, userdir, datadir, Python executable, and logging fields. "
+            "Outcome: Runs `freqtrade webserver`; strategy-only CLI flags are intentionally omitted because webserver does not accept them.",
+            self.frequi_launch_button,
+        )
+        self._add_tooltips(
+            "Context: Opens the configured FreqUI URL in your browser without starting a new webserver. "
+            "Outcome: Useful if FreqUI is already running.",
+            frequi_open_button,
         )
 
         actions = ttk.Frame(root)
@@ -1574,6 +1653,13 @@ class FreqtradeLauncher(tk.Tk):
         strategy_class_label.grid(row=1, column=0, sticky="w", padx=8, pady=8)
         self.strategy_class_combo = ttk.Combobox(strategy, textvariable=self.strategy_class_var)
         self.strategy_class_combo.grid(row=1, column=1, sticky="ew", padx=8, pady=8)
+        self.strategy_class_combo.bind("<<ComboboxSelected>>", lambda _event: self.refresh_strategy_catalog())
+        refresh_strategy_catalog_button = ttk.Button(strategy, text="Refresh Explorer catalog", command=self.refresh_strategy_catalog)
+        refresh_strategy_catalog_button.grid(row=1, column=2, sticky="e", padx=8, pady=8)
+        self._add_tooltips(
+            "Reloads Explorer tags, namespaces, and custom batch catalog from the selected strategy file and class.",
+            refresh_strategy_catalog_button,
+        )
         recursive_check = ttk.Checkbutton(strategy, text="--recursive-strategy-search", variable=self.recursive_strategy_search_var)
         recursive_check.grid(row=2, column=1, sticky="w", padx=8, pady=(0, 8))
         self._add_tooltips(
@@ -1942,19 +2028,10 @@ class FreqtradeLauncher(tk.Tk):
         root = self.tab_mode
         root.grid_columnconfigure(0, weight=1)
         root.grid_rowconfigure(0, weight=1)
-        root.grid_rowconfigure(1, weight=0)
 
         self.mode_stack = ttk.Frame(root)
         self.mode_stack.grid(row=0, column=0, sticky="nsew")
         self.mode_stack.grid_columnconfigure(0, weight=1)
-
-        frequi_tools = ttk.LabelFrame(root, text="FreqUI utility")
-        frequi_tools.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 8))
-        frequi_tools.grid_columnconfigure(1, weight=1)
-        ttk.Label(frequi_tools, text="FreqUI URL").grid(row=0, column=0, sticky="w", padx=8, pady=8)
-        ttk.Entry(frequi_tools, textvariable=self.frequi_url_var).grid(row=0, column=1, sticky="ew", padx=8, pady=8)
-        self.frequi_launch_button = ttk.Button(frequi_tools, text="Launch FreqUI", command=self.on_launch_frequi)
-        self.frequi_launch_button.grid(row=0, column=2, sticky="ew", padx=8, pady=8)
 
         self.trade_frame = ttk.LabelFrame(self.mode_stack, text="Trade / Dry-run options")
         self.backtest_frame = ttk.LabelFrame(self.mode_stack, text="Backtest options")
@@ -2933,9 +3010,20 @@ class FreqtradeLauncher(tk.Tk):
     def _build_orderbook_lab_tab(self) -> None:
         root = self.tab_orderbook_lab
         root.grid_columnconfigure(0, weight=1)
-        root.grid_rowconfigure(5, weight=1)
+        root.grid_rowconfigure(0, weight=1)
 
-        settings = ttk.LabelFrame(root, text="Collector settings")
+        notebook = ttk.Notebook(root)
+        notebook.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
+
+        live_tab = ttk.Frame(notebook)
+        history_tab = ttk.Frame(notebook)
+        notebook.add(live_tab, text="Live Collector")
+        notebook.add(history_tab, text="Bybit History")
+
+        live_tab.grid_columnconfigure(0, weight=1)
+        live_tab.grid_rowconfigure(5, weight=1)
+
+        settings = ttk.LabelFrame(live_tab, text="Collector settings")
         settings.grid(row=0, column=0, sticky="ew", padx=8, pady=8)
         settings.grid_columnconfigure(1, weight=1)
         settings.grid_columnconfigure(3, weight=1)
@@ -2961,31 +3049,82 @@ class FreqtradeLauncher(tk.Tk):
         ).grid(row=2, column=3, sticky="ew", padx=8, pady=8)
 
         numeric_rows = [
-            ("Depth levels", self.orderbook_depth_levels_var, "Stream update ms", self.orderbook_stream_update_ms_var),
-            ("Metric interval seconds", self.orderbook_metric_interval_seconds_var, "Snapshot interval seconds", self.orderbook_snapshot_interval_seconds_var),
-            ("Capacity warning MB", self.orderbook_capacity_warning_mb_var, "Capacity critical MB", self.orderbook_capacity_critical_mb_var),
+            (
+                "Depth levels",
+                self.orderbook_depth_levels_var,
+                "Stream update ms",
+                self.orderbook_stream_update_ms_var,
+            ),
+            (
+                "Metric interval seconds",
+                self.orderbook_metric_interval_seconds_var,
+                "Snapshot interval seconds",
+                self.orderbook_snapshot_interval_seconds_var,
+            ),
+            (
+                "Capacity warning MB",
+                self.orderbook_capacity_warning_mb_var,
+                "Capacity critical MB",
+                self.orderbook_capacity_critical_mb_var,
+            ),
             ("Max symbols", self.orderbook_max_symbols_var, "", None),
         ]
-        for offset, (left_label, left_var, right_label, right_var) in enumerate(numeric_rows, start=3):
-            ttk.Label(settings, text=left_label).grid(row=offset, column=0, sticky="w", padx=8, pady=8)
-            ttk.Entry(settings, textvariable=left_var, width=12).grid(row=offset, column=1, sticky="ew", padx=8, pady=8)
+        for offset, (left_label, left_var, right_label, right_var) in enumerate(
+            numeric_rows, start=3
+        ):
+            ttk.Label(settings, text=left_label).grid(
+                row=offset, column=0, sticky="w", padx=8, pady=8
+            )
+            ttk.Entry(settings, textvariable=left_var, width=12).grid(
+                row=offset, column=1, sticky="ew", padx=8, pady=8
+            )
             if right_var is not None:
-                ttk.Label(settings, text=right_label).grid(row=offset, column=2, sticky="w", padx=8, pady=8)
-                ttk.Entry(settings, textvariable=right_var, width=12).grid(row=offset, column=3, sticky="ew", padx=8, pady=8)
+                ttk.Label(settings, text=right_label).grid(
+                    row=offset, column=2, sticky="w", padx=8, pady=8
+                )
+                ttk.Entry(settings, textvariable=right_var, width=12).grid(
+                    row=offset, column=3, sticky="ew", padx=8, pady=8
+                )
 
-        ttk.Checkbutton(settings, text="Store snapshots", variable=self.orderbook_store_snapshots_var).grid(row=7, column=0, columnspan=2, sticky="w", padx=8, pady=8)
+        ttk.Checkbutton(
+            settings,
+            text="Store snapshots",
+            variable=self.orderbook_store_snapshots_var,
+        ).grid(row=7, column=0, columnspan=2, sticky="w", padx=8, pady=8)
 
-        actions = ttk.Frame(root)
+        actions = ttk.Frame(live_tab)
         actions.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 8))
-        ttk.Button(actions, text="Start Detached Collector", command=self.start_orderbook_collector).pack(side="left", padx=(0, 8))
-        ttk.Button(actions, text="Request Stop", command=self.request_orderbook_stop).pack(side="left", padx=(0, 8))
-        ttk.Button(actions, text="Refresh Status", command=lambda: self.refresh_orderbook_status(show_popup=True)).pack(side="left", padx=(0, 8))
-        ttk.Button(actions, text="Open Data Folder", command=self.open_orderbook_data_dir).pack(side="left", padx=(0, 8))
-        ttk.Button(actions, text="Open Log", command=self.open_orderbook_log).pack(side="left", padx=(0, 8))
-        ttk.Button(actions, text="Export Latest Metrics CSV", command=self.export_orderbook_latest_metrics_csv).pack(side="left", padx=(0, 8))
-        ttk.Button(actions, text="Normalize Whitelist", command=self.on_orderbook_normalize_whitelist).pack(side="left", padx=(0, 8))
+        ttk.Button(
+            actions,
+            text="Start Detached Collector",
+            command=self.start_orderbook_collector,
+        ).pack(side="left", padx=(0, 8))
+        ttk.Button(
+            actions, text="Request Stop", command=self.request_orderbook_stop
+        ).pack(side="left", padx=(0, 8))
+        ttk.Button(
+            actions,
+            text="Refresh Status",
+            command=lambda: self.refresh_orderbook_status(show_popup=True),
+        ).pack(side="left", padx=(0, 8))
+        ttk.Button(
+            actions, text="Open Data Folder", command=self.open_orderbook_data_dir
+        ).pack(side="left", padx=(0, 8))
+        ttk.Button(
+            actions, text="Open Log", command=self.open_orderbook_log
+        ).pack(side="left", padx=(0, 8))
+        ttk.Button(
+            actions,
+            text="Export Latest Metrics CSV",
+            command=self.export_orderbook_latest_metrics_csv,
+        ).pack(side="left", padx=(0, 8))
+        ttk.Button(
+            actions,
+            text="Normalize Whitelist",
+            command=self.on_orderbook_normalize_whitelist,
+        ).pack(side="left", padx=(0, 8))
 
-        status = ttk.LabelFrame(root, text="Status")
+        status = ttk.LabelFrame(live_tab, text="Status")
         status.grid(row=2, column=0, sticky="ew", padx=8, pady=(0, 8))
         for col in range(4):
             status.grid_columnconfigure(col, weight=1 if col in (1, 3) else 0)
@@ -3008,10 +3147,14 @@ class FreqtradeLauncher(tk.Tk):
         for index, (label_text, variable) in enumerate(status_items):
             row = index // 2
             col = (index % 2) * 2
-            ttk.Label(status, text=f"{label_text}:").grid(row=row, column=col, sticky="w", padx=8, pady=4)
-            ttk.Label(status, textvariable=variable).grid(row=row, column=col + 1, sticky="w", padx=8, pady=4)
+            ttk.Label(status, text=f"{label_text}:").grid(
+                row=row, column=col, sticky="w", padx=8, pady=4
+            )
+            ttk.Label(status, textvariable=variable).grid(
+                row=row, column=col + 1, sticky="w", padx=8, pady=4
+            )
 
-        estimate = ttk.LabelFrame(root, text="Storage estimate")
+        estimate = ttk.LabelFrame(live_tab, text="Storage estimate")
         estimate.grid(row=3, column=0, sticky="ew", padx=8, pady=(0, 8))
         estimate_items = [
             ("Metric rows/day", self.orderbook_estimated_metric_rows_var),
@@ -3022,20 +3165,33 @@ class FreqtradeLauncher(tk.Tk):
             ("Active symbols", self.orderbook_preview_symbol_count_var),
         ]
         for index, (label_text, variable) in enumerate(estimate_items):
-            ttk.Label(estimate, text=f"{label_text}:").grid(row=0, column=index * 2, sticky="w", padx=8, pady=6)
-            ttk.Label(estimate, textvariable=variable).grid(row=0, column=index * 2 + 1, sticky="w", padx=8, pady=6)
+            ttk.Label(estimate, text=f"{label_text}:").grid(
+                row=0, column=index * 2, sticky="w", padx=8, pady=6
+            )
+            ttk.Label(estimate, textvariable=variable).grid(
+                row=0, column=index * 2 + 1, sticky="w", padx=8, pady=6
+            )
 
-        pair_frame = ttk.LabelFrame(root, text="Whitelist preview")
+        pair_frame = ttk.LabelFrame(live_tab, text="Whitelist preview")
         pair_frame.grid(row=4, column=0, sticky="ew", padx=8, pady=(0, 8))
         pair_frame.grid_columnconfigure(0, weight=1)
-        self.orderbook_pair_preview_tree = ttk.Treeview(pair_frame, columns=("pair", "symbol", "status"), show="headings", height=5)
+        self.orderbook_pair_preview_tree = ttk.Treeview(
+            pair_frame,
+            columns=("pair", "symbol", "status"),
+            show="headings",
+            height=5,
+        )
         for column, width in (("pair", 180), ("symbol", 140), ("status", 140)):
             self.orderbook_pair_preview_tree.heading(column, text=column)
             self.orderbook_pair_preview_tree.column(column, width=width, anchor="w")
-        self.orderbook_pair_preview_tree.grid(row=0, column=0, sticky="ew", padx=8, pady=8)
-        ttk.Label(pair_frame, textvariable=self.orderbook_pair_warning_var).grid(row=1, column=0, sticky="w", padx=8, pady=(0, 8))
+        self.orderbook_pair_preview_tree.grid(
+            row=0, column=0, sticky="ew", padx=8, pady=8
+        )
+        ttk.Label(pair_frame, textvariable=self.orderbook_pair_warning_var).grid(
+            row=1, column=0, sticky="w", padx=8, pady=(0, 8)
+        )
 
-        metrics = ttk.LabelFrame(root, text="Latest metrics")
+        metrics = ttk.LabelFrame(live_tab, text="Latest metrics")
         metrics.grid(row=5, column=0, sticky="nsew", padx=8, pady=(0, 8))
         metrics.grid_columnconfigure(0, weight=1)
         metrics.grid_rowconfigure(0, weight=1)
@@ -3053,14 +3209,311 @@ class FreqtradeLauncher(tk.Tk):
             "nearest_ask_wall_distance_bps",
             "last_metric_at",
         )
-        self.orderbook_latest_metrics_tree = ttk.Treeview(metrics, columns=columns, show="headings", height=8)
+        self.orderbook_latest_metrics_tree = ttk.Treeview(
+            metrics, columns=columns, show="headings", height=8
+        )
         for column in columns:
             self.orderbook_latest_metrics_tree.heading(column, text=column)
-            self.orderbook_latest_metrics_tree.column(column, width=150 if column != "last_metric_at" else 220, anchor="w")
-        self.orderbook_latest_metrics_tree.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
-        scrollbar = ttk.Scrollbar(metrics, orient="vertical", command=self.orderbook_latest_metrics_tree.yview)
+            self.orderbook_latest_metrics_tree.column(
+                column,
+                width=150 if column != "last_metric_at" else 220,
+                anchor="w",
+            )
+        self.orderbook_latest_metrics_tree.grid(
+            row=0, column=0, sticky="nsew", padx=8, pady=8
+        )
+        scrollbar = ttk.Scrollbar(
+            metrics, orient="vertical", command=self.orderbook_latest_metrics_tree.yview
+        )
         scrollbar.grid(row=0, column=1, sticky="ns", pady=8)
         self.orderbook_latest_metrics_tree.configure(yscrollcommand=scrollbar.set)
+
+        self._build_orderbook_history_tab(history_tab)
+
+    def _build_orderbook_history_tab(self, root: ttk.Frame) -> None:
+        root.grid_columnconfigure(0, weight=1)
+        root.grid_rowconfigure(5, weight=1)
+
+        intro = ttk.Label(
+            root,
+            text=(
+                "Bybit History uses the new archive-aware workflow: download-data scans daily "
+                "archive availability first, stores an availability report per symbol, then "
+                "downloads only the days that exist. orderbook-to-features converts those raw "
+                "archives into 1h-friendly feature files for backtesting and hyperopt research."
+            ),
+            wraplength=1120,
+            justify="left",
+            foreground="#555555",
+        )
+        intro.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 6))
+
+        settings = ttk.LabelFrame(root, text="Bybit archive settings")
+        settings.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 8))
+        settings.grid_columnconfigure(1, weight=1)
+        settings.grid_columnconfigure(3, weight=1)
+
+        datadir_label, datadir_entry, datadir_button = self._path_row(
+            settings,
+            0,
+            "Archive datadir",
+            self.orderbook_history_datadir_var,
+            directory=True,
+            tooltip=(
+                "Base folder used by freqtrade download-data and orderbook-to-features. "
+                "Raw ZIP archives will live under orderbook/linear/<SYMBOL>/ and generated "
+                "feature files under orderbook_features/linear/."
+            ),
+        )
+        exchange_label = ttk.Label(settings, text="Exchange")
+        exchange_label.grid(row=1, column=0, sticky="w", padx=8, pady=8)
+        exchange_combo = ttk.Combobox(
+            settings,
+            textvariable=self.orderbook_history_exchange_var,
+            values=["bybit"],
+            state="readonly",
+            width=14,
+        )
+        exchange_combo.grid(row=1, column=1, sticky="w", padx=8, pady=8)
+        trading_label = ttk.Label(settings, text="Trading mode")
+        trading_label.grid(row=1, column=2, sticky="w", padx=8, pady=8)
+        trading_combo = ttk.Combobox(
+            settings,
+            textvariable=self.orderbook_history_trading_mode_var,
+            values=["futures"],
+            state="readonly",
+            width=14,
+        )
+        trading_combo.grid(row=1, column=3, sticky="w", padx=8, pady=8)
+
+        category_label = ttk.Label(settings, text="Category")
+        category_label.grid(row=2, column=0, sticky="w", padx=8, pady=8)
+        category_combo = ttk.Combobox(
+            settings,
+            textvariable=self.orderbook_history_category_var,
+            values=["linear"],
+            state="readonly",
+            width=14,
+        )
+        category_combo.grid(row=2, column=1, sticky="w", padx=8, pady=8)
+        depth_label, depth_entry = self._labeled_entry(
+            settings, 2, 2, "Depth", self.orderbook_history_depth_var
+        )
+        timerange_label, timerange_entry = self._labeled_entry(
+            settings, 3, 0, "Timerange", self.orderbook_history_timerange_var
+        )
+        feature_tf_label, feature_tf_entry = self._labeled_entry(
+            settings, 3, 2, "Feature timeframes", self.orderbook_history_feature_timeframes_var
+        )
+        feature_format_label = ttk.Label(settings, text="Feature format")
+        feature_format_label.grid(row=4, column=0, sticky="w", padx=8, pady=8)
+        feature_format_combo = ttk.Combobox(
+            settings,
+            textvariable=self.orderbook_history_feature_format_var,
+            values=["feather", "parquet"],
+            state="readonly",
+            width=14,
+        )
+        feature_format_combo.grid(row=4, column=1, sticky="w", padx=8, pady=8)
+        max_rows_label, max_rows_entry = self._labeled_entry(
+            settings, 4, 2, "Max rows", self.orderbook_history_max_rows_var
+        )
+        erase_check = ttk.Checkbutton(
+            settings,
+            text="Redownload matching raw archives",
+            variable=self.orderbook_history_erase_var,
+        )
+        erase_check.grid(row=5, column=0, columnspan=2, sticky="w", padx=8, pady=8)
+
+        pair_frame = ttk.LabelFrame(root, text="Archive pairs")
+        pair_frame.grid(row=2, column=0, sticky="nsew", padx=8, pady=(0, 8))
+        pair_frame.grid_columnconfigure(0, weight=1)
+        pair_frame.grid_rowconfigure(1, weight=1)
+        pair_buttons = ttk.Frame(pair_frame)
+        pair_buttons.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 0))
+        add_button = ttk.Button(
+            pair_buttons,
+            text="Add typed",
+            command=lambda: self.add_typed_pair(
+                self.orderbook_history_pairs_text, set_manual_mode=False
+            ),
+        )
+        add_button.pack(side="left", padx=(0, 8))
+        remove_button = ttk.Button(
+            pair_buttons,
+            text="Remove selected",
+            command=lambda: self.remove_selected_pairs(self.orderbook_history_pairs_text),
+        )
+        remove_button.pack(side="left", padx=(0, 8))
+        normalize_button = ttk.Button(
+            pair_buttons,
+            text="Normalize",
+            command=lambda: self.normalize_pair_text(
+                self.orderbook_history_pairs_text, set_manual_mode=False
+            ),
+        )
+        normalize_button.pack(side="left", padx=(0, 8))
+        whitelist_button = ttk.Button(
+            pair_buttons,
+            text="Use whitelist",
+            command=self.copy_whitelist_to_orderbook_history_pairs,
+        )
+        whitelist_button.pack(side="left")
+        self.orderbook_history_pairs_text = scrolledtext.ScrolledText(
+            pair_frame, wrap="word", height=6
+        )
+        self.orderbook_history_pairs_text.grid(
+            row=1, column=0, sticky="nsew", padx=8, pady=8
+        )
+        self.orderbook_history_pairs_text.bind(
+            "<KeyRelease>", lambda _e: self.refresh_orderbook_history_previews()
+        )
+        ttk.Label(
+            pair_frame,
+            text=(
+                "If this list is empty, the launcher falls back to the main whitelist on the "
+                "Pairs tab. Download Raw Archives writes availability_ob500.json files for each "
+                "requested symbol, and Refresh Summary reads those reports back into the grid."
+            ),
+            wraplength=1080,
+            justify="left",
+        ).grid(row=2, column=0, sticky="w", padx=8, pady=(0, 8))
+
+        preview = ttk.LabelFrame(root, text="Generated commands")
+        preview.grid(row=3, column=0, sticky="ew", padx=8, pady=(0, 8))
+        preview.grid_columnconfigure(1, weight=1)
+        ttk.Label(preview, text="Download raw").grid(
+            row=0, column=0, sticky="w", padx=8, pady=8
+        )
+        ttk.Entry(
+            preview, textvariable=self.orderbook_history_download_preview_var
+        ).grid(row=0, column=1, sticky="ew", padx=8, pady=8)
+        ttk.Label(preview, text="Convert features").grid(
+            row=1, column=0, sticky="w", padx=8, pady=8
+        )
+        ttk.Entry(
+            preview, textvariable=self.orderbook_history_convert_preview_var
+        ).grid(row=1, column=1, sticky="ew", padx=8, pady=8)
+
+        actions = ttk.Frame(root)
+        actions.grid(row=4, column=0, sticky="ew", padx=8, pady=(0, 8))
+        ttk.Button(
+            actions, text="Download Raw Archives", command=self.on_orderbook_history_download
+        ).pack(side="left", padx=(0, 8))
+        ttk.Button(
+            actions, text="Convert To Features", command=self.on_orderbook_history_convert
+        ).pack(side="left", padx=(0, 8))
+        ttk.Button(
+            actions, text="Refresh Summary", command=self.refresh_orderbook_history_summary
+        ).pack(side="left", padx=(0, 8))
+        ttk.Button(
+            actions, text="Open Data Folder", command=self.open_orderbook_history_data_dir
+        ).pack(side="left", padx=(0, 8))
+
+        summary = ttk.LabelFrame(root, text="Archive summary")
+        summary.grid(row=5, column=0, sticky="nsew", padx=8, pady=(0, 8))
+        summary.grid_columnconfigure(0, weight=1)
+        summary.grid_rowconfigure(1, weight=1)
+        ttk.Label(summary, textvariable=self.orderbook_history_status_var).grid(
+            row=0, column=0, sticky="w", padx=8, pady=(8, 0)
+        )
+        summary_columns = (
+            "pair",
+            "symbol",
+            "available_days",
+            "missing_days",
+            "first_available",
+            "last_available",
+            "raw_archives",
+            "feature_timeframes",
+        )
+        self.orderbook_history_summary_tree = ttk.Treeview(
+            summary,
+            columns=summary_columns,
+            show="headings",
+            height=8,
+        )
+        widths = {
+            "pair": 170,
+            "symbol": 120,
+            "available_days": 110,
+            "missing_days": 100,
+            "first_available": 110,
+            "last_available": 110,
+            "raw_archives": 100,
+            "feature_timeframes": 220,
+        }
+        for column in summary_columns:
+            self.orderbook_history_summary_tree.heading(column, text=column)
+            self.orderbook_history_summary_tree.column(
+                column, width=widths[column], anchor="w"
+            )
+        self.orderbook_history_summary_tree.grid(
+            row=1, column=0, sticky="nsew", padx=8, pady=8
+        )
+        scrollbar = ttk.Scrollbar(
+            summary,
+            orient="vertical",
+            command=self.orderbook_history_summary_tree.yview,
+        )
+        scrollbar.grid(row=1, column=1, sticky="ns", pady=8)
+        self.orderbook_history_summary_tree.configure(yscrollcommand=scrollbar.set)
+
+        self._add_tooltips(
+            "Base folder for Bybit historical raw ZIP archives and generated feature files.",
+            datadir_label,
+            datadir_entry,
+            datadir_button,
+        )
+        self._add_tooltips(
+            "Fixed exchange for the current archive workflow.",
+            exchange_label,
+            exchange_combo,
+        )
+        self._add_tooltips(
+            "Historical archive download currently supports Bybit futures/linear only.",
+            trading_label,
+            trading_combo,
+            category_label,
+            category_combo,
+        )
+        self._add_tooltips(
+            "Bybit archive depth. The current downloader supports ob500 archives.",
+            depth_label,
+            depth_entry,
+        )
+        self._add_tooltips(
+            "Requested date range for historical archive scanning and download. Example: 20241201-20241231.",
+            timerange_label,
+            timerange_entry,
+        )
+        self._add_tooltips(
+            "Timeframes passed to orderbook-to-features. Example: 1h or 1h 4h.",
+            feature_tf_label,
+            feature_tf_entry,
+        )
+        self._add_tooltips(
+            "Storage format for aggregated feature files.",
+            feature_format_label,
+            feature_format_combo,
+        )
+        self._add_tooltips(
+            "Optional row limit for quick sample conversions while you prototype the feature set.",
+            max_rows_label,
+            max_rows_entry,
+        )
+        self._add_tooltips(
+            "When enabled, matching raw ZIP archives are redownloaded.",
+            erase_check,
+        )
+        self._add_tooltips(
+            "Archive pair entry box. Use Freqtrade pair names such as XRP/USDT:USDT.",
+            self.orderbook_history_pairs_text,
+            add_button,
+            remove_button,
+            normalize_button,
+            whitelist_button,
+        )
 
 
     def _build_explorer_tab(self) -> None:
@@ -3070,8 +3523,10 @@ class FreqtradeLauncher(tk.Tk):
         self.tab_explorer.grid_rowconfigure(0, weight=1)
         root = ttk.Frame(explorer_notebook)
         catalog_tab = ttk.Frame(explorer_notebook)
+        review_tab = ttk.Frame(explorer_notebook)
         explorer_notebook.add(root, text="Run Explorer")
         explorer_notebook.add(catalog_tab, text="Catalog / Custom Batches")
+        explorer_notebook.add(review_tab, text="Review Explorer Loops")
         root.grid_columnconfigure(0, weight=1)
         root.grid_rowconfigure(4, weight=1)
 
@@ -3131,6 +3586,24 @@ class FreqtradeLauncher(tk.Tk):
         namespace_tip = "Used by Random namespace values. The list is discovered dynamically from strategy tag prefixes."
         ToolTip(namespace_label, namespace_tip)
         ToolTip(self.explorer_target_namespace_combo, namespace_tip)
+        custom_batch_buttons = ttk.Frame(controls)
+        custom_batch_buttons.grid(row=1, column=6, columnspan=2, sticky="ew", padx=8, pady=(0, 8))
+        custom_batch_buttons.grid_columnconfigure(0, weight=1)
+        custom_batch_buttons.grid_columnconfigure(1, weight=1)
+        custom_batch_buttons.grid_columnconfigure(2, weight=1)
+        select_all_batches_button = ttk.Button(custom_batch_buttons, text="Select all custom batches", command=self.select_all_visible_custom_batches)
+        select_all_batches_button.grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        select_daily_new_batches_button = ttk.Button(custom_batch_buttons, text="Select Daily new", command=self.select_daily_new_entry_custom_batches)
+        select_daily_new_batches_button.grid(row=0, column=1, sticky="ew", padx=4)
+        clear_batches_button = ttk.Button(custom_batch_buttons, text="Clear batches", command=self.clear_selected_custom_batches)
+        clear_batches_button.grid(row=0, column=2, sticky="ew", padx=(4, 0))
+        custom_batch_tip = "Selects or clears every committed custom batch visible for the currently loaded strategy."
+        ToolTip(select_all_batches_button, custom_batch_tip)
+        ToolTip(
+            select_daily_new_batches_button,
+            "Selects only the Daily new-entry custom batches created for reclaim/retest testing, then switches Explorer to Custom batches mode.",
+        )
+        ToolTip(clear_batches_button, custom_batch_tip)
 
         epochs_label = ttk.Label(controls, text="Epoch multiplier")
         epochs_label.grid(row=2, column=0, sticky="w", padx=8, pady=(0, 8))
@@ -3206,39 +3679,7 @@ class FreqtradeLauncher(tk.Tk):
             "Example: Set 12 on a 20-core machine if RAM allows.",
         )
 
-        keeper_frame = ttk.LabelFrame(root, text="2. Keeper snapshots")
-        keeper_frame.grid(row=2, column=0, sticky="ew", padx=8, pady=(0, 8))
-        keeper_frame.grid_columnconfigure(1, weight=1)
-        keeper_enabled = ttk.Checkbutton(keeper_frame, text="Keeper snapshots enabled", variable=self.explorer_keeper_enabled_var)
-        keeper_enabled.grid(row=0, column=0, columnspan=3, sticky="w", padx=8, pady=8)
-        ToolTip(keeper_enabled, "When enabled, Explorer saves accepted merged strategy-parameter snapshots only if keeper thresholds pass. This never changes acceptance scoring; it only controls archive copies.")
-        self._path_row(keeper_frame, 1, "Explorer keeper save directory", self.explorer_keeper_save_dir_var, directory=True)
-        ttk.Label(keeper_frame, text="Keeper win ratio").grid(row=2, column=0, sticky="w", padx=8, pady=(0, 8))
-        ratio_row = ttk.Frame(keeper_frame)
-        ratio_row.grid(row=2, column=1, sticky="w", padx=8, pady=(0, 8))
-        keeper_num_entry = ttk.Entry(ratio_row, textvariable=self.explorer_keeper_win_numerator_var, width=6)
-        keeper_num_entry.pack(side="left")
-        ttk.Label(ratio_row, text="/").pack(side="left", padx=6)
-        keeper_den_entry = ttk.Entry(ratio_row, textvariable=self.explorer_keeper_win_denominator_var, width=6)
-        keeper_den_entry.pack(side="left")
-        ttk.Label(keeper_frame, text="Keeper min profit per backtest window").grid(row=2, column=2, sticky="w", padx=8, pady=(0, 8))
-        keeper_profit_entry = ttk.Entry(keeper_frame, textvariable=self.explorer_keeper_min_profit_per_window_var, width=12)
-        keeper_profit_entry.grid(row=2, column=3, sticky="w", padx=8, pady=(0, 8))
-        ToolTip(
-            keeper_num_entry,
-            "Numerator for keeper winning-window requirement. Required wins are ceil(total_windows * numerator / denominator). "
-            "Leave blank to use 5.",
-        )
-        ToolTip(
-            keeper_den_entry,
-            "Denominator for keeper winning-window requirement. Must be greater than zero. Leave blank to use 6.",
-        )
-        ToolTip(
-            keeper_profit_entry,
-            "Minimum required total challenger profit is total_windows * this value. Leave blank to use 200.",
-        )
-
-        windows_frame = ttk.LabelFrame(root, text="3. Selected market windows")
+        windows_frame = ttk.LabelFrame(root, text="2. Selected market windows")
         windows_frame.grid(row=3, column=0, sticky="ew", padx=8, pady=(0, 8))
         windows_frame.grid_columnconfigure(0, weight=1)
         ToolTip(
@@ -3281,7 +3722,7 @@ class FreqtradeLauncher(tk.Tk):
         selection_row.grid_columnconfigure(0, weight=3)
         selection_row.grid_columnconfigure(1, weight=2)
 
-        filters_frame = ttk.LabelFrame(selection_row, text="4. Backtest selection")
+        filters_frame = ttk.LabelFrame(selection_row, text="3. Backtest selection")
         filters_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 6), pady=0)
         filters_frame.grid_columnconfigure(0, weight=1)
         filters_frame.grid_columnconfigure(1, weight=1)
@@ -3290,7 +3731,7 @@ class FreqtradeLauncher(tk.Tk):
         self._build_market_type_filter_box(filters_frame, 1, "Backtest usable market types", "backtest")
         self._build_backtest_count_box(filters_frame, 2)
 
-        holdouts = ttk.LabelFrame(selection_row, text="5. 12-month holdout backtests")
+        holdouts = ttk.LabelFrame(selection_row, text="4. 12-month holdout backtests")
         holdouts.grid(row=0, column=1, sticky="nsew", padx=(6, 0), pady=0)
         for col in range(2):
             holdouts.grid_columnconfigure(col, weight=1)
@@ -3304,7 +3745,1170 @@ class FreqtradeLauncher(tk.Tk):
             ToolTip(check, str(window.get("tooltip") or holdout_tip))
 
         self._build_catalog_custom_batches_tab(catalog_tab)
+        self._build_explorer_loop_review_tab(review_tab)
         self._refresh_explorer_namespace_dropdown()
+
+    def _build_explorer_loop_review_tab(self, root: ttk.Frame) -> None:
+        root.grid_columnconfigure(0, weight=1)
+        root.grid_rowconfigure(1, weight=1)
+
+        controls = ttk.LabelFrame(root, text=f"Accepted loop comparison (up to {EXPLORER_REVIEW_MAX_COMPARE_LOOPS})")
+        controls.grid(row=0, column=0, sticky="ew", padx=8, pady=8)
+        controls.grid_columnconfigure(1, weight=1)
+        controls.grid_columnconfigure(6, weight=1)
+        controls.grid_columnconfigure(7, weight=1)
+        ttk.Label(controls, text="Run scope").grid(row=0, column=0, sticky="w", padx=8, pady=8)
+        self.explorer_review_run_combo = ttk.Combobox(
+            controls,
+            textvariable=self.explorer_review_run_var,
+            values=[],
+            state="readonly",
+            width=72,
+        )
+        self.explorer_review_run_combo.grid(row=0, column=1, columnspan=4, sticky="ew", padx=8, pady=8)
+        self.explorer_review_run_combo.bind("<<ComboboxSelected>>", lambda _event: self._load_explorer_review_scope())
+        ttk.Button(controls, text="Refresh runs", command=self.refresh_explorer_review_runs).grid(row=0, column=5, sticky="ew", padx=8, pady=8)
+        ttk.Button(controls, text="Compare selected loops", command=self.compare_selected_explorer_loops).grid(row=0, column=6, sticky="ew", padx=8, pady=8)
+        ttk.Label(
+            controls,
+            textvariable=self.explorer_review_status_var,
+            foreground="#666666",
+            wraplength=980,
+            justify="left",
+        ).grid(row=1, column=0, columnspan=8, sticky="w", padx=8, pady=(0, 8))
+        save_dir_label = ttk.Label(controls, text="Saved loop configs dir")
+        save_dir_label.grid(row=2, column=0, sticky="w", padx=8, pady=(0, 8))
+        save_dir_entry = ttk.Entry(controls, textvariable=self.explorer_saved_loops_dir_var)
+        save_dir_entry.grid(row=2, column=1, columnspan=4, sticky="ew", padx=8, pady=(0, 8))
+        save_dir_browse = ttk.Button(
+            controls,
+            text="Browse",
+            command=lambda: self._browse_path(self.explorer_saved_loops_dir_var, True, False),
+        )
+        save_dir_browse.grid(row=2, column=5, sticky="ew", padx=8, pady=(0, 8))
+        save_loops_button = ttk.Button(controls, text="Save selected loops", command=self.save_selected_explorer_loops_to_repo)
+        save_loops_button.grid(row=2, column=6, sticky="ew", padx=8, pady=(0, 8))
+        clear_repo_button = ttk.Button(controls, text="Clear saved repo", command=self.clear_explorer_saved_loop_repo)
+        clear_repo_button.grid(row=2, column=7, sticky="ew", padx=8, pady=(0, 8))
+        save_dir_tip = "Repository for exporting selected accepted loops as strategy-parameter JSON snapshots."
+        ToolTip(save_dir_label, save_dir_tip)
+        ToolTip(save_dir_entry, save_dir_tip)
+        ToolTip(save_dir_browse, save_dir_tip)
+        ToolTip(save_loops_button, "Exports selected accepted loops from this comparison view into the saved loop repo.")
+        ToolTip(clear_repo_button, "Deletes all files inside the saved loop repo and keeps the directory for new exports.")
+
+        split = tk.PanedWindow(
+            root,
+            orient=tk.HORIZONTAL,
+            sashwidth=7,
+            sashpad=2,
+            opaqueresize=True,
+            bd=0,
+            relief="flat",
+        )
+        split.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 8))
+
+        left_host = ttk.Frame(split, width=420)
+        right_host = ttk.Frame(split, width=980)
+        split.add(left_host, minsize=320, stretch="never")
+        split.add(right_host, minsize=640, stretch="always")
+
+        left_host.grid_columnconfigure(0, weight=1)
+        left_host.grid_rowconfigure(0, weight=1)
+        loop_frame = ttk.LabelFrame(left_host, text=f"Accepted loops (select up to {EXPLORER_REVIEW_MAX_COMPARE_LOOPS})")
+        loop_frame.grid(row=0, column=0, sticky="nsew")
+        loop_frame.grid_columnconfigure(0, weight=1)
+        loop_frame.grid_rowconfigure(0, weight=1)
+        self.explorer_review_loop_listbox = tk.Listbox(loop_frame, selectmode=tk.EXTENDED, exportselection=False)
+        self.explorer_review_loop_listbox.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
+        loop_y = ttk.Scrollbar(loop_frame, orient="vertical", command=self.explorer_review_loop_listbox.yview)
+        loop_y.grid(row=0, column=1, sticky="ns", pady=8)
+        loop_x = ttk.Scrollbar(loop_frame, orient="horizontal", command=self.explorer_review_loop_listbox.xview)
+        loop_x.grid(row=1, column=0, sticky="ew", padx=8)
+        self.explorer_review_loop_listbox.configure(yscrollcommand=loop_y.set, xscrollcommand=loop_x.set)
+        self.explorer_review_loop_listbox.bind("<<ListboxSelect>>", self._on_explorer_review_loop_select)
+
+        right_host.grid_columnconfigure(0, weight=1)
+        right_host.grid_rowconfigure(0, weight=1)
+        review_notebook = ttk.Notebook(right_host)
+        review_notebook.grid(row=0, column=0, sticky="nsew")
+
+        overview_tab = ttk.Frame(review_notebook)
+        backtest_tab = ttk.Frame(review_notebook)
+        params_tab = ttk.Frame(review_notebook)
+        review_notebook.add(overview_tab, text="Loop Summary")
+        review_notebook.add(backtest_tab, text="Backtest Comparison")
+        review_notebook.add(params_tab, text="Challenger Params")
+
+        overview_tab.grid_columnconfigure(0, weight=1)
+        overview_tab.grid_rowconfigure(0, weight=1)
+        overview_tab.grid_rowconfigure(1, weight=1)
+
+        summary_frame = ttk.LabelFrame(overview_tab, text="Loop overview")
+        summary_frame.grid(row=0, column=0, sticky="nsew", padx=8, pady=(8, 4))
+        summary_frame.grid_columnconfigure(0, weight=1)
+        summary_frame.grid_rowconfigure(0, weight=1)
+        summary_columns = (
+            "run",
+            "loop",
+            "target",
+            "hyperopt",
+            "regime",
+            "decision",
+            "params_changed",
+            "weighted",
+            "objective",
+            "profit",
+            "loss_windows",
+            "worst_loss_pct",
+        )
+        summary_numeric_columns = {"loop", "params_changed", "weighted", "objective", "profit", "loss_windows", "worst_loss_pct"}
+        self.explorer_review_summary_tree = ttk.Treeview(summary_frame, columns=summary_columns, show="headings", height=8)
+        for column, title, width in (
+            ("run", "Run", 180),
+            ("loop", "Loop", 60),
+            ("target", "Target", 220),
+            ("hyperopt", "Hyperopt window", 210),
+            ("regime", "Regime", 80),
+            ("decision", "Decision", 80),
+            ("params_changed", "Params", 70),
+            ("weighted", "Challenger score", 130),
+            ("objective", "Challenger obj", 120),
+            ("profit", "Challenger profit", 130),
+            ("loss_windows", "Loss windows", 110),
+            ("worst_loss_pct", "Worst loss %", 105),
+        ):
+            self._configure_tree_sort_heading(
+                self.explorer_review_summary_tree,
+                column,
+                title,
+                numeric_columns=summary_numeric_columns,
+            )
+            self.explorer_review_summary_tree.column(column, width=width, anchor="w", stretch=column in {"target", "hyperopt"})
+        self.explorer_review_summary_tree.grid(row=0, column=0, sticky="nsew")
+        summary_y = ttk.Scrollbar(summary_frame, orient="vertical", command=self.explorer_review_summary_tree.yview)
+        summary_y.grid(row=0, column=1, sticky="ns")
+        summary_x = ttk.Scrollbar(summary_frame, orient="horizontal", command=self.explorer_review_summary_tree.xview)
+        summary_x.grid(row=1, column=0, sticky="ew")
+        self.explorer_review_summary_tree.configure(yscrollcommand=summary_y.set, xscrollcommand=summary_x.set)
+
+        acceptance_frame = ttk.LabelFrame(overview_tab, text="Acceptance summary")
+        acceptance_frame.grid(row=1, column=0, sticky="nsew", padx=8, pady=(4, 8))
+        acceptance_frame.grid_columnconfigure(0, weight=1)
+        acceptance_frame.grid_rowconfigure(1, weight=1)
+        acceptance_controls = ttk.Frame(acceptance_frame)
+        acceptance_controls.grid(row=0, column=0, sticky="ew", padx=2, pady=(2, 4))
+        acceptance_controls.grid_columnconfigure(0, weight=1)
+        show_delta_check = ttk.Checkbutton(
+            acceptance_controls,
+            text="Show Delta rows",
+            variable=self.explorer_review_show_delta_var,
+            command=self.compare_selected_explorer_loops,
+        )
+        show_delta_check.grid(row=0, column=1, sticky="e", padx=(6, 2))
+        ToolTip(show_delta_check, "Include or hide acceptance Delta rows in the table below.")
+        acceptance_columns = (
+            "run",
+            "loop",
+            "role",
+            "weighted",
+            "objective",
+            "profit",
+            "worst_loss_pct",
+            "loss_windows",
+            "count_penalty",
+            "severity_penalty",
+            "reason",
+        )
+        acceptance_numeric_columns = {
+            "loop",
+            "weighted",
+            "objective",
+            "profit",
+            "worst_loss_pct",
+            "loss_windows",
+            "count_penalty",
+            "severity_penalty",
+        }
+        self.explorer_review_acceptance_tree = ttk.Treeview(acceptance_frame, columns=acceptance_columns, show="headings", height=10)
+        for column, title, width in (
+            ("run", "Run", 180),
+            ("loop", "Loop", 60),
+            ("role", "Role", 90),
+            ("weighted", "Weighted score", 125),
+            ("objective", "Objective total", 115),
+            ("profit", "Total profit", 105),
+            ("worst_loss_pct", "Worst loss %", 95),
+            ("loss_windows", "Loss windows", 90),
+            ("count_penalty", "Count pen", 95),
+            ("severity_penalty", "Severity pen", 95),
+            ("reason", "Reason", 220),
+        ):
+            self._configure_tree_sort_heading(
+                self.explorer_review_acceptance_tree,
+                column,
+                title,
+                numeric_columns=acceptance_numeric_columns,
+            )
+            self.explorer_review_acceptance_tree.column(column, width=width, anchor="w", stretch=column == "reason")
+        self.explorer_review_acceptance_tree.grid(row=1, column=0, sticky="nsew")
+        acceptance_y = ttk.Scrollbar(acceptance_frame, orient="vertical", command=self.explorer_review_acceptance_tree.yview)
+        acceptance_y.grid(row=1, column=1, sticky="ns")
+        acceptance_x = ttk.Scrollbar(acceptance_frame, orient="horizontal", command=self.explorer_review_acceptance_tree.xview)
+        acceptance_x.grid(row=2, column=0, sticky="ew")
+        self.explorer_review_acceptance_tree.configure(yscrollcommand=acceptance_y.set, xscrollcommand=acceptance_x.set)
+
+        backtest_tab.grid_columnconfigure(0, weight=1)
+        backtest_tab.grid_rowconfigure(0, weight=1)
+        backtest_frame = ttk.LabelFrame(backtest_tab, text="Window-by-window champion vs challenger")
+        backtest_frame.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
+        backtest_frame.grid_columnconfigure(0, weight=1)
+        backtest_frame.grid_rowconfigure(0, weight=1)
+        backtest_columns = (
+            "run",
+            "loop",
+            "window",
+            "champion_profit",
+            "champion_pct",
+            "challenger_profit",
+            "challenger_pct",
+            "champion_obj",
+            "challenger_obj",
+        )
+        backtest_numeric_columns = {
+            "loop",
+            "champion_profit",
+            "champion_pct",
+            "challenger_profit",
+            "challenger_pct",
+            "champion_obj",
+            "challenger_obj",
+        }
+        self.explorer_review_backtest_tree = ttk.Treeview(backtest_frame, columns=backtest_columns, show="headings", height=20)
+        for column, title, width in (
+            ("run", "Run", 180),
+            ("loop", "Loop", 60),
+            ("window", "Window", 260),
+            ("champion_profit", "Champion Profit", 120),
+            ("champion_pct", "Champion %", 95),
+            ("challenger_profit", "Challenger Profit", 130),
+            ("challenger_pct", "Challenger %", 105),
+            ("champion_obj", "Champion Obj", 120),
+            ("challenger_obj", "Challenger Obj", 130),
+        ):
+            self._configure_tree_sort_heading(
+                self.explorer_review_backtest_tree,
+                column,
+                title,
+                numeric_columns=backtest_numeric_columns,
+            )
+            self.explorer_review_backtest_tree.column(column, width=width, anchor="w", stretch=column == "window")
+        self.explorer_review_backtest_tree.grid(row=0, column=0, sticky="nsew")
+        backtest_y = ttk.Scrollbar(backtest_frame, orient="vertical", command=self.explorer_review_backtest_tree.yview)
+        backtest_y.grid(row=0, column=1, sticky="ns")
+        backtest_x = ttk.Scrollbar(backtest_frame, orient="horizontal", command=self.explorer_review_backtest_tree.xview)
+        backtest_x.grid(row=1, column=0, sticky="ew")
+        self.explorer_review_backtest_tree.configure(yscrollcommand=backtest_y.set, xscrollcommand=backtest_x.set)
+
+        params_tab.grid_columnconfigure(0, weight=1)
+        params_tab.grid_rowconfigure(1, weight=1)
+        params_header = ttk.Frame(params_tab)
+        params_header.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 2))
+        params_header.grid_columnconfigure(0, weight=1)
+        ttk.Label(params_header, textvariable=self.explorer_review_param_hint_var, foreground="#666666").grid(row=0, column=0, sticky="w")
+        hide_identical_check = ttk.Checkbutton(
+            params_header,
+            text="Hide identical params",
+            variable=self.explorer_review_hide_identical_params_var,
+            command=self.compare_selected_explorer_loops,
+        )
+        hide_identical_check.grid(row=0, column=1, sticky="e")
+        params_frame = ttk.LabelFrame(params_tab, text="Challenger parameter values (all params)")
+        params_frame.grid(row=1, column=0, sticky="nsew", padx=8, pady=(2, 8))
+        params_frame.grid_columnconfigure(0, weight=1)
+        params_frame.grid_rowconfigure(0, weight=1)
+        self.explorer_review_params_tree = ttk.Treeview(params_frame, columns=("param", "space", "changed"), show="headings", height=20)
+        for column, title, width in (("param", "Param", 260), ("space", "Space", 110), ("changed", "Varies", 65)):
+            self._configure_tree_sort_heading(self.explorer_review_params_tree, column, title)
+            self.explorer_review_params_tree.column(column, width=width, anchor="w", stretch=column == "param")
+        self.explorer_review_params_tree.tag_configure("param_diff", background="#fff2a8")
+        self.explorer_review_params_tree.grid(row=0, column=0, sticky="nsew")
+        params_y = ttk.Scrollbar(params_frame, orient="vertical", command=self.explorer_review_params_tree.yview)
+        params_y.grid(row=0, column=1, sticky="ns")
+        params_x = ttk.Scrollbar(params_frame, orient="horizontal", command=self.explorer_review_params_tree.xview)
+        params_x.grid(row=1, column=0, sticky="ew")
+        self.explorer_review_params_tree.configure(yscrollcommand=params_y.set, xscrollcommand=params_x.set)
+        ToolTip(hide_identical_check, "Hide rows where all selected challengers have identical values.")
+
+        self.refresh_explorer_review_runs(keep_selection=False)
+
+    @staticmethod
+    def _clear_tree_rows(tree: ttk.Treeview | None) -> None:
+        if tree is None:
+            return
+        tree.delete(*tree.get_children())
+
+    def _configure_tree_sort_heading(
+        self,
+        tree: ttk.Treeview | None,
+        column: str,
+        title: str,
+        numeric_columns: Iterable[str] | None = None,
+    ) -> None:
+        if tree is None:
+            return
+        numeric_lookup = frozenset(str(name) for name in (numeric_columns or ()))
+        tree.heading(
+            column,
+            text=title,
+            command=lambda col=column, t=tree, nums=numeric_lookup: self._sort_treeview_column(t, col, nums),
+        )
+
+    @staticmethod
+    def _parse_tree_sort_numeric(text: str) -> float | None:
+        value = text.strip()
+        if not value or value == "-":
+            return None
+        lowered = value.lower()
+        if lowered == "true":
+            return 1.0
+        if lowered == "false":
+            return 0.0
+        ratio_match = re.fullmatch(r"(-?\d+(?:\.\d+)?)\s*/\s*(-?\d+(?:\.\d+)?)", value)
+        if ratio_match:
+            numerator = float(ratio_match.group(1))
+            denominator = float(ratio_match.group(2))
+            return numerator / denominator if abs(denominator) > 0.0 else numerator
+        cleaned = value.replace(",", "")
+        if cleaned.endswith("%"):
+            cleaned = cleaned[:-1]
+        try:
+            return float(cleaned)
+        except Exception:
+            return None
+
+    def _tree_column_is_numeric(self, tree: ttk.Treeview, column: str) -> bool:
+        has_value = False
+        for item_id in tree.get_children():
+            raw = str(tree.set(item_id, column) or "").strip()
+            if not raw or raw == "-":
+                continue
+            has_value = True
+            if self._parse_tree_sort_numeric(raw) is None:
+                return False
+        return has_value
+
+    def _tree_sort_key(self, text: str, *, numeric: bool) -> tuple[int, Any]:
+        raw = text.strip()
+        if numeric:
+            numeric_value = self._parse_tree_sort_numeric(raw)
+            if numeric_value is not None:
+                return (0, numeric_value)
+            if not raw or raw == "-":
+                return (2, 0.0)
+            return (1, raw.lower())
+        if not raw or raw == "-":
+            return (1, "")
+        return (0, raw.lower())
+
+    def _sort_treeview_column(
+        self,
+        tree: ttk.Treeview,
+        column: str,
+        numeric_columns: Iterable[str] | None = None,
+    ) -> None:
+        items = list(tree.get_children())
+        if not items:
+            return
+        numeric_lookup = set(str(name) for name in (numeric_columns or ()))
+        numeric = column in numeric_lookup or self._tree_column_is_numeric(tree, column)
+        state_key = (id(tree), str(column))
+        descending = bool(self.explorer_review_sort_descending.get(state_key, False))
+        sorted_items = sorted(
+            items,
+            key=lambda item_id: self._tree_sort_key(str(tree.set(item_id, column) or ""), numeric=numeric),
+            reverse=descending,
+        )
+        for row_index, item_id in enumerate(sorted_items):
+            tree.move(item_id, "", row_index)
+        self.explorer_review_sort_descending[state_key] = not descending
+
+    @staticmethod
+    def _path_strings_equal(left: Path | None, right: Path | None) -> bool:
+        if left is None or right is None:
+            return False
+        try:
+            return str(left.resolve()).lower() == str(right.resolve()).lower()
+        except Exception:
+            return str(left).lower() == str(right).lower()
+
+    def _explorer_metadata_directory(self) -> Path:
+        return app_path(EXPLORER_METADATA_DIR).resolve()
+
+    def _list_explorer_run_files(self) -> list[Path]:
+        run_dir = self._explorer_metadata_directory() / "runs"
+        if not run_dir.exists():
+            return []
+        run_files = [path for path in run_dir.glob("explorer_run_*.json") if path.is_file()]
+        run_files.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+        return run_files
+
+    def _latest_explorer_run_path(self) -> Path | None:
+        latest_summary_path = self._explorer_metadata_directory() / EXPLORER_LATEST_SUMMARY_FILE
+        if not latest_summary_path.exists():
+            return None
+        data: dict[str, Any] | None = None
+        for encoding in ("utf-8", "utf-8-sig"):
+            try:
+                parsed = json.loads(latest_summary_path.read_text(encoding=encoding))
+            except Exception:
+                continue
+            if isinstance(parsed, dict):
+                data = parsed
+                break
+        if not isinstance(data, dict):
+            return None
+        latest_path_text = str(data.get("latest_run_file") or "").strip()
+        if not latest_path_text:
+            return None
+        latest_path = Path(latest_path_text)
+        if not latest_path.is_absolute():
+            latest_path = (latest_summary_path.parent / latest_path).resolve()
+        return latest_path if latest_path.exists() else None
+
+    def _format_explorer_run_choice_label(self, run_file: Path, *, current: bool = False) -> str:
+        try:
+            stamp = datetime.fromtimestamp(run_file.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            stamp = "-"
+        prefix = "Current" if current else "Run"
+        return f"{prefix} | {stamp} | {run_file.name}"
+
+    def refresh_explorer_review_runs(self, keep_selection: bool = True) -> None:
+        if self.explorer_review_run_combo is None:
+            return
+
+        previous_choice = self.explorer_review_run_var.get().strip()
+        run_files = self._list_explorer_run_files()
+        latest_run_file = self._latest_explorer_run_path()
+        ordered_files: list[Path] = []
+        if latest_run_file is not None and latest_run_file.exists():
+            ordered_files.append(latest_run_file)
+        for run_file in run_files:
+            if not any(self._path_strings_equal(run_file, existing) for existing in ordered_files):
+                ordered_files.append(run_file)
+
+        choices: dict[str, list[Path]] = {}
+        labels: list[str] = []
+        if len(ordered_files) >= 2:
+            label = "Current + Previous Runs"
+            choices[label] = [ordered_files[0], ordered_files[1]]
+            labels.append(label)
+        if ordered_files:
+            label = "Current Run Only"
+            choices[label] = [ordered_files[0]]
+            labels.append(label)
+        for run_file in ordered_files[:40]:
+            label = self._format_explorer_run_choice_label(run_file, current=self._path_strings_equal(run_file, ordered_files[0] if ordered_files else None))
+            choices[label] = [run_file]
+            labels.append(label)
+
+        self.explorer_review_run_choices = choices
+        self.explorer_review_run_combo.configure(values=labels)
+
+        if not labels:
+            self.explorer_review_run_var.set("")
+            self.explorer_review_loaded_entries = []
+            self.explorer_review_loop_index_map = {}
+            if self.explorer_review_loop_listbox is not None:
+                self.explorer_review_loop_listbox.delete(0, tk.END)
+            self._clear_explorer_review_tables()
+            self.explorer_review_status_var.set("No Explorer run metadata files found yet.")
+            return
+
+        if keep_selection and previous_choice in choices:
+            selected_choice = previous_choice
+        else:
+            selected_choice = labels[0]
+        self.explorer_review_run_var.set(selected_choice)
+        self._load_explorer_review_scope()
+
+    def _explorer_run_label_from_payload(self, run_file: Path, payload: dict[str, Any]) -> str:
+        started_at = str(payload.get("started_at") or "").strip()
+        if started_at:
+            short = started_at.replace("T", " ")
+            plus = short.find("+")
+            if plus != -1:
+                short = short[:plus]
+            short = short[:16]
+            return short
+        try:
+            return datetime.fromtimestamp(run_file.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            return run_file.stem
+
+    def _load_explorer_run_json(self, run_file: Path) -> dict[str, Any] | None:
+        if not run_file.exists():
+            return None
+        for encoding in ("utf-8", "utf-8-sig"):
+            try:
+                parsed = json.loads(run_file.read_text(encoding=encoding))
+            except Exception:
+                continue
+            if isinstance(parsed, dict):
+                return parsed
+        return None
+
+    def _applied_candidate_for_loop(self, loop: dict[str, Any], candidate_id: str) -> dict[str, Any]:
+        challengers = [candidate for candidate in (loop.get("challengers") or []) if isinstance(candidate, dict)]
+        if candidate_id:
+            for candidate in challengers:
+                if str(candidate.get("candidate_id") or "") == candidate_id:
+                    return candidate
+        return challengers[0] if challengers else {}
+
+    def _load_explorer_review_scope(self) -> None:
+        option = self.explorer_review_run_var.get().strip()
+        selected_paths = self.explorer_review_run_choices.get(option) or []
+        if not selected_paths:
+            self.explorer_review_loaded_entries = []
+            self.explorer_review_loop_index_map = {}
+            if self.explorer_review_loop_listbox is not None:
+                self.explorer_review_loop_listbox.delete(0, tk.END)
+            self._clear_explorer_review_tables()
+            self.explorer_review_status_var.set("Choose a run scope to load accepted loops.")
+            return
+
+        loaded_entries: list[dict[str, Any]] = []
+        run_summaries: list[str] = []
+        for run_file in selected_paths:
+            payload = self._load_explorer_run_json(run_file)
+            if not isinstance(payload, dict):
+                continue
+            run_short_label = self._explorer_run_label_from_payload(run_file, payload)
+            run_summaries.append(run_short_label)
+            loops = payload.get("loops") or []
+            if not isinstance(loops, list):
+                continue
+            for loop in loops:
+                if not isinstance(loop, dict):
+                    continue
+                if not bool(loop.get("loop_applied")):
+                    continue
+                try:
+                    loop_index = int(loop.get("loop_index") or 0)
+                except Exception:
+                    loop_index = 0
+                applied_candidate_id = str(loop.get("applied_candidate_id") or "")
+                candidate = self._applied_candidate_for_loop(loop, applied_candidate_id)
+                validation = candidate.get("validation") if isinstance(candidate.get("validation"), dict) else {}
+                loop_target = loop.get("loop_target") if isinstance(loop.get("loop_target"), dict) else {}
+                target_label = str(loop.get("loop_target_label") or loop_target.get("selection_label") or "-")
+                hyperopt_window = loop.get("hyperopt_window") if isinstance(loop.get("hyperopt_window"), dict) else {}
+                hyperopt_label = str(hyperopt_window.get("name") or hyperopt_window.get("timerange") or "-")
+                hyperopt_regime = str(hyperopt_window.get("regime") or hyperopt_window.get("market_state") or "-")
+                params_changed = int(validation.get("params_changed_count") or candidate.get("params_changed_count") or 0)
+                loaded_entries.append(
+                    {
+                        "run_file": run_file,
+                        "run_data": payload,
+                        "run_short_label": run_short_label,
+                        "run_selection_mode": str(payload.get("selection_mode") or "-"),
+                        "run_started_at": str(payload.get("started_at") or ""),
+                        "loop": loop,
+                        "loop_index": loop_index,
+                        "applied_candidate_id": applied_candidate_id,
+                        "candidate": candidate,
+                        "validation": validation,
+                        "target_label": target_label,
+                        "hyperopt_label": hyperopt_label,
+                        "hyperopt_regime": hyperopt_regime,
+                        "params_changed": params_changed,
+                    }
+                )
+
+        self.explorer_review_loaded_entries = loaded_entries
+        self._clear_explorer_review_tables()
+        self._populate_explorer_review_loop_list()
+
+        if not loaded_entries:
+            self.explorer_review_status_var.set("No accepted loops found in the selected Explorer run scope.")
+            return
+        self.explorer_review_status_var.set(
+            f"Loaded {len(selected_paths)} run(s) [{', '.join(run_summaries)}] with {len(loaded_entries)} accepted loops. "
+            f"Select up to {EXPLORER_REVIEW_MAX_COMPARE_LOOPS} loops to compare."
+        )
+
+    def _populate_explorer_review_loop_list(self) -> None:
+        if self.explorer_review_loop_listbox is None:
+            return
+        self.explorer_review_syncing_selection = True
+        self.explorer_review_loop_listbox.delete(0, tk.END)
+        self.explorer_review_loop_index_map = {}
+        for list_index, entry in enumerate(self.explorer_review_loaded_entries):
+            summary = entry.get("validation") if isinstance(entry.get("validation"), dict) else {}
+            decision = str(summary.get("decision") or "ACCEPTED")
+            line = (
+                f"{entry['run_short_label']} | Loop {int(entry['loop_index']):03d} | "
+                f"{entry['target_label']} | HOpt={entry['hyperopt_label']} [{entry['hyperopt_regime']}] | "
+                f"params={int(entry['params_changed'])} | {decision}"
+            )
+            self.explorer_review_loop_listbox.insert(tk.END, line)
+            self.explorer_review_loop_index_map[list_index] = list_index
+        self.explorer_review_syncing_selection = False
+        if self.explorer_review_loaded_entries:
+            self.explorer_review_loop_listbox.selection_set(0)
+            self.compare_selected_explorer_loops()
+
+    def _clear_explorer_review_tables(self) -> None:
+        self._clear_tree_rows(self.explorer_review_summary_tree)
+        self._clear_tree_rows(self.explorer_review_acceptance_tree)
+        self._clear_tree_rows(self.explorer_review_backtest_tree)
+        if self.explorer_review_params_tree is not None:
+            self._clear_tree_rows(self.explorer_review_params_tree)
+            columns = ("param", "space", "changed")
+            self.explorer_review_params_tree.configure(columns=columns, displaycolumns=columns)
+            self._configure_tree_sort_heading(self.explorer_review_params_tree, "param", "Param")
+            self._configure_tree_sort_heading(self.explorer_review_params_tree, "space", "Space")
+            self._configure_tree_sort_heading(self.explorer_review_params_tree, "changed", "Varies")
+            self.explorer_review_params_tree.column("param", width=260, anchor="w", stretch=True)
+            self.explorer_review_params_tree.column("space", width=110, anchor="w", stretch=False)
+            self.explorer_review_params_tree.column("changed", width=65, anchor="w", stretch=False)
+        self.explorer_review_param_hint_var.set("")
+
+    def _on_explorer_review_loop_select(self, _event: tk.Event | None = None) -> None:
+        if self.explorer_review_syncing_selection or self.explorer_review_loop_listbox is None:
+            return
+        selected = list(self.explorer_review_loop_listbox.curselection())
+        if len(selected) > EXPLORER_REVIEW_MAX_COMPARE_LOOPS:
+            keep = selected[:EXPLORER_REVIEW_MAX_COMPARE_LOOPS]
+            self.explorer_review_syncing_selection = True
+            self.explorer_review_loop_listbox.selection_clear(0, tk.END)
+            for index in keep:
+                self.explorer_review_loop_listbox.selection_set(index)
+            self.explorer_review_syncing_selection = False
+            self.explorer_review_status_var.set(
+                f"Comparison supports up to {EXPLORER_REVIEW_MAX_COMPARE_LOOPS} loops. "
+                f"Kept the first {EXPLORER_REVIEW_MAX_COMPARE_LOOPS} selections."
+            )
+        self.compare_selected_explorer_loops()
+
+    def _selected_explorer_review_entries(self) -> list[dict[str, Any]]:
+        if self.explorer_review_loop_listbox is None:
+            return []
+        selected_entries: list[dict[str, Any]] = []
+        for list_index in self.explorer_review_loop_listbox.curselection():
+            mapped_index = self.explorer_review_loop_index_map.get(int(list_index))
+            if mapped_index is None:
+                continue
+            if 0 <= mapped_index < len(self.explorer_review_loaded_entries):
+                selected_entries.append(self.explorer_review_loaded_entries[mapped_index])
+        return selected_entries
+
+    def compare_selected_explorer_loops(self) -> None:
+        selected_entries = self._selected_explorer_review_entries()
+        if not selected_entries:
+            self._clear_explorer_review_tables()
+            self.explorer_review_status_var.set(
+                f"Select up to {EXPLORER_REVIEW_MAX_COMPARE_LOOPS} accepted loops to compare."
+            )
+            return
+        selected_entries = selected_entries[:EXPLORER_REVIEW_MAX_COMPARE_LOOPS]
+        self._populate_explorer_review_summary(selected_entries)
+        self._populate_explorer_review_acceptance(selected_entries)
+        self._populate_explorer_review_backtest(selected_entries)
+        self._populate_explorer_review_params(selected_entries)
+        compared = ", ".join(f"{entry['run_short_label']} L{int(entry['loop_index']):03d}" for entry in selected_entries)
+        identical_state = "on" if self.explorer_review_hide_identical_params_var.get() else "off"
+        self.explorer_review_param_hint_var.set(
+            f"Compared loops: {compared} | Hide identical params: {identical_state}"
+        )
+        self.explorer_review_status_var.set(
+            f"Comparing {len(selected_entries)} loop(s): {compared}"
+        )
+
+    @staticmethod
+    def _safe_filename_token(value: Any) -> str:
+        token = str(value or "")
+        token = re.sub(r'[<>:"/\\|?*\s]+', "_", token)
+        token = re.sub(r"_+", "_", token).strip("_")
+        return token or "unknown"
+
+    def _explorer_saved_loops_dir(self) -> Path:
+        raw = self.explorer_saved_loops_dir_var.get().strip()
+        path = Path(raw) if raw else app_path(EXPLORER_LOOP_EXPORT_DIR)
+        if not path.is_absolute():
+            path = app_path(path)
+        return path.resolve()
+
+    def _load_snapshot_dict(self, path: Path) -> dict[str, Any]:
+        for encoding in ("utf-8", "utf-8-sig"):
+            try:
+                data = json.loads(path.read_text(encoding=encoding))
+            except Exception:
+                continue
+            if isinstance(data, dict):
+                return data
+        return {}
+
+    def _loop_export_snapshot(self, entry: dict[str, Any]) -> dict[str, Any]:
+        run_data = entry.get("run_data") if isinstance(entry.get("run_data"), dict) else {}
+        candidate = entry.get("candidate") if isinstance(entry.get("candidate"), dict) else {}
+        strategy_class = str(run_data.get("strategy_class") or self.strategy_class_var.get().strip() or "Strategy")
+        baseline_path_text = str(run_data.get("strategy_param_file") or "").strip()
+        baseline: dict[str, Any] = {}
+        if baseline_path_text:
+            baseline_path = Path(baseline_path_text)
+            if baseline_path.exists() and baseline_path.is_file():
+                baseline = self._load_snapshot_dict(baseline_path)
+        if not isinstance(baseline, dict):
+            baseline = {}
+        payload = deepcopy(baseline)
+        if not isinstance(payload.get("params"), dict):
+            payload["params"] = {}
+
+        candidate_params = candidate.get("params")
+        if isinstance(candidate_params, dict):
+            for space, values in candidate_params.items():
+                if not isinstance(values, dict):
+                    continue
+                params_space = payload["params"].setdefault(str(space), {})
+                if isinstance(params_space, dict):
+                    params_space.update(values)
+
+        payload.setdefault("strategy_name", strategy_class)
+        payload.setdefault("ft_stratparam_v", 1)
+        payload["export_time"] = datetime.now().astimezone().isoformat()
+        payload["explorer_selected_loop"] = {
+            "saved_at": datetime.now().astimezone().isoformat(),
+            "run_id": run_data.get("run_id"),
+            "run_started_at": run_data.get("started_at"),
+            "run_file": str(entry.get("run_file") or ""),
+            "loop_index": int(entry.get("loop_index") or 0),
+            "selection_mode": run_data.get("selection_mode"),
+            "target_label": entry.get("target_label"),
+            "hyperopt_window": deepcopy((entry.get("loop") or {}).get("hyperopt_window")),
+            "applied_candidate_id": entry.get("applied_candidate_id"),
+            "validation": deepcopy(entry.get("validation") if isinstance(entry.get("validation"), dict) else {}),
+            "changes": deepcopy(candidate.get("changes") if isinstance(candidate.get("changes"), list) else []),
+            "strategy_param_file": baseline_path_text,
+        }
+        return payload
+
+    def save_selected_explorer_loops_to_repo(self) -> None:
+        selected_entries = self._selected_explorer_review_entries()[:EXPLORER_REVIEW_MAX_COMPARE_LOOPS]
+        if not selected_entries:
+            messagebox.showinfo(APP_TITLE, "Select at least one accepted loop first.")
+            return
+
+        save_dir = self._explorer_saved_loops_dir()
+        try:
+            save_dir.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            messagebox.showerror(APP_TITLE, f"Cannot create saved loop repo:\n{save_dir}\n\n{exc}")
+            return
+
+        saved_paths: list[Path] = []
+        for entry in selected_entries:
+            loop_index = int(entry.get("loop_index") or 0)
+            target_token = self._safe_filename_token(entry.get("target_label"))
+            run_token = self._safe_filename_token(entry.get("run_short_label"))
+            validation = entry.get("validation") if isinstance(entry.get("validation"), dict) else {}
+            try:
+                profit_value = float(validation.get("challenger_profit_total") or 0.0)
+            except Exception:
+                profit_value = 0.0
+            profit_tag = f"P{'m' if profit_value < 0 else ''}{abs(int(round(profit_value))):06d}"
+            base_name = f"{run_token}__loop{loop_index:03d}__{target_token}__{profit_tag}"
+            file_path = save_dir / f"{base_name}.json"
+            suffix = 2
+            while file_path.exists():
+                file_path = save_dir / f"{base_name}__{suffix:02d}.json"
+                suffix += 1
+
+            payload = self._loop_export_snapshot(entry)
+            try:
+                file_path.write_text(json.dumps(payload, indent=2, sort_keys=False, default=str) + "\n", encoding="utf-8")
+            except Exception as exc:
+                messagebox.showerror(APP_TITLE, f"Failed to save loop snapshot:\n{file_path}\n\n{exc}")
+                continue
+            saved_paths.append(file_path)
+
+        if not saved_paths:
+            self.explorer_review_status_var.set("No loop snapshot files were saved.")
+            return
+        self.explorer_review_status_var.set(
+            f"Saved {len(saved_paths)} loop snapshot(s) to {save_dir}"
+        )
+        messagebox.showinfo(
+            APP_TITLE,
+            "Saved loop snapshots:\n"
+            + "\n".join(str(path) for path in saved_paths[:6])
+            + ("\n..." if len(saved_paths) > 6 else ""),
+        )
+
+    def clear_explorer_saved_loop_repo(self) -> None:
+        save_dir = self._explorer_saved_loops_dir()
+        if not save_dir.exists():
+            save_dir.mkdir(parents=True, exist_ok=True)
+            self.explorer_review_status_var.set(f"Saved loop repo is ready: {save_dir}")
+            return
+        confirmed = messagebox.askyesno(
+            APP_TITLE,
+            f"Delete all files in this saved loop repo?\n\n{save_dir}",
+        )
+        if not confirmed:
+            return
+
+        deleted_files = 0
+        for path in sorted(save_dir.rglob("*"), key=lambda item: len(item.parts), reverse=True):
+            try:
+                if path.is_file():
+                    path.unlink()
+                    deleted_files += 1
+                elif path.is_dir():
+                    path.rmdir()
+            except Exception:
+                continue
+        self.explorer_review_status_var.set(f"Cleared saved loop repo ({deleted_files} file(s) removed): {save_dir}")
+
+    @staticmethod
+    def _explorer_segment_key(segment: dict[str, Any]) -> str:
+        name = str(segment.get("name") or "")
+        timerange = str(segment.get("timerange") or "")
+        regime = str(segment.get("regime") or segment.get("market_state") or "")
+        if name or timerange or regime:
+            return f"{name}|{timerange}|{regime}"
+        return json.dumps(segment, sort_keys=True, default=str)
+
+    @staticmethod
+    def _explorer_segment_label(segment: dict[str, Any]) -> str:
+        return str(segment.get("name") or segment.get("timerange") or "segment")
+
+    @staticmethod
+    def _explorer_metric_value(metrics: dict[str, Any], *keys: str) -> float:
+        for key in keys:
+            value = metrics.get(key)
+            try:
+                return float(value)
+            except Exception:
+                continue
+        return 0.0
+
+    def _explorer_profit_abs(self, metrics: dict[str, Any]) -> float:
+        return self._explorer_metric_value(metrics, "profit_total_abs", "profit_total_pct", "profit_total")
+
+    def _explorer_profit_pct(self, metrics: dict[str, Any]) -> float:
+        profit_abs = self._explorer_metric_value(metrics, "profit_total_abs")
+        wallet = self._explorer_metric_value(metrics, "starting_balance", "dry_run_wallet")
+        if wallet > 0.0:
+            return (100.0 * profit_abs) / wallet
+        ratio = self._explorer_metric_value(metrics, "profit_total_pct")
+        return ratio * 100.0 if abs(ratio) <= 3.0 else ratio
+
+    def _explorer_segment_objective(self, metrics: dict[str, Any]) -> float:
+        direct = metrics.get("objective")
+        try:
+            return float(direct)
+        except Exception:
+            pass
+        try:
+            from hyperopt_explorer_support import segment_objective
+
+            return float(segment_objective(metrics))
+        except Exception:
+            return 0.0
+
+    def _explorer_loop_metric_maps(self, entry: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]], list[dict[str, Any]]]:
+        run_data = entry.get("run_data") if isinstance(entry.get("run_data"), dict) else {}
+        validation_runs = run_data.get("validation_runs") or []
+        loop = entry.get("loop") if isinstance(entry.get("loop"), dict) else {}
+        loop_index = int(entry.get("loop_index") or 0)
+        applied_candidate_id = str(entry.get("applied_candidate_id") or "")
+        champion_metrics: dict[str, dict[str, Any]] = {}
+        challenger_metrics: dict[str, dict[str, Any]] = {}
+        segment_by_key: dict[str, dict[str, Any]] = {}
+
+        for record in validation_runs if isinstance(validation_runs, list) else []:
+            if not isinstance(record, dict):
+                continue
+            try:
+                record_loop_index = int(record.get("loop_index") or 0)
+            except Exception:
+                record_loop_index = 0
+            if record_loop_index != loop_index:
+                continue
+            if str(record.get("status") or "").strip().lower() != "completed":
+                continue
+            segment = record.get("segment")
+            metrics = record.get("metrics")
+            if not isinstance(segment, dict) or not isinstance(metrics, dict):
+                continue
+            key = self._explorer_segment_key(segment)
+            segment_by_key[key] = segment
+            role = str(record.get("role") or "").strip().lower()
+            if role == "champion":
+                champion_metrics[key] = metrics
+            elif role == "challenger":
+                if applied_candidate_id and str(record.get("candidate_id") or "") != applied_candidate_id:
+                    continue
+                challenger_metrics[key] = metrics
+
+        ordered_segments: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for key_name in ("final_backtest_windows", "validation_segments", "backtest_windows"):
+            values = loop.get(key_name)
+            if not isinstance(values, list):
+                continue
+            for segment in values:
+                if not isinstance(segment, dict):
+                    continue
+                key = self._explorer_segment_key(segment)
+                if key in seen:
+                    continue
+                seen.add(key)
+                ordered_segments.append(segment_by_key.get(key, segment))
+        for key in sorted(segment_by_key.keys(), key=lambda item: self._explorer_segment_label(segment_by_key[item])):
+            if key in seen:
+                continue
+            ordered_segments.append(segment_by_key[key])
+        return champion_metrics, challenger_metrics, ordered_segments
+
+    @staticmethod
+    def _format_explorer_numeric(value: Any, digits: int = 4) -> str:
+        try:
+            return f"{float(value):.{digits}f}"
+        except Exception:
+            return "-"
+
+    @staticmethod
+    def _format_explorer_int(value: Any) -> str:
+        try:
+            return str(int(value))
+        except Exception:
+            return "-"
+
+    @staticmethod
+    def _explorer_param_value_text(value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, bool):
+            return "True" if value else "False"
+        if isinstance(value, float):
+            return f"{value:.8g}"
+        if isinstance(value, (list, dict)):
+            try:
+                return json.dumps(value, sort_keys=True)
+            except Exception:
+                return str(value)
+        return str(value)
+
+    @staticmethod
+    def _explorer_param_compare_token(value: Any) -> str:
+        if isinstance(value, (dict, list)):
+            try:
+                return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+            except Exception:
+                return repr(value)
+        return repr(value)
+
+    def _populate_explorer_review_summary(self, entries: list[dict[str, Any]]) -> None:
+        if self.explorer_review_summary_tree is None:
+            return
+        self._clear_tree_rows(self.explorer_review_summary_tree)
+        for entry in entries:
+            summary = entry.get("validation") if isinstance(entry.get("validation"), dict) else {}
+            backtest_window_count = int(summary.get("backtest_window_count") or len((entry.get("loop") or {}).get("final_backtest_windows") or []))
+            loss_windows = int(summary.get("challenger_loss_window_count") or 0)
+            self.explorer_review_summary_tree.insert(
+                "",
+                "end",
+                values=(
+                    entry.get("run_short_label"),
+                    int(entry.get("loop_index") or 0),
+                    entry.get("target_label"),
+                    entry.get("hyperopt_label"),
+                    entry.get("hyperopt_regime"),
+                    summary.get("decision") or "ACCEPTED",
+                    int(entry.get("params_changed") or 0),
+                    self._format_explorer_numeric(summary.get("challenger_weighted_acceptance_score")),
+                    self._format_explorer_numeric(summary.get("challenger_objective_total")),
+                    self._format_explorer_numeric(summary.get("challenger_profit_total")),
+                    f"{loss_windows}/{backtest_window_count}" if backtest_window_count > 0 else "-",
+                    self._format_explorer_numeric(summary.get("challenger_worst_loss_pct"), digits=2),
+                ),
+            )
+
+    def _populate_explorer_review_acceptance(self, entries: list[dict[str, Any]]) -> None:
+        if self.explorer_review_acceptance_tree is None:
+            return
+        self._clear_tree_rows(self.explorer_review_acceptance_tree)
+        include_delta = bool(self.explorer_review_show_delta_var.get())
+        for entry in entries:
+            summary = entry.get("validation") if isinstance(entry.get("validation"), dict) else {}
+            run_label = entry.get("run_short_label")
+            loop_index = int(entry.get("loop_index") or 0)
+            reason = str(summary.get("decision_reason") or "")
+            rows = [
+                (
+                    "Champion",
+                    summary.get("champion_weighted_acceptance_score"),
+                    summary.get("champion_objective_total"),
+                    summary.get("champion_profit_total"),
+                    summary.get("champion_worst_loss_pct"),
+                    summary.get("champion_loss_window_count"),
+                    summary.get("champion_loss_count_penalty_total"),
+                    summary.get("champion_loss_severity_penalty_total"),
+                    "",
+                ),
+                (
+                    "Challenger",
+                    summary.get("challenger_weighted_acceptance_score"),
+                    summary.get("challenger_objective_total"),
+                    summary.get("challenger_profit_total"),
+                    summary.get("challenger_worst_loss_pct"),
+                    summary.get("challenger_loss_window_count"),
+                    summary.get("challenger_loss_count_penalty_total"),
+                    summary.get("challenger_loss_severity_penalty_total"),
+                    "",
+                ),
+            ]
+            if include_delta:
+                rows.append(
+                    (
+                        "Delta",
+                        summary.get("weighted_score_delta"),
+                        summary.get("objective_delta"),
+                        summary.get("profit_total_delta"),
+                        summary.get("worst_loss_pct_delta"),
+                        summary.get("loss_window_count_delta"),
+                        summary.get("loss_count_penalty_delta"),
+                        summary.get("loss_severity_penalty_delta"),
+                        reason,
+                    )
+                )
+            for role, weighted, objective, profit, worst_loss, loss_windows, count_pen, severity_pen, row_reason in rows:
+                self.explorer_review_acceptance_tree.insert(
+                    "",
+                    "end",
+                    values=(
+                        run_label,
+                        loop_index,
+                        role,
+                        self._format_explorer_numeric(weighted),
+                        self._format_explorer_numeric(objective),
+                        self._format_explorer_numeric(profit),
+                        self._format_explorer_numeric(worst_loss, digits=2),
+                        self._format_explorer_int(loss_windows),
+                        self._format_explorer_numeric(count_pen),
+                        self._format_explorer_numeric(severity_pen),
+                        row_reason,
+                    ),
+                )
+
+    def _populate_explorer_review_backtest(self, entries: list[dict[str, Any]]) -> None:
+        if self.explorer_review_backtest_tree is None:
+            return
+        self._clear_tree_rows(self.explorer_review_backtest_tree)
+        for entry in entries:
+            champion_metrics, challenger_metrics, ordered_segments = self._explorer_loop_metric_maps(entry)
+            run_label = entry.get("run_short_label")
+            loop_index = int(entry.get("loop_index") or 0)
+            for segment in ordered_segments:
+                key = self._explorer_segment_key(segment)
+                champion = champion_metrics.get(key)
+                challenger = challenger_metrics.get(key)
+                if not champion or not challenger:
+                    continue
+                self.explorer_review_backtest_tree.insert(
+                    "",
+                    "end",
+                    values=(
+                        run_label,
+                        loop_index,
+                        self._explorer_segment_label(segment),
+                        self._format_explorer_numeric(self._explorer_profit_abs(champion)),
+                        self._format_explorer_numeric(self._explorer_profit_pct(champion), digits=2),
+                        self._format_explorer_numeric(self._explorer_profit_abs(challenger)),
+                        self._format_explorer_numeric(self._explorer_profit_pct(challenger), digits=2),
+                        self._format_explorer_numeric(self._explorer_segment_objective(champion)),
+                        self._format_explorer_numeric(self._explorer_segment_objective(challenger)),
+                    ),
+                )
+
+    def _populate_explorer_review_params(self, entries: list[dict[str, Any]]) -> None:
+        if self.explorer_review_params_tree is None:
+            return
+        tree = self.explorer_review_params_tree
+        self._clear_tree_rows(tree)
+        columns: list[str] = ["param", "space", "changed"]
+        column_titles = {"param": "Param", "space": "Space", "changed": "Varies"}
+        loop_param_maps: list[dict[tuple[str, str], Any]] = []
+        for loop_pos, entry in enumerate(entries):
+            run_short_label = str(entry.get("run_short_label") or "-")
+            loop_tag = f"L{int(entry.get('loop_index') or 0):03d}"
+            value_col = f"loop_{loop_pos}"
+            columns.append(value_col)
+            column_titles[value_col] = f"{run_short_label} {loop_tag}"
+            candidate = entry.get("candidate") if isinstance(entry.get("candidate"), dict) else {}
+            params = candidate.get("params") if isinstance(candidate.get("params"), dict) else {}
+            by_param: dict[tuple[str, str], Any] = {}
+            for space_name, space_values in params.items():
+                if not isinstance(space_values, dict):
+                    continue
+                space_text = str(space_name).strip()
+                for param_name, param_value in space_values.items():
+                    param_text = str(param_name).strip()
+                    if not param_text:
+                        continue
+                    by_param[(space_text, param_text)] = param_value
+            if not by_param:
+                changes = candidate.get("changes") if isinstance(candidate.get("changes"), list) else []
+                for change in changes:
+                    if not isinstance(change, dict):
+                        continue
+                    space_text = str(change.get("space") or "").strip()
+                    param_text = str(change.get("param") or "").strip()
+                    if not param_text:
+                        continue
+                    by_param[(space_text, param_text)] = change.get("new")
+            loop_param_maps.append(by_param)
+
+        tree.configure(columns=tuple(columns), displaycolumns=tuple(columns))
+        for column in columns:
+            self._configure_tree_sort_heading(tree, column, column_titles.get(column, column))
+            if column == "param":
+                tree.column(column, width=260, anchor="w", stretch=True)
+            elif column == "space":
+                tree.column(column, width=110, anchor="w", stretch=False)
+            elif column == "changed":
+                tree.column(column, width=65, anchor="w", stretch=False)
+            else:
+                tree.column(column, width=145, anchor="w", stretch=False)
+
+        all_param_keys = sorted(
+            {key for loop_map in loop_param_maps for key in loop_map.keys()},
+            key=lambda item: (item[0].lower(), item[1].lower()),
+        )
+        hide_identical = bool(self.explorer_review_hide_identical_params_var.get()) and len(entries) > 1
+        for space_name, param_name in all_param_keys:
+            row: list[str] = [param_name, space_name, ""]
+            compare_tokens: list[str] = []
+            seen_count = 0
+            for loop_map in loop_param_maps:
+                if (space_name, param_name) not in loop_map:
+                    row.append("")
+                    continue
+                seen_count += 1
+                raw_value = loop_map[(space_name, param_name)]
+                row.append(self._explorer_param_value_text(raw_value))
+                compare_tokens.append(self._explorer_param_compare_token(raw_value))
+            has_diff = (seen_count != len(entries)) or (len(set(compare_tokens)) > 1)
+            if hide_identical and not has_diff:
+                continue
+            row[2] = "yes" if has_diff else ""
+            tags = ("param_diff",) if has_diff else ()
+            tree.insert("", "end", values=tuple(row), tags=tags)
 
     def _build_catalog_custom_batches_tab(self, root: ttk.Frame) -> None:
         # TODO(custom batches):
@@ -3388,7 +4992,9 @@ class FreqtradeLauncher(tk.Tk):
         self.catalog_tree.grid(row=0, column=0, sticky="nsew")
         catalog_y = ttk.Scrollbar(left, orient="vertical", command=self.catalog_tree.yview)
         catalog_y.grid(row=0, column=1, sticky="ns")
-        self.catalog_tree.configure(yscrollcommand=catalog_y.set)
+        catalog_x = ttk.Scrollbar(left, orient="horizontal", command=self.catalog_tree.xview)
+        catalog_x.grid(row=1, column=0, sticky="ew")
+        self.catalog_tree.configure(yscrollcommand=catalog_y.set, xscrollcommand=catalog_x.set)
         self.catalog_tree.bind("<<TreeviewSelect>>", lambda _event: self.on_catalog_tree_select())
         self.catalog_tree.bind("<Double-1>", lambda _event: self.add_selected_catalog_node_to_draft())
 
@@ -3408,7 +5014,7 @@ class FreqtradeLauncher(tk.Tk):
         right_host.grid_rowconfigure(0, weight=1)
         right.grid_columnconfigure(0, weight=1)
         right.grid_rowconfigure(7, weight=1)
-        right.grid_rowconfigure(11, weight=1)
+        right.grid_rowconfigure(10, weight=1)
 
         form = ttk.Frame(right)
         form.grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 4))
@@ -3444,43 +5050,79 @@ class FreqtradeLauncher(tk.Tk):
 
         action_row = ttk.Frame(right)
         action_row.grid(row=1, column=0, sticky="ew", padx=6, pady=2)
-        for label, command in (
+        for column in range(2):
+            action_row.grid_columnconfigure(column, weight=1)
+        for index, (label, command) in enumerate((
             ("Add selected", self.add_selected_catalog_node_to_draft),
-            ("Remove selected source", self.remove_selected_custom_batch_source),
+            ("Remove source", self.remove_selected_custom_batch_source),
             ("Exclude selected param", self.exclude_selected_custom_batch_param),
-            ("Re-include selected excluded param", self.reinclude_selected_custom_batch_param),
-        ):
-            ttk.Button(action_row, text=label, command=command).pack(side="left", padx=(0, 4))
+            ("Re-include param", self.reinclude_selected_custom_batch_param),
+        )):
+            ttk.Button(action_row, text=label, command=command).grid(row=index // 2, column=index % 2, sticky="ew", padx=2, pady=2)
 
         ttk.Label(right, text="Sources").grid(row=2, column=0, sticky="w", padx=6, pady=(6, 0))
-        self.custom_batch_sources_list = tk.Listbox(right, height=5, exportselection=False)
-        self.custom_batch_sources_list.grid(row=3, column=0, sticky="ew", padx=6, pady=(2, 4))
+        sources_frame = ttk.Frame(right)
+        sources_frame.grid(row=3, column=0, sticky="ew", padx=6, pady=(2, 4))
+        sources_frame.grid_columnconfigure(0, weight=1)
+        self.custom_batch_sources_list = tk.Listbox(sources_frame, height=4, exportselection=False)
+        self.custom_batch_sources_list.grid(row=0, column=0, sticky="ew")
+        sources_y = ttk.Scrollbar(sources_frame, orient="vertical", command=self.custom_batch_sources_list.yview)
+        sources_y.grid(row=0, column=1, sticky="ns")
+        sources_x = ttk.Scrollbar(sources_frame, orient="horizontal", command=self.custom_batch_sources_list.xview)
+        sources_x.grid(row=1, column=0, sticky="ew")
+        self.custom_batch_sources_list.configure(yscrollcommand=sources_y.set, xscrollcommand=sources_x.set)
+        self.custom_batch_sources_list.bind("<Double-1>", lambda _event: self.remove_selected_custom_batch_source())
         ttk.Label(right, text="Excluded params").grid(row=4, column=0, sticky="w", padx=6, pady=(4, 0))
-        self.custom_batch_excluded_list = tk.Listbox(right, height=4, exportselection=False)
-        self.custom_batch_excluded_list.grid(row=5, column=0, sticky="ew", padx=6, pady=(2, 4))
+        excluded_frame = ttk.Frame(right)
+        excluded_frame.grid(row=5, column=0, sticky="ew", padx=6, pady=(2, 4))
+        excluded_frame.grid_columnconfigure(0, weight=1)
+        self.custom_batch_excluded_list = tk.Listbox(excluded_frame, height=3, exportselection=False)
+        self.custom_batch_excluded_list.grid(row=0, column=0, sticky="ew")
+        excluded_y = ttk.Scrollbar(excluded_frame, orient="vertical", command=self.custom_batch_excluded_list.yview)
+        excluded_y.grid(row=0, column=1, sticky="ns")
+        excluded_x = ttk.Scrollbar(excluded_frame, orient="horizontal", command=self.custom_batch_excluded_list.xview)
+        excluded_x.grid(row=1, column=0, sticky="ew")
+        self.custom_batch_excluded_list.configure(yscrollcommand=excluded_y.set, xscrollcommand=excluded_x.set)
+        self.custom_batch_excluded_list.bind("<Double-1>", lambda _event: self.reinclude_selected_custom_batch_param())
         ttk.Label(right, text="Resolved params").grid(row=6, column=0, sticky="w", padx=6, pady=(4, 0))
-        self.catalog_resolved_tree = ttk.Treeview(right, columns=("name", "type", "space", "current", "default"), show="headings", height=8)
+        resolved_frame = ttk.Frame(right)
+        resolved_frame.grid(row=7, column=0, sticky="nsew", padx=6, pady=(2, 4))
+        resolved_frame.grid_columnconfigure(0, weight=1)
+        resolved_frame.grid_rowconfigure(0, weight=1)
+        self.catalog_resolved_tree = ttk.Treeview(resolved_frame, columns=("name", "type", "space", "current", "default"), show="headings", height=8)
         for column, title, width in (("name", "Name", 150), ("type", "Type", 110), ("space", "Space", 55), ("current", "Current", 70), ("default", "Default", 70)):
             self.catalog_resolved_tree.heading(column, text=title)
             self.catalog_resolved_tree.column(column, width=width, stretch=column == "name")
         self.catalog_resolved_tree["displaycolumns"] = ("name", "type", "space", "current", "default")
-        self.catalog_resolved_tree.grid(row=7, column=0, sticky="nsew", padx=6, pady=(2, 4))
+        self.catalog_resolved_tree.grid(row=0, column=0, sticky="nsew")
+        resolved_y = ttk.Scrollbar(resolved_frame, orient="vertical", command=self.catalog_resolved_tree.yview)
+        resolved_y.grid(row=0, column=1, sticky="ns")
+        resolved_x = ttk.Scrollbar(resolved_frame, orient="horizontal", command=self.catalog_resolved_tree.xview)
+        resolved_x.grid(row=1, column=0, sticky="ew")
+        self.catalog_resolved_tree.configure(yscrollcommand=resolved_y.set, xscrollcommand=resolved_x.set)
+        self.catalog_resolved_tree.bind("<Double-1>", lambda _event: self.exclude_selected_custom_batch_param())
 
         draft_buttons = ttk.Frame(right)
         draft_buttons.grid(row=8, column=0, sticky="ew", padx=6, pady=2)
-        for label, command in (
+        for column in range(2):
+            draft_buttons.grid_columnconfigure(column, weight=1)
+        for index, (label, command) in enumerate((
             ("Clear draft", self.clear_custom_batch_draft),
             ("Commit batch", self.commit_custom_batch),
             ("Start new batch", self.start_new_custom_batch),
             ("Save changes", self.save_custom_batch_changes),
-        ):
-            ttk.Button(draft_buttons, text=label, command=command).pack(side="left", padx=(0, 4))
+        )):
+            ttk.Button(draft_buttons, text=label, command=command).grid(row=index // 2, column=index % 2, sticky="ew", padx=2, pady=2)
 
         # Committed batches are intentionally the durable handoff point for the
         # future workflow above: batches should be easy to revisit, compare,
         # store, and re-run against distinct market windows / loss objectives.
         ttk.Label(right, text="Committed batches ([x] runs in Custom batches mode)").grid(row=9, column=0, sticky="w", padx=6, pady=(8, 0))
-        self.custom_batch_committed_tree = ttk.Treeview(right, columns=("run", "name", "sources", "params", "spaces", "status"), show="headings", height=6)
+        committed_frame = ttk.Frame(right)
+        committed_frame.grid(row=10, column=0, sticky="nsew", padx=6, pady=(2, 4))
+        committed_frame.grid_columnconfigure(0, weight=1)
+        committed_frame.grid_rowconfigure(0, weight=1)
+        self.custom_batch_committed_tree = ttk.Treeview(committed_frame, columns=("run", "name", "sources", "params", "spaces", "status"), show="headings", height=6)
         for column, title, width in (
             ("run", "Run", 48),
             ("name", "Name", 170),
@@ -3491,17 +5133,29 @@ class FreqtradeLauncher(tk.Tk):
         ):
             self.custom_batch_committed_tree.heading(column, text=title)
             self.custom_batch_committed_tree.column(column, width=width, stretch=column == "name")
-        self.custom_batch_committed_tree.grid(row=10, column=0, sticky="ew", padx=6, pady=(2, 4))
+        self.custom_batch_committed_tree.grid(row=0, column=0, sticky="nsew")
+        committed_y = ttk.Scrollbar(committed_frame, orient="vertical", command=self.custom_batch_committed_tree.yview)
+        committed_y.grid(row=0, column=1, sticky="ns")
+        committed_x = ttk.Scrollbar(committed_frame, orient="horizontal", command=self.custom_batch_committed_tree.xview)
+        committed_x.grid(row=1, column=0, sticky="ew")
+        self.custom_batch_committed_tree.configure(yscrollcommand=committed_y.set, xscrollcommand=committed_x.set)
         self.custom_batch_committed_tree.bind("<ButtonRelease-1>", lambda event: self.on_committed_batch_click(event))
+        self.custom_batch_committed_tree.bind("<<TreeviewSelect>>", lambda _event: self.on_committed_batch_select())
+        self.custom_batch_committed_tree.bind("<Double-1>", lambda _event: self.load_selected_committed_batch_for_editing())
 
         committed_buttons = ttk.Frame(right)
         committed_buttons.grid(row=11, column=0, sticky="sew", padx=6, pady=(2, 4))
-        for label, command in (
-            ("Load committed batch for editing", self.load_selected_committed_batch_for_editing),
-            ("Duplicate selected committed batch", self.duplicate_selected_committed_batch),
-            ("Delete selected committed batch", self.delete_selected_committed_batch),
-        ):
-            ttk.Button(committed_buttons, text=label, command=command).pack(side="left", padx=(0, 4))
+        for column in range(3):
+            committed_buttons.grid_columnconfigure(column, weight=1)
+        for index, (label, command) in enumerate((
+            ("Select visible", self.select_all_visible_custom_batches),
+            ("Select Daily new", self.select_daily_new_entry_custom_batches),
+            ("Clear run", self.clear_selected_custom_batches),
+            ("Load for edit", self.load_selected_committed_batch_for_editing),
+            ("Duplicate", self.duplicate_selected_committed_batch),
+            ("Delete", self.delete_selected_committed_batch),
+        )):
+            ttk.Button(committed_buttons, text=label, command=command).grid(row=index // 3, column=index % 3, sticky="ew", padx=2, pady=2)
         ttk.Label(right, textvariable=self.custom_batch_status_var, foreground="#7A5A00", wraplength=360, justify="left").grid(row=12, column=0, sticky="ew", padx=6, pady=(0, 6))
 
         self.catalog_view_var.trace_add("write", lambda *_args: self.refresh_custom_batch_catalog())
@@ -3513,6 +5167,13 @@ class FreqtradeLauncher(tk.Tk):
 
     def _custom_batches_path(self) -> Path:
         return app_path(EXPLORER_CUSTOM_BATCH_FILE)
+
+    def _current_strategy_identity(self) -> dict[str, str]:
+        from hyperopt_explorer_support import strategy_identity
+
+        strategy_file = self.strategy_file_var.get().strip() or str(app_path(DEFAULT_STRATEGY_FILE))
+        strategy_class = self.strategy_class_var.get().strip() or "HybridRecoveryGridStrategy"
+        return strategy_identity(strategy_file, strategy_class)
 
     def _load_catalog_data(self) -> dict[str, Any]:
         strategy_file = self.strategy_file_var.get().strip()
@@ -3558,6 +5219,15 @@ class FreqtradeLauncher(tk.Tk):
             self.refresh_committed_custom_batches()
         except Exception as exc:
             self.custom_batch_status_var.set(f"Catalog unavailable: {exc}")
+
+    def refresh_strategy_catalog(self) -> None:
+        self._refresh_explorer_namespace_dropdown()
+        if hasattr(self, "catalog_tree"):
+            self.refresh_custom_batch_catalog()
+        self._refresh_explorer_target_count_label()
+        self._refresh_explorer_summary_context()
+        self.refresh_mode_options()
+        self.refresh_all_command_previews()
 
     def _param_matches_catalog_filters(self, name: str) -> bool:
         info = (self.catalog_data.get("params") or {}).get(name) or {}
@@ -3867,6 +5537,7 @@ class FreqtradeLauncher(tk.Tk):
             "description": self.custom_batch_description_var.get().strip(),
             "schema_version": 1,
             "resolution_source": "strategy_catalog",
+            **self._current_strategy_identity(),
             "sources": deepcopy(self.custom_batch_draft_sources),
             "excluded_params": list(self.custom_batch_draft_excluded),
             "resolved_params_snapshot": list(resolution.get("params") or []),
@@ -3951,6 +5622,78 @@ class FreqtradeLauncher(tk.Tk):
         self.custom_batches_payload.setdefault("batches", []).append(clone)
         self._persist_custom_batch_payload()
 
+    def on_committed_batch_select(self) -> None:
+        if self.catalog_details_text is None:
+            return
+        batch_id = self._selected_committed_batch_id()
+        batch = self._batch_by_id(batch_id)
+        if not batch:
+            return
+
+        from hyperopt_explorer_support import custom_batch_source_label, resolve_custom_batch
+
+        spaces = self._catalog_strategy_spaces()
+        resolution = resolve_custom_batch(batch, self.catalog_data, spaces) if self.catalog_data else {
+            "params": batch.get("resolved_params_snapshot") or [],
+            "spaces": batch.get("spaces_snapshot") or [],
+            "stale_sources": batch.get("stale_sources_snapshot") or [],
+            "stale_params": batch.get("stale_params_snapshot") or [],
+            "stale_excluded_params": batch.get("stale_excluded_params_snapshot") or [],
+        }
+        stale_count = (
+            len(resolution.get("stale_sources") or [])
+            + len(resolution.get("stale_params") or [])
+            + len(resolution.get("stale_excluded_params") or [])
+        )
+        lines = [
+            f"Batch: {batch.get('name') or batch_id or '-'}",
+            f"Id: {batch_id or '-'}",
+            f"Run selected: {'yes' if batch_id in self.custom_batch_selected_run_ids else 'no'}",
+            f"Status: {'stale' if stale_count else ('ready' if resolution.get('params') else 'empty')}",
+            f"Spaces: {', '.join(resolution.get('spaces') or []) or '-'}",
+            f"Resolved params: {len(resolution.get('params') or [])}",
+        ]
+        description = str(batch.get("description") or "").strip()
+        if description:
+            lines.extend(["", "Description:", description])
+
+        lines.append("")
+        lines.append("Sources:")
+        sources = [source for source in batch.get("sources") or [] if isinstance(source, dict)]
+        if sources:
+            lines.extend(f"  - {custom_batch_source_label(source)}" for source in sources)
+        else:
+            lines.append("  - none")
+
+        excluded = [str(param) for param in batch.get("excluded_params") or [] if str(param)]
+        if excluded:
+            lines.append("")
+            lines.append("Excluded params:")
+            lines.extend(f"  - {param}" for param in excluded)
+
+        if stale_count:
+            lines.append("")
+            lines.append("Stale references:")
+            for source in resolution.get("stale_sources") or []:
+                lines.append(f"  - source: {custom_batch_source_label(source)}")
+            for param in resolution.get("stale_params") or []:
+                lines.append(f"  - param: {param}")
+            for param in resolution.get("stale_excluded_params") or []:
+                lines.append(f"  - excluded param: {param}")
+
+        lines.append("")
+        lines.append("Resolved params:")
+        for param in (resolution.get("params") or [])[:250]:
+            info = (self.catalog_data.get("params") or {}).get(param) or {}
+            lines.append(f"  - {param} [{info.get('parameter_type') or '-'} | {info.get('space') or '-'}]")
+        if len(resolution.get("params") or []) > 250:
+            lines.append(f"  ... {len(resolution.get('params') or []) - 250} more")
+
+        self.catalog_details_text.configure(state="normal")
+        self.catalog_details_text.delete("1.0", tk.END)
+        self.catalog_details_text.insert("1.0", "\n".join(lines))
+        self.catalog_details_text.configure(state="disabled")
+
     def delete_selected_committed_batch(self) -> None:
         batch_id = self._selected_committed_batch_id()
         if not batch_id:
@@ -3974,19 +5717,80 @@ class FreqtradeLauncher(tk.Tk):
                 self.custom_batch_selected_run_ids.add(item)
             self.refresh_committed_custom_batches()
 
+    def _visible_custom_batch_ids(self) -> set[str]:
+        if self.catalog_data:
+            from hyperopt_explorer_support import batch_matches_strategy
+
+            return {
+                str(batch.get("id") or "")
+                for batch in self.custom_batches_payload.get("batches") or []
+                if isinstance(batch, dict)
+                and str(batch.get("id") or "")
+                and batch_matches_strategy(batch, self.catalog_data)
+            }
+        return {
+            str(batch.get("id") or "")
+            for batch in self.custom_batches_payload.get("batches") or []
+            if isinstance(batch, dict) and str(batch.get("id") or "")
+        }
+
+    def select_all_visible_custom_batches(self) -> None:
+        if not self.catalog_data:
+            try:
+                self.catalog_data = self._load_catalog_data()
+            except Exception as exc:
+                self.custom_batch_status_var.set(f"Catalog unavailable: {exc}")
+                return
+        self.custom_batch_selected_run_ids = self._visible_custom_batch_ids()
+        self.explorer_selection_mode_var.set("Custom batches")
+        self.refresh_committed_custom_batches()
+        self._refresh_explorer_target_count_label()
+
+    def select_daily_new_entry_custom_batches(self) -> None:
+        if not self.catalog_data:
+            try:
+                self.catalog_data = self._load_catalog_data()
+            except Exception as exc:
+                self.custom_batch_status_var.set(f"Catalog unavailable: {exc}")
+                return
+
+        visible_ids = self._visible_custom_batch_ids()
+        selected_ids = DAILY_NEW_ENTRY_CUSTOM_BATCH_IDS & visible_ids
+        if not selected_ids:
+            self.custom_batch_status_var.set("No Daily new-entry batches are visible for the currently loaded strategy.")
+            return
+
+        self.custom_batch_selected_run_ids = set(selected_ids)
+        self.explorer_selection_mode_var.set("Custom batches")
+        self.refresh_committed_custom_batches()
+        self._refresh_explorer_target_count_label()
+
+        missing_ids = DAILY_NEW_ENTRY_CUSTOM_BATCH_IDS - selected_ids
+        if missing_ids:
+            self.custom_batch_status_var.set(f"Selected {len(selected_ids)} Daily new-entry batches; missing {len(missing_ids)}.")
+        else:
+            self.custom_batch_status_var.set(f"Selected {len(selected_ids)} Daily new-entry batches.")
+
+    def clear_selected_custom_batches(self) -> None:
+        self.custom_batch_selected_run_ids.clear()
+        self.refresh_committed_custom_batches()
+        self._refresh_explorer_target_count_label()
+
     def refresh_committed_custom_batches(self) -> None:
         if self.custom_batch_committed_tree is None:
             return
-        from hyperopt_explorer_support import resolve_custom_batch
+        from hyperopt_explorer_support import batch_matches_strategy, resolve_custom_batch
 
-        existing_ids = {str(batch.get("id")) for batch in self.custom_batches_payload.get("batches") or [] if isinstance(batch, dict)}
-        self.custom_batch_selected_run_ids &= existing_ids
         self.custom_batch_committed_tree.delete(*self.custom_batch_committed_tree.get_children())
         spaces = self._catalog_strategy_spaces()
+        visible_ids: set[str] = set()
         for batch in self.custom_batches_payload.get("batches") or []:
             if not isinstance(batch, dict):
                 continue
+            if self.catalog_data and not batch_matches_strategy(batch, self.catalog_data):
+                continue
             batch_id = str(batch.get("id") or "")
+            visible_ids.add(batch_id)
             resolution = resolve_custom_batch(batch, self.catalog_data, spaces) if self.catalog_data else {"params": batch.get("resolved_params_snapshot") or [], "spaces": batch.get("spaces_snapshot") or [], "stale_sources": [], "stale_params": [], "stale_excluded_params": []}
             run_mark = "[x]" if batch_id in self.custom_batch_selected_run_ids else "[ ]"
             stale_count = len(resolution.get("stale_sources") or []) + len(resolution.get("stale_params") or []) + len(resolution.get("stale_excluded_params") or [])
@@ -4005,6 +5809,7 @@ class FreqtradeLauncher(tk.Tk):
                     status,
                 ),
             )
+        self.custom_batch_selected_run_ids &= visible_ids
 
     def _build_review_tab(self) -> None:
 
@@ -4302,11 +6107,7 @@ class FreqtradeLauncher(tk.Tk):
             self.explorer_target_namespace_var,
             self.explorer_target_count_var,
             self.explorer_min_param_count_var,
-            self.explorer_keeper_enabled_var,
-            self.explorer_keeper_save_dir_var,
-            self.explorer_keeper_win_numerator_var,
-            self.explorer_keeper_win_denominator_var,
-            self.explorer_keeper_min_profit_per_window_var,
+            self.explorer_saved_loops_dir_var,
             self.download_exchange_var,
             self.download_pairs_file_var,
             self.download_timeframes_var,
@@ -4345,6 +6146,16 @@ class FreqtradeLauncher(tk.Tk):
             self.orderbook_capacity_warning_mb_var,
             self.orderbook_capacity_critical_mb_var,
             self.orderbook_max_symbols_var,
+            self.orderbook_history_datadir_var,
+            self.orderbook_history_exchange_var,
+            self.orderbook_history_trading_mode_var,
+            self.orderbook_history_category_var,
+            self.orderbook_history_depth_var,
+            self.orderbook_history_timerange_var,
+            self.orderbook_history_feature_timeframes_var,
+            self.orderbook_history_feature_format_var,
+            self.orderbook_history_max_rows_var,
+            self.orderbook_history_erase_var,
         ]
         trace_vars.extend(self.explorer_backtest_count_vars.values())
         trace_vars.extend(self.explorer_12m_holdout_vars.values())
@@ -4369,6 +6180,7 @@ class FreqtradeLauncher(tk.Tk):
         self.refresh_web_command_preview()
         self.refresh_orderbook_pair_preview()
         self.refresh_orderbook_estimate()
+        self.refresh_orderbook_history_previews()
 
     def _ordered_catalog_namespaces(self, catalog: dict[str, Any] | None = None) -> list[str]:
         catalog = catalog or self.catalog_data or {}
@@ -4772,7 +6584,7 @@ class FreqtradeLauncher(tk.Tk):
                 self.strategy_class_var.set(class_names[0])
         else:
             self.strategy_class_var.set(derive_module_stem(path))
-        self.refresh_command_preview()
+        self.refresh_strategy_catalog()
 
     def browse_hyperopt_result_file(self) -> None:
         path = filedialog.askopenfilename(filetypes=[("Hyperopt results", "*.fthypt *.pickle"), ("All files", "*.*")])
@@ -5070,11 +6882,7 @@ class FreqtradeLauncher(tk.Tk):
             "explorer_target_namespace": self.explorer_target_namespace_var.get(),
             "explorer_selected_custom_batch_ids": sorted(self.custom_batch_selected_run_ids),
             "explorer_min_param_count": self.explorer_min_param_count_var.get(),
-            "explorer_keeper_enabled": self.explorer_keeper_enabled_var.get(),
-            "explorer_keeper_save_dir": self.explorer_keeper_save_dir_var.get(),
-            "explorer_keeper_win_numerator": self.explorer_keeper_win_numerator_var.get(),
-            "explorer_keeper_win_denominator": self.explorer_keeper_win_denominator_var.get(),
-            "explorer_keeper_min_profit_per_window": self.explorer_keeper_min_profit_per_window_var.get(),
+            "explorer_saved_loops_dir": self.explorer_saved_loops_dir_var.get(),
             "download_exchange": self.download_exchange_var.get(),
             "download_pairs_file": self.download_pairs_file_var.get(),
             "download_pairs": self.download_pairs_text.get("1.0", tk.END) if self.download_pairs_text is not None else "",
@@ -5114,6 +6922,21 @@ class FreqtradeLauncher(tk.Tk):
             "orderbook_capacity_warning_mb": self.orderbook_capacity_warning_mb_var.get(),
             "orderbook_capacity_critical_mb": self.orderbook_capacity_critical_mb_var.get(),
             "orderbook_max_symbols": self.orderbook_max_symbols_var.get(),
+            "orderbook_history_datadir": self.orderbook_history_datadir_var.get(),
+            "orderbook_history_exchange": self.orderbook_history_exchange_var.get(),
+            "orderbook_history_trading_mode": self.orderbook_history_trading_mode_var.get(),
+            "orderbook_history_category": self.orderbook_history_category_var.get(),
+            "orderbook_history_depth": self.orderbook_history_depth_var.get(),
+            "orderbook_history_timerange": self.orderbook_history_timerange_var.get(),
+            "orderbook_history_feature_timeframes": self.orderbook_history_feature_timeframes_var.get(),
+            "orderbook_history_feature_format": self.orderbook_history_feature_format_var.get(),
+            "orderbook_history_max_rows": self.orderbook_history_max_rows_var.get(),
+            "orderbook_history_erase": self.orderbook_history_erase_var.get(),
+            "orderbook_history_pairs": (
+                self.orderbook_history_pairs_text.get("1.0", tk.END)
+                if self.orderbook_history_pairs_text is not None
+                else ""
+            ),
             "review_hyperopt_file": self.review_hyperopt_file_var.get(),
             "review_hyperopt_limit": self.review_hyperopt_limit_var.get(),
             "review_hyperopt_index": self.review_hyperopt_index_var.get(),
@@ -5273,13 +7096,13 @@ class FreqtradeLauncher(tk.Tk):
         self.explorer_tag_count_var.set(normalized_count)
         self.custom_batch_selected_run_ids = {str(batch_id) for batch_id in data.get("explorer_selected_custom_batch_ids", []) if str(batch_id)}
         self.explorer_min_param_count_var.set(data.get("explorer_min_param_count", "0"))
-        self.explorer_keeper_enabled_var.set(bool(data.get("explorer_keeper_enabled", True)))
-        self.explorer_keeper_save_dir_var.set(str(data.get("explorer_keeper_save_dir", "") or ""))
-        self.explorer_keeper_win_numerator_var.set(str(data.get("explorer_keeper_win_numerator", "5") or "5"))
-        self.explorer_keeper_win_denominator_var.set(str(data.get("explorer_keeper_win_denominator", "6") or "6"))
-        self.explorer_keeper_min_profit_per_window_var.set(str(data.get("explorer_keeper_min_profit_per_window", "200") or "200"))
-        self._refresh_explorer_namespace_dropdown()
-        self._refresh_explorer_target_count_label()
+        saved_loops_dir = (
+            data.get("explorer_saved_loops_dir")
+            if "explorer_saved_loops_dir" in data
+            else data.get("explorer_keeper_save_dir")
+        )
+        default_saved_loops_dir = str(app_path(EXPLORER_LOOP_EXPORT_DIR))
+        self.explorer_saved_loops_dir_var.set(str(saved_loops_dir or default_saved_loops_dir))
         self.download_exchange_var.set(data.get("download_exchange", ""))
         self.download_pairs_file_var.set(data.get("download_pairs_file", ""))
         if self.download_pairs_text is not None:
@@ -5332,6 +7155,71 @@ class FreqtradeLauncher(tk.Tk):
         self.orderbook_capacity_warning_mb_var.set(str(data.get("orderbook_capacity_warning_mb", self.orderbook_capacity_warning_mb_var.get()) or self.orderbook_capacity_warning_mb_var.get()))
         self.orderbook_capacity_critical_mb_var.set(str(data.get("orderbook_capacity_critical_mb", self.orderbook_capacity_critical_mb_var.get()) or self.orderbook_capacity_critical_mb_var.get()))
         self.orderbook_max_symbols_var.set(str(data.get("orderbook_max_symbols", self.orderbook_max_symbols_var.get()) or self.orderbook_max_symbols_var.get()))
+        self.orderbook_history_datadir_var.set(
+            str(
+                data.get("orderbook_history_datadir", self.orderbook_history_datadir_var.get())
+                or self.orderbook_history_datadir_var.get()
+            )
+        )
+        self.orderbook_history_exchange_var.set(
+            str(
+                data.get("orderbook_history_exchange", self.orderbook_history_exchange_var.get())
+                or self.orderbook_history_exchange_var.get()
+            )
+        )
+        self.orderbook_history_trading_mode_var.set(
+            str(
+                data.get(
+                    "orderbook_history_trading_mode",
+                    self.orderbook_history_trading_mode_var.get(),
+                )
+                or self.orderbook_history_trading_mode_var.get()
+            )
+        )
+        self.orderbook_history_category_var.set(
+            str(
+                data.get("orderbook_history_category", self.orderbook_history_category_var.get())
+                or self.orderbook_history_category_var.get()
+            )
+        )
+        self.orderbook_history_depth_var.set(
+            str(
+                data.get("orderbook_history_depth", self.orderbook_history_depth_var.get())
+                or self.orderbook_history_depth_var.get()
+            )
+        )
+        self.orderbook_history_timerange_var.set(
+            str(data.get("orderbook_history_timerange", self.orderbook_history_timerange_var.get()) or "")
+        )
+        self.orderbook_history_feature_timeframes_var.set(
+            str(
+                data.get(
+                    "orderbook_history_feature_timeframes",
+                    self.orderbook_history_feature_timeframes_var.get(),
+                )
+                or self.orderbook_history_feature_timeframes_var.get()
+            )
+        )
+        self.orderbook_history_feature_format_var.set(
+            str(
+                data.get(
+                    "orderbook_history_feature_format",
+                    self.orderbook_history_feature_format_var.get(),
+                )
+                or self.orderbook_history_feature_format_var.get()
+            )
+        )
+        self.orderbook_history_max_rows_var.set(
+            str(data.get("orderbook_history_max_rows", self.orderbook_history_max_rows_var.get()) or "")
+        )
+        self.orderbook_history_erase_var.set(
+            bool(data.get("orderbook_history_erase", self.orderbook_history_erase_var.get()))
+        )
+        if self.orderbook_history_pairs_text is not None:
+            set_text(
+                self.orderbook_history_pairs_text,
+                data.get("orderbook_history_pairs", ""),
+            )
         self.review_hyperopt_file_var.set(data.get("review_hyperopt_file", ""))
         self.review_hyperopt_limit_var.set(data.get("review_hyperopt_limit", "20"))
         self.review_hyperopt_index_var.set(data.get("review_hyperopt_index", "-1"))
@@ -5360,10 +7248,7 @@ class FreqtradeLauncher(tk.Tk):
             classes = extract_class_names(strategy_file)
             self.strategy_class_combo["values"] = classes
 
-        self.refresh_mode_options()
-        self.refresh_all_command_previews()
-        if hasattr(self, "catalog_tree"):
-            self.refresh_custom_batch_catalog()
+        self.refresh_strategy_catalog()
         if load_warnings:
             warning_text = "\n".join(f"- {item}" for item in load_warnings)
             self._append_console(f"Warning while loading {source_label}:\n{warning_text}\n")
@@ -5484,6 +7369,37 @@ class FreqtradeLauncher(tk.Tk):
         except Exception as exc:
             self.web_command_preview_var.set(f"Invalid Web Lab configuration: {exc}")
 
+    def refresh_orderbook_history_previews(self) -> None:
+        try:
+            download_args = self.build_orderbook_history_download_args()
+            download_preview = [
+                self.python_exe_var.get().strip() or sys.executable,
+                "-u",
+                "-m",
+                "freqtrade",
+                *download_args,
+            ]
+            self.orderbook_history_download_preview_var.set(shell_join(download_preview))
+        except Exception as exc:
+            self.orderbook_history_download_preview_var.set(
+                f"Invalid Bybit history download configuration: {exc}"
+            )
+
+        try:
+            convert_args = self.build_orderbook_history_convert_args()
+            convert_preview = [
+                self.python_exe_var.get().strip() or sys.executable,
+                "-u",
+                "-m",
+                "freqtrade",
+                *convert_args,
+            ]
+            self.orderbook_history_convert_preview_var.set(shell_join(convert_preview))
+        except Exception as exc:
+            self.orderbook_history_convert_preview_var.set(
+                f"Invalid Bybit history conversion configuration: {exc}"
+            )
+
     def build_explorer_command(self, preview_only: bool) -> tuple[list[str], str | None]:
         runner = app_path(EXPLORER_RUNNER_FILE)
         if not runner.exists():
@@ -5515,19 +7431,10 @@ class FreqtradeLauncher(tk.Tk):
 
         python_exe = self.python_exe_var.get().strip() or sys.executable
         try:
-            keeper_win_numerator = parse_int(self.explorer_keeper_win_numerator_var.get().strip() or "5")
-            keeper_win_denominator = parse_int(self.explorer_keeper_win_denominator_var.get().strip() or "6")
-            keeper_min_profit_per_window = float(self.explorer_keeper_min_profit_per_window_var.get().strip() or "200")
             backtest_workers = parse_int(self.explorer_backtest_workers_var.get().strip() or "12")
             hyperopt_jobs = self._parse_job_workers_or_none(self.hyperopt_jobs_var.get())
         except ValueError as exc:
             raise ValueError(f"Explorer runtime settings are invalid: {exc}") from exc
-        if keeper_win_numerator is None or keeper_win_numerator <= 0:
-            raise ValueError("Keeper win ratio numerator must be greater than 0.")
-        if keeper_win_denominator is None or keeper_win_denominator <= 0:
-            raise ValueError("Keeper win ratio denominator must be greater than 0.")
-        if keeper_min_profit_per_window < 0:
-            raise ValueError("Keeper min profit per backtest window must be >= 0.")
         if backtest_workers is None or backtest_workers < 1:
             raise ValueError("Backtest workers must be an integer >= 1.")
         effective_hyperopt_workers = self._effective_worker_count_for_epochs(hyperopt_jobs)
@@ -5603,12 +7510,6 @@ class FreqtradeLauncher(tk.Tk):
         append_if_value(command, "--random-state", self.explorer_random_state_var.get())
         command.extend(["--backtest-workers", str(backtest_workers)])
         command.extend(["--temp-backtest-root", str(app_path("../runtime/tempbacktest").resolve())])
-        if not self.explorer_keeper_enabled_var.get():
-            command.append("--keeper-disable")
-        append_if_value(command, "--keeper-save-dir", self.explorer_keeper_save_dir_var.get())
-        command.extend(["--keeper-win-numerator", str(keeper_win_numerator)])
-        command.extend(["--keeper-win-denominator", str(keeper_win_denominator)])
-        command.extend(["--keeper-min-profit-per-window", str(keeper_min_profit_per_window)])
         return command, None if preview_only else temp_preset_path
 
     def build_frequi_command(self, preview_only: bool = False) -> BuildResult:
@@ -5636,15 +7537,6 @@ class FreqtradeLauncher(tk.Tk):
             args.extend(["--datadir", self.datadir_var.get().strip()])
         if self.userdir_var.get().strip():
             args.extend(["--userdir", self.userdir_var.get().strip()])
-
-        strategy_file = self.strategy_file_var.get().strip()
-        strategy_class = self.strategy_class_var.get().strip()
-        if strategy_file:
-            args.extend(["--strategy-path", str(Path(strategy_file).resolve().parent)])
-        if strategy_class:
-            args.extend(["--strategy", strategy_class])
-        if self.recursive_strategy_search_var.get():
-            args.append("--recursive-strategy-search")
 
         temp_config_path: str | None = None
 
@@ -6024,6 +7916,246 @@ class FreqtradeLauncher(tk.Tk):
             self.orderbook_estimated_days_to_warning_var.set("-")
         else:
             self.orderbook_estimated_days_to_warning_var.set(f"{warning / mb_day:.1f}")
+
+    def _orderbook_history_datadir(self) -> Path:
+        raw = self.orderbook_history_datadir_var.get().strip()
+        if raw:
+            return Path(raw)
+        current_datadir = self.datadir_var.get().strip()
+        if current_datadir:
+            return Path(current_datadir)
+        return app_path(ORDERBOOK_HISTORY_DATA_DIR)
+
+    def _orderbook_history_pairs(self) -> list[str]:
+        if self.orderbook_history_pairs_text is not None:
+            pairs = parse_token_list(self.orderbook_history_pairs_text.get("1.0", tk.END))
+            if pairs:
+                return pairs
+        return parse_token_list(self.pairs_text.get("1.0", tk.END))
+
+    def copy_whitelist_to_orderbook_history_pairs(self) -> None:
+        if self.orderbook_history_pairs_text is None:
+            return
+        pairs = parse_token_list(self.pairs_text.get("1.0", tk.END))
+        self.orderbook_history_pairs_text.delete("1.0", tk.END)
+        self.orderbook_history_pairs_text.insert("1.0", "\n".join(pairs))
+        if pairs:
+            self.orderbook_history_pairs_text.insert(tk.END, "\n")
+        self.refresh_orderbook_history_previews()
+
+    def _orderbook_history_depth(self) -> int:
+        depth = parse_int(self.orderbook_history_depth_var.get().strip() or "500")
+        if depth is None or depth <= 0:
+            raise ValueError("Depth must be a positive integer.")
+        if depth != 500:
+            raise ValueError("Bybit historical archives currently support depth 500 only.")
+        return depth
+
+    def _orderbook_history_category(self) -> str:
+        category = self.orderbook_history_category_var.get().strip() or "linear"
+        if category != "linear":
+            raise ValueError("Bybit historical archives currently support category 'linear' only.")
+        return category
+
+    def build_orderbook_history_download_args(self) -> list[str]:
+        pairs = self._orderbook_history_pairs()
+        if not pairs:
+            raise ValueError("Add at least one pair in Bybit History or on the Pairs tab.")
+
+        args = [
+            "download-data",
+            "--exchange",
+            self.orderbook_history_exchange_var.get().strip() or "bybit",
+            "--trading-mode",
+            self.orderbook_history_trading_mode_var.get().strip() or "futures",
+            "--dl-orderbook",
+            "--datadir",
+            str(self._orderbook_history_datadir()),
+            "--orderbook-category",
+            self._orderbook_history_category(),
+            "--orderbook-depth",
+            str(self._orderbook_history_depth()),
+            "-p",
+            *pairs,
+        ]
+        append_if_value(args, "--timerange", self.orderbook_history_timerange_var.get())
+        if self.orderbook_history_erase_var.get():
+            args.append("--erase")
+        return args
+
+    def build_orderbook_history_convert_args(self) -> list[str]:
+        pairs = self._orderbook_history_pairs()
+        if not pairs:
+            raise ValueError("Add at least one pair in Bybit History or on the Pairs tab.")
+
+        timeframes = parse_token_list(self.orderbook_history_feature_timeframes_var.get())
+        if not timeframes:
+            raise ValueError("Feature timeframes are required. Example: 1h")
+
+        args = [
+            "orderbook-to-features",
+            "--exchange",
+            self.orderbook_history_exchange_var.get().strip() or "bybit",
+            "--trading-mode",
+            self.orderbook_history_trading_mode_var.get().strip() or "futures",
+            "--datadir",
+            str(self._orderbook_history_datadir()),
+            "--orderbook-category",
+            self._orderbook_history_category(),
+            "--orderbook-depth",
+            str(self._orderbook_history_depth()),
+            "--data-format-orderbook-features",
+            self.orderbook_history_feature_format_var.get().strip() or "feather",
+            "--pairs",
+            *pairs,
+            "--timeframes",
+            *timeframes,
+        ]
+        append_if_value(args, "--timerange", self.orderbook_history_timerange_var.get())
+        append_if_value(args, "--max-rows", self.orderbook_history_max_rows_var.get())
+        return args
+
+    def _run_orderbook_history_command(self, command_args: list[str], title: str) -> None:
+        if self.worker_thread and self.worker_thread.is_alive():
+            messagebox.showinfo(
+                APP_TITLE,
+                "A run is already active. Wait for it to finish before launching a Bybit History command.",
+            )
+            return
+        preview = [
+            self.python_exe_var.get().strip() or sys.executable,
+            "-u",
+            "-m",
+            "freqtrade",
+            *command_args,
+        ]
+        self._append_console("\n" + "=" * 100 + "\n")
+        self._append_console(title + "\n")
+        self._append_console(shell_join(preview) + "\n")
+        self.worker_thread = threading.Thread(
+            target=self._run_aux_subprocess,
+            args=(command_args, "monitor"),
+            daemon=True,
+        )
+        self.worker_thread.start()
+
+    def on_orderbook_history_download(self) -> None:
+        try:
+            command_args = self.build_orderbook_history_download_args()
+        except Exception as exc:
+            messagebox.showerror(APP_TITLE, f"Cannot build Bybit History download command:\n{exc}")
+            return
+        self._save_last_used_state()
+        self._run_orderbook_history_command(command_args, "Bybit History: Download Raw Archives")
+
+    def on_orderbook_history_convert(self) -> None:
+        try:
+            command_args = self.build_orderbook_history_convert_args()
+        except Exception as exc:
+            messagebox.showerror(APP_TITLE, f"Cannot build Bybit History conversion command:\n{exc}")
+            return
+        self._save_last_used_state()
+        self._run_orderbook_history_command(command_args, "Bybit History: Convert To Features")
+
+    def _pair_to_storage_name(self, pair: str) -> str:
+        value = str(pair)
+        for ch in ["/", " ", ".", "@", "$", "+", ":"]:
+            value = value.replace(ch, "_")
+        return value
+
+    def refresh_orderbook_history_summary(self) -> None:
+        tree = self.orderbook_history_summary_tree
+        if tree is None:
+            return
+
+        tree.delete(*tree.get_children())
+        datadir = self._orderbook_history_datadir()
+        category = self.orderbook_history_category_var.get().strip() or "linear"
+        depth_text = self.orderbook_history_depth_var.get().strip() or "500"
+        pairs = self._orderbook_history_pairs()
+        if not pairs:
+            self.orderbook_history_status_var.set(
+                "No pairs selected. Use the Pairs tab whitelist or add pairs here."
+            )
+            return
+
+        pair_count = 0
+        availability_count = 0
+        raw_count_total = 0
+        feature_count_total = 0
+
+        for index, pair in enumerate(pairs):
+            symbol = normalize_freqtrade_pair_to_binance_symbol(pair) or "-"
+            pair_count += 1
+            available_days = "-"
+            missing_days = "-"
+            first_available = "-"
+            last_available = "-"
+            raw_archives = 0
+            feature_timeframes = "-"
+
+            if symbol != "-":
+                archive_dir = datadir / "orderbook" / category / symbol
+                availability_path = archive_dir / f"availability_ob{depth_text}.json"
+                raw_archives = len(list(archive_dir.glob(f"*_ob{depth_text}.data.zip")))
+                raw_count_total += raw_archives
+
+                if availability_path.exists():
+                    try:
+                        payload = json.loads(availability_path.read_text(encoding="utf-8"))
+                    except Exception:
+                        payload = {}
+                    if isinstance(payload, dict):
+                        availability_count += 1
+                        available_days = str(payload.get("available_count", "-"))
+                        missing_days = str(payload.get("missing_count", "-"))
+                        first_available = str(payload.get("first_available") or "-")
+                        last_available = str(payload.get("last_available") or "-")
+
+                pair_storage = self._pair_to_storage_name(pair)
+                feature_dir = datadir / "orderbook_features" / category
+                found_timeframes: list[str] = []
+                for path in sorted(feature_dir.glob(f"{pair_storage}-*-ob{depth_text}.*")):
+                    stem = path.stem
+                    prefix = f"{pair_storage}-"
+                    suffix = f"-ob{depth_text}"
+                    if stem.startswith(prefix) and suffix in stem:
+                        timeframe = stem[len(prefix) : stem.rfind(suffix)]
+                        if timeframe:
+                            found_timeframes.append(timeframe)
+                unique_timeframes = sorted(set(found_timeframes))
+                feature_count_total += len(unique_timeframes)
+                if unique_timeframes:
+                    feature_timeframes = ", ".join(unique_timeframes)
+
+            tree.insert(
+                "",
+                "end",
+                iid=f"ob_history_{index}",
+                values=(
+                    pair,
+                    symbol,
+                    available_days,
+                    missing_days,
+                    first_available,
+                    last_available,
+                    raw_archives,
+                    feature_timeframes,
+                ),
+            )
+
+        self.orderbook_history_status_var.set(
+            f"Pairs: {pair_count} | availability reports: {availability_count} | "
+            f"raw archives: {raw_count_total} | feature timeframe files: {feature_count_total}"
+        )
+
+    def open_orderbook_history_data_dir(self) -> None:
+        path = self._orderbook_history_datadir().resolve()
+        path.mkdir(parents=True, exist_ok=True)
+        try:
+            webbrowser.open(path.as_uri())
+        except Exception as exc:
+            messagebox.showerror(APP_TITLE, f"Could not open Bybit History data folder:\n{exc}")
 
     def build_orderbook_collector_command(self) -> list[str]:
         paths = self._orderbook_paths()
@@ -7559,6 +9691,9 @@ class FreqtradeLauncher(tk.Tk):
     def _default_explorer_tally_text(self) -> str:
         return (
             "Runs: A 0 | R 0 | Loops 0\n"
+            "HOpt mix: Bull 0 | Bear 0 | Chop 0\n"
+            "          Crash 0 | Xover 0\n"
+            "Current HOpt: -\n"
             "Champion Profit:    - -> -\n"
             "Champion Objective: - -> -\n"
             "Champion WinRatio:  -/- -> -/-"
@@ -7571,6 +9706,9 @@ class FreqtradeLauncher(tk.Tk):
         self.explorer_loop_log_entries = 0
         self.explorer_current_loop_targets = {}
         self.explorer_current_hyperopt_window = "-"
+        self.explorer_current_hyperopt_window_detail = "-"
+        self.explorer_loop_hyperopt_windows = {}
+        self.explorer_hyperopt_regime_counts = {}
         self.explorer_initial_champion_stats = {}
         self.explorer_current_champion_stats = {}
         self.explorer_tally_var.set(self._default_explorer_tally_text())
@@ -7594,6 +9732,53 @@ class FreqtradeLauncher(tk.Tk):
             return "-/-"
         return f"{wins}/{total}" if total > 0 else "-/-"
 
+    def _short_explorer_window_label(self, value: Any, max_length: int = 38) -> str:
+        text = str(value or "-").strip() or "-"
+        if len(text) <= max_length:
+            return text
+        return text[: max(8, max_length - 1)] + "…"
+
+    def _hyperopt_regime_from_window_text(self, *values: Any) -> str:
+        for value in values:
+            text = f" {str(value or '').lower().replace('_', ' ').replace('-', ' ')} "
+            for regime in EXPLORER_REGIME_VALUES:
+                if f" {regime} " in text:
+                    return regime
+        return "other"
+
+    def _hyperopt_window_record_from_event(self, event: dict[str, Any], fallback: dict[str, Any] | None = None) -> dict[str, str]:
+        fallback = fallback or {}
+        label = str(event.get("hyperopt_window") or fallback.get("hyperopt_window") or self.explorer_current_hyperopt_window or "-").strip() or "-"
+        detail = str(event.get("hyperopt_window_detail") or fallback.get("hyperopt_window_detail") or self.explorer_current_hyperopt_window_detail or label).strip() or label
+        regime = str(event.get("hyperopt_regime") or fallback.get("hyperopt_regime") or "").strip().lower()
+        if regime not in set(EXPLORER_REGIME_VALUES) | {"other"}:
+            regime = self._hyperopt_regime_from_window_text(detail, label)
+        return {"label": label, "detail": detail, "regime": regime}
+
+    def _format_hyperopt_window_record(self, record: dict[str, str], max_length: int = 38) -> str:
+        label = self._short_explorer_window_label(record.get("label"), max_length=max_length)
+        regime = str(record.get("regime") or "other")
+        return f"{label} [{regime}]" if regime != "other" else label
+
+    def _record_loop_hyperopt_window(self, loop_index: int, event: dict[str, Any]) -> dict[str, str]:
+        record = self._hyperopt_window_record_from_event(event, self.explorer_loop_hyperopt_windows.get(loop_index))
+        if loop_index > 0 and loop_index not in self.explorer_loop_hyperopt_windows:
+            regime = record.get("regime") or "other"
+            self.explorer_hyperopt_regime_counts[regime] = self.explorer_hyperopt_regime_counts.get(regime, 0) + 1
+        if loop_index > 0:
+            self.explorer_loop_hyperopt_windows[loop_index] = dict(record)
+        return record
+
+    def _format_hyperopt_mix(self) -> str:
+        parts = []
+        for regime in EXPLORER_REGIME_VALUES:
+            label = EXPLORER_MARKET_TYPE_COMPACT_LABELS.get(regime, regime.title())
+            parts.append(f"{label} {int(self.explorer_hyperopt_regime_counts.get(regime, 0))}")
+        other = int(self.explorer_hyperopt_regime_counts.get("other", 0))
+        if other:
+            parts.append(f"Other {other}")
+        return " | ".join(parts[:3]) + "\n          " + " | ".join(parts[3:])
+
     def _stats_from_explorer_event(self, event: dict[str, Any], role: str) -> dict[str, Any]:
         prefix = "challenger" if role == "challenger" else "champion"
         total_windows = int(event.get("backtest_window_count") or 0)
@@ -7614,6 +9799,8 @@ class FreqtradeLauncher(tk.Tk):
         current = self.explorer_current_champion_stats
         self.explorer_tally_var.set(
             f"Runs: A {self.explorer_accepted_count} | R {self.explorer_rejected_count} | Loops {self.explorer_loop_count}\n"
+            f"HOpt mix: {self._format_hyperopt_mix()}\n"
+            f"Current HOpt: {self._short_explorer_window_label(self.explorer_current_hyperopt_window, max_length=42)}\n"
             "Champion Profit:    "
             f"{self._format_explorer_metric(initial.get('profit_total'))} -> {self._format_explorer_metric(current.get('profit_total'))}\n"
             "Champion Objective: "
@@ -7640,9 +9827,15 @@ class FreqtradeLauncher(tk.Tk):
         family = str(target.get("family") or "-")
         tag = str(target.get("tag") or target.get("target") or "-")
         target_label = str(target.get("target") or "-")
+        window_record = self._hyperopt_window_record_from_event(event, self.explorer_loop_hyperopt_windows.get(loop_index) or target)
+        window_text = self._format_hyperopt_window_record(window_record, max_length=34)
+        backtest_count = event.get("backtest_window_count") or "-"
+        params_changed = event.get("params_changed")
+        params_text = f" | params_changed={params_changed}" if params_changed is not None else ""
         line = (
-            f"Loop {loop_index}: {decision}\n"
+            f"Loop {loop_index}: {decision} | HOpt={window_text}\n"
             f"  target={target_label}\n"
+            f"  validation_windows={backtest_count}{params_text}\n"
             f"  namespace={namespace}:{namespace_value} | family={family} | tag={tag}\n"
         )
 
@@ -7668,11 +9861,15 @@ class FreqtradeLauncher(tk.Tk):
             hyperopt_window = str(event.get("hyperopt_window") or "").strip()
             if hyperopt_window:
                 self.explorer_current_hyperopt_window = hyperopt_window
+            hyperopt_window_detail = str(event.get("hyperopt_window_detail") or "").strip()
+            if hyperopt_window_detail:
+                self.explorer_current_hyperopt_window_detail = hyperopt_window_detail
             try:
                 loop_index = int(event.get("loop_index") or 0)
             except Exception:
                 loop_index = 0
             if loop_index > 0:
+                window_record = self._record_loop_hyperopt_window(loop_index, event)
                 self.explorer_loop_count = max(self.explorer_loop_count, loop_index)
                 self.explorer_current_loop_targets[loop_index] = {
                     "target": event.get("target"),
@@ -7680,6 +9877,9 @@ class FreqtradeLauncher(tk.Tk):
                     "namespace_value": event.get("namespace_value"),
                     "family": event.get("family"),
                     "tag": event.get("tag"),
+                    "hyperopt_window": window_record.get("label"),
+                    "hyperopt_window_detail": window_record.get("detail"),
+                    "hyperopt_regime": window_record.get("regime"),
                 }
                 self._refresh_explorer_tally()
             else:
@@ -7694,6 +9894,13 @@ class FreqtradeLauncher(tk.Tk):
             self.explorer_accepted_count += 1
         elif decision == "REJECTED":
             self.explorer_rejected_count += 1
+
+        try:
+            loop_index = int(event.get("loop_index") or 0)
+        except Exception:
+            loop_index = 0
+        if loop_index > 0:
+            self._record_loop_hyperopt_window(loop_index, event)
 
         champion_stats = self._stats_from_explorer_event(event, "champion")
         challenger_stats = self._stats_from_explorer_event(event, "challenger")
@@ -7787,6 +9994,8 @@ class FreqtradeLauncher(tk.Tk):
                         self._append_console(summary)
                     if self.active_run_type == "Backtest":
                         self.set_latest_backtest_review_file(silent=True)
+                    if previous_run_type == "Explorer":
+                        self.refresh_explorer_review_runs(keep_selection=False)
                     self.active_run_type = ""
                     self.run_button.configure(state="normal")
                     if hasattr(self, "frequi_launch_button"):
@@ -8019,8 +10228,14 @@ class FreqtradeLauncher(tk.Tk):
             prefix = "\n" if decision == "ACCEPTED" else ""
             reason = str(event.get("decision_reason") or "").strip()
             reason_text = f" | reason={reason}" if reason and reason != "weighted_score_improved" else ""
+            try:
+                loop_index = int(event.get("loop_index") or 0)
+            except Exception:
+                loop_index = 0
+            window_record = self._hyperopt_window_record_from_event(event, self.explorer_loop_hyperopt_windows.get(loop_index))
             return (
                 f"{prefix}Decision: {decision} | target={event.get('target')} | "
+                f"hopt={self._format_hyperopt_window_record(window_record, max_length=42)} | "
                 f"params_changed={event.get('params_changed')} | "
                 f"champion={event.get('champion_score')} | "
                 f"challenger={event.get('challenger_score')} | "

@@ -5,7 +5,12 @@ import pytest
 from freqtrade.data.dataprovider import DataProvider
 from freqtrade.enums import CandleType
 from freqtrade.resolvers.strategy_resolver import StrategyResolver
-from freqtrade.strategy import merge_informative_pair, stoploss_from_absolute, stoploss_from_open
+from freqtrade.strategy import (
+    merge_informative_pair,
+    merge_orderbook_features,
+    stoploss_from_absolute,
+    stoploss_from_open,
+)
 from tests.conftest import generate_test_data, get_patched_exchange
 
 
@@ -240,6 +245,17 @@ def test_merge_informative_pair_suffix_append_timeframe():
 
     with pytest.raises(ValueError, match=r"You can not specify `append_timeframe` .*"):
         merge_informative_pair(data, informative, "15m", "1h", suffix="suf")
+
+
+def test_merge_orderbook_features():
+    data = generate_test_data("15m", 20)
+    informative = generate_test_data("1h", 20).rename(columns={"open": "mid_open"})
+    informative = informative[["date", "mid_open"]]
+
+    result = merge_orderbook_features(data, informative, "15m", "1h")
+
+    assert "date_ob" in result.columns
+    assert "mid_open_ob" in result.columns
 
 
 @pytest.mark.parametrize(

@@ -19,6 +19,7 @@ from freqtrade.strategy.parameters import (
 )
 from freqtrade.strategy.strategy_helper import (
     merge_informative_pair,
+    merge_orderbook_features,
     stoploss_from_absolute,
     stoploss_from_open,
 )
@@ -43,6 +44,7 @@ __all__ = [
     "timeframe_to_prev_date",
     # Strategy helper functions
     "merge_informative_pair",
+    "merge_orderbook_features",
     "stoploss_from_absolute",
     "stoploss_from_open",
     "AnnotationType",
