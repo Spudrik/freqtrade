@@ -1,0 +1,51 @@
+# LauncherV2 Agent Rules
+
+LauncherV2 is the destination architecture for the launcher.
+
+## Objective
+
+Use simple tab modules and shared helpers to replace the monolithic launcher gradually.
+
+## Rules
+
+- One tab = one file under `launcher_v2/tabs/`.
+- Keep `app.py` small.
+- Do not put feature logic into `app.py`.
+- Do not create another architecture pattern.
+- Do not add promotion/comparison/random-tag/namespace controls to ExplorerV2.
+- Keep FreqUI launch available as a simple `freqtrade webserver` surface using Setup config/userdir/datadir.
+- Do not change strategy trading logic unless the current task is explicitly strategy research work.
+- Do not delete old launcher code unless the current phase explicitly says deletion is safe.
+- If unsure, stop and report instead of broadening scope.
+- Root-cause first: fix mapping/config/state issues at source before adding fallback/workaround code.
+- Do not add runtime rescue logic by default; use one-time migration when needed.
+- If a workaround is truly unavoidable, stop and ask for explicit approval before adding it.
+
+## Strategy Research Notes
+
+- Prefer one trading hypothesis per strategy file.
+- Keep the first-pass capital model simple: fixed stake, no leverage experiments, no adds, no peels.
+- Standardize exits early when comparing entry quality.
+- Use clear prefixes for experimental strategy files so they are easy to group and filter, including `test_` for split research files and `codex_` for original exploratory ideas.
+- Keep the ladder and daily-structure family split into separate files when the goal is to isolate entry edge.
+- Strategy parameter tags are limited to `family:*` and `mode:*` only.
+- Use `family` as the top-level block, limited to only: `entries`, `exits`, `adjust_position`, `stake`, `risk`.
+- Use `mode` for each isolated logic block that may be swapped/tested later, including entry, exit, and adjust-position variants.
+- Mode composition is allowed and encouraged when collaboration between blocks is being tested.
+- Use explicit composed mode names when combining logic, for example: `mode:x_with_exits`, `mode:x_with_risk`, or `mode:x_with_y`.
+- Treat composed modes as first-class test candidates, not temporary labels.
+- Each `family+mode` block should expose at least 2 tunable parameters.
+- No `family` block and no `mode` block may exist with only 1 parameter.
+- If a mode is sparse, merge it into a related composed mode (for example combine entry logic with exits or risk using `_with_` mode naming).
+- Entry mode shape is a strategy-level decision; there is no fixed guard/trigger template required across all strategies.
+- Deprecated dataframe/pandas usage is not allowed in strategy code and must be cleaned when touched.
+- Revisit these notes when the research workflow changes materially.
+
+## Preferred migration order
+
+1. Shell/helpers.
+2. Run/Common/Pairs/Mode Options.
+3. Simplified Explorer.
+4. Review.
+5. News/Web shared collector tabs.
+6. OrderBook.

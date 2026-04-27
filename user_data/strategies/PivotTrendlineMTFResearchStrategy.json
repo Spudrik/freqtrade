@@ -1,0 +1,63 @@
+{
+  "strategy_name": "PivotTrendlineMTFResearchStrategy",
+  "params": {
+    "roi": {
+      "0": 0.04
+    },
+    "stoploss": {
+      "stoploss": -0.1
+    },
+    "trailing": {
+      "trailing_stop": false,
+      "trailing_stop_positive": null,
+      "trailing_stop_positive_offset": 0.0,
+      "trailing_only_offset_is_reached": false
+    },
+    "max_open_trades": {
+      "max_open_trades": 10
+    },
+    "buy": {
+      "breakout_buffer_pct": 0.004,
+      "daily_context_mode": "trend_required",
+      "daily_level_source": "pivot",
+      "daily_pivot_strength": 3,
+      "entry_mode": "resistance_reject",
+      "entry_zone_pct": 0.02,
+      "event_window": 96,
+      "hourly_pivot_strength": 5,
+      "level_confluence_max_pct": 0.02,
+      "max_line_violation_count": 2,
+      "min_daily_context_score": 4,
+      "min_hourly_execution_score": 2,
+      "min_line_respect_ratio": 0.5,
+      "min_target_distance_pct": 0.015,
+      "min_volume_score": 2,
+      "projection_horizon": 1,
+      "volume_delta_abs_min": 0.5,
+      "volume_rvol_min": 2.0,
+      "resistance_reject_breakout_buffer_pct": 0.004,
+      "resistance_reject_daily_context_mode": "trend_or_level",
+      "resistance_reject_daily_level_source": "nearest",
+      "resistance_reject_daily_pivot_strength": 3,
+      "resistance_reject_entry_zone_pct": 0.006,
+      "resistance_reject_event_window": 48,
+      "resistance_reject_hourly_pivot_strength": 5,
+      "resistance_reject_level_confluence_max_pct": 0.02,
+      "resistance_reject_max_line_violation_count": 0,
+      "resistance_reject_min_daily_context_score": 4,
+      "resistance_reject_min_hourly_execution_score": 2,
+      "resistance_reject_min_line_respect_ratio": 0.8,
+      "resistance_reject_min_target_distance_pct": 0.004,
+      "resistance_reject_min_volume_score": 0,
+      "resistance_reject_projection_horizon": 6,
+      "resistance_reject_volume_delta_abs_min": 0.0,
+      "resistance_reject_volume_rvol_min": 0.0
+    },
+    "sell": {
+      "exit_buffer_pct": 0.015,
+      "exit_mode": "both"
+    }
+  },
+  "ft_stratparam_v": 1,
+  "export_time": "2026-04-27T21:58:21.228026+01:00"
+}

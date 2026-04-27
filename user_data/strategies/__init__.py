@@ -1,0 +1,1 @@
+"""Local Freqtrade strategy modules."""

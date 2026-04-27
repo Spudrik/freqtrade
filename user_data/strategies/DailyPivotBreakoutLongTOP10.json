@@ -1,0 +1,35 @@
+{
+  "strategy_name": "DailyPivotBreakoutLongTOP10",
+  "params": {
+    "roi": {
+      "0": 100.0
+    },
+    "stoploss": {
+      "stoploss": -0.15
+    },
+    "trailing": {
+      "trailing_stop": false,
+      "trailing_stop_positive": null,
+      "trailing_stop_positive_offset": 0.0,
+      "trailing_only_offset_is_reached": false
+    },
+    "max_open_trades": {
+      "max_open_trades": 10
+    },
+    "buy": {
+      "breakout_buffer_pct": 0.002,
+      "max_channel_compression": 1.05,
+      "min_close_location": 0.3,
+      "min_delta_zscore": 0.0,
+      "min_rvol": 0.6,
+      "pivot_strength": 8,
+      "trend_ema_days": 200,
+      "trend_filter_mode": "pair_or_btc"
+    },
+    "sell": {
+      "stop_buffer_pct": 0.015
+    }
+  },
+  "ft_stratparam_v": 1,
+  "export_time": "2026-04-25 23:12:55.258677+00:00"
+}
