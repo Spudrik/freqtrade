@@ -55,6 +55,18 @@ def _normalize_state_file(value: Any) -> str:
     return text or "../explorer_reports/hyperopt_explorer_state.json"
 
 
+def _default_repo_root(app_dir: Path) -> Path:
+    return Path(app_dir).resolve().parent.parent
+
+
+def _default_backtest_python(app_dir: Path) -> str:
+    return str(_default_repo_root(app_dir) / "runtime" / "venvs" / "freqtrade-backtest" / "Scripts" / "python.exe")
+
+
+def _default_handoff_dir(app_dir: Path) -> str:
+    return str(Path(app_dir).resolve().parent / "explorer_reports" / "pipeline")
+
+
 @dataclass
 class ExplorerRunSettings:
     preset_name: str = "BackTest2021-26"
@@ -77,12 +89,17 @@ class ExplorerRunSettings:
     sampling_seed: str = ""
     backtest_workers: str = "12"
     strategy_param_file: str = ""
+    split_venv_pipeline: bool = False
+    backtest_python_exe: str = ""
+    pipeline_handoff_dir: str = ""
 
     @classmethod
-    def from_state(cls, state: dict[str, Any]) -> "ExplorerRunSettings":
+    def from_state(cls, state: dict[str, Any], app_dir: Path | None = None) -> "ExplorerRunSettings":
         preset_name = str(state.get("preset_name") or "BackTest2021-26")
         if preset_name in {"test-hyperopt", "Backup"}:
             preset_name = "BackTest2021-26"
+        default_backtest_python = _default_backtest_python(app_dir) if app_dir is not None else ""
+        default_handoff_dir = _default_handoff_dir(app_dir) if app_dir is not None else "../explorer_reports/pipeline"
         return cls(
             preset_name=preset_name,
             preset_file=_normalize_preset_file(state.get("preset_file")),
@@ -104,6 +121,9 @@ class ExplorerRunSettings:
             sampling_seed=str(state.get("sampling_seed") or ""),
             backtest_workers=str(state.get("backtest_workers") or "12"),
             strategy_param_file=str(state.get("strategy_param_file") or ""),
+            split_venv_pipeline=_to_bool(state.get("split_venv_pipeline") or state.get("explorer_split_venv_pipeline")),
+            backtest_python_exe=str(state.get("backtest_python_exe") or state.get("explorer_backtest_python_exe") or default_backtest_python),
+            pipeline_handoff_dir=str(state.get("pipeline_handoff_dir") or state.get("explorer_pipeline_handoff_dir") or default_handoff_dir),
         )
 
     def to_state(self) -> dict[str, Any]:
@@ -128,6 +148,9 @@ class ExplorerRunSettings:
             "sampling_seed": self.sampling_seed,
             "backtest_workers": self.backtest_workers,
             "strategy_param_file": self.strategy_param_file,
+            "split_venv_pipeline": self.split_venv_pipeline,
+            "backtest_python_exe": self.backtest_python_exe,
+            "pipeline_handoff_dir": self.pipeline_handoff_dir,
         }
 
 
@@ -148,11 +171,12 @@ class ExplorerService:
 
     def build_command(self, settings: ExplorerRunSettings) -> list[str]:
         self._validate(settings)
+        runner_module = "explorer.explorer_pipeline_runner" if settings.split_venv_pipeline else self._runner_module(settings.runner_path)
         command = [
             self.python_exe,
             "-u",
             "-m",
-            self._runner_module(settings.runner_path),
+            runner_module,
             "--preset-file",
             str(self.resolve_path(settings.preset_file)),
             "--preset",
@@ -186,6 +210,9 @@ class ExplorerService:
         self._append(command, "--sampling-seed", settings.sampling_seed)
         self._append(command, "--backtest-workers", settings.backtest_workers)
         self._append(command, "--strategy-param-file", settings.strategy_param_file)
+        if settings.split_venv_pipeline:
+            self._append(command, "--backtest-python-exe", settings.backtest_python_exe)
+            self._append(command, "--handoff-dir", settings.pipeline_handoff_dir)
         return command
 
     def preview_text(self, settings: ExplorerRunSettings) -> str:
@@ -255,6 +282,11 @@ class ExplorerService:
             raise ValueError("Explorer search_breadth must be 'targeted' or 'open'.")
         if settings.target_selection == "specific" and not settings.target_name.strip():
             raise ValueError("Specific Explorer target selection requires a target name.")
+        if settings.split_venv_pipeline:
+            if not str(settings.backtest_python_exe or "").strip():
+                raise ValueError("Split-venv pipeline requires a backtest Python executable.")
+            if not str(settings.pipeline_handoff_dir or "").strip():
+                raise ValueError("Split-venv pipeline requires a handoff directory.")
         if not settings.training_windows:
             raise ValueError("Explorer requires at least one training window.")
         if not settings.validation_windows:

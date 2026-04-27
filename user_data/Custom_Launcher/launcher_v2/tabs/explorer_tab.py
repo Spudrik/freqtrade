@@ -41,6 +41,10 @@ class ExplorerTab(BaseTab):
         self.random_state_var = tk.StringVar(value="")
         self.sampling_seed_var = tk.StringVar(value="")
         self.backtest_workers_var = tk.StringVar(value="12")
+        default_settings = ExplorerRunSettings.from_state({}, context.app_dir)
+        self.split_venv_pipeline_var = tk.BooleanVar(value=False)
+        self.backtest_python_exe_var = tk.StringVar(value=default_settings.backtest_python_exe)
+        self.pipeline_handoff_dir_var = tk.StringVar(value=default_settings.pipeline_handoff_dir)
         self.sieve_strategy_filter_var = tk.StringVar(value="*.py")
         self.sieve_take_profit_var = tk.StringVar(value="2")
         self.sieve_stoploss_var = tk.StringVar(value="2")
@@ -101,6 +105,9 @@ class ExplorerTab(BaseTab):
         self._editable_entry(controls, 2, 4, "Backtest workers", self.backtest_workers_var)
         ttk.Checkbutton(controls, text="Auto epochs (20x params)", variable=self.auto_epochs_var).grid(row=3, column=0, columnspan=2, sticky="w", padx=8, pady=4)
         self.auto_epochs_cap_entry = self._editable_entry(controls, 3, 2, "Auto epoch cap", self.auto_epochs_cap_var)
+        ttk.Checkbutton(controls, text="Split-venv pipeline", variable=self.split_venv_pipeline_var).grid(row=4, column=0, columnspan=2, sticky="w", padx=8, pady=4)
+        self._editable_entry(controls, 4, 2, "Backtest Python", self.backtest_python_exe_var)
+        self._editable_entry(controls, 4, 4, "Handoff dir", self.pipeline_handoff_dir_var)
 
         windows = ttk.Frame(main, style="App.TFrame")
         windows.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 8))
@@ -536,8 +543,11 @@ class ExplorerTab(BaseTab):
             "random_state": self.random_state_var.get(),
             "sampling_seed": self.sampling_seed_var.get(),
             "backtest_workers": self.backtest_workers_var.get(),
+            "split_venv_pipeline": self.split_venv_pipeline_var.get(),
+            "backtest_python_exe": self.backtest_python_exe_var.get(),
+            "pipeline_handoff_dir": self.pipeline_handoff_dir_var.get(),
         }
-        return ExplorerRunSettings.from_state(state)
+        return ExplorerRunSettings.from_state(state, self.context.app_dir)
 
     def _sieve_settings(self) -> EntrySieveSettings:
         return EntrySieveSettings(
@@ -661,6 +671,9 @@ class ExplorerTab(BaseTab):
             "random_state": self.random_state_var.get(),
             "sampling_seed": self.sampling_seed_var.get(),
             "backtest_workers": self.backtest_workers_var.get(),
+            "split_venv_pipeline": self.split_venv_pipeline_var.get(),
+            "backtest_python_exe": self.backtest_python_exe_var.get(),
+            "pipeline_handoff_dir": self.pipeline_handoff_dir_var.get(),
             "sieve_strategy_filter": self.sieve_strategy_filter_var.get(),
             "sieve_take_profit_pct": self.sieve_take_profit_var.get(),
             "sieve_stoploss_pct": self.sieve_stoploss_var.get(),
@@ -668,7 +681,7 @@ class ExplorerTab(BaseTab):
         }
 
     def set_state(self, state: dict[str, Any]) -> None:
-        settings = ExplorerRunSettings.from_state(state)
+        settings = ExplorerRunSettings.from_state(state, self.context.app_dir)
         self.preset_name_var.set(settings.preset_name)
         self.target_type_var.set(settings.target_type)
         self.target_selection_var.set(settings.target_selection)
@@ -681,6 +694,9 @@ class ExplorerTab(BaseTab):
         self.random_state_var.set(settings.random_state)
         self.sampling_seed_var.set(settings.sampling_seed)
         self.backtest_workers_var.set(settings.backtest_workers)
+        self.split_venv_pipeline_var.set(bool(settings.split_venv_pipeline))
+        self.backtest_python_exe_var.set(settings.backtest_python_exe)
+        self.pipeline_handoff_dir_var.set(settings.pipeline_handoff_dir)
         self.sieve_strategy_filter_var.set(str(state.get("sieve_strategy_filter") or "*.py"))
         self.sieve_take_profit_var.set(str(state.get("sieve_take_profit_pct") or "2"))
         self.sieve_stoploss_var.set(str(state.get("sieve_stoploss_pct") or "2"))
