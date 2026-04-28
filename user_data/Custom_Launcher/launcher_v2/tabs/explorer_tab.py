@@ -279,13 +279,19 @@ class ExplorerTab(BaseTab):
         for column in columns:
             self.sieve_results_tree.heading(column, text=headings[column], command=lambda col=column: self._sort_sieve_results(col))
             width = 95
+            minwidth = 80
+            stretch = False
             if column == "strategy":
-                width = 220
+                width = 360
+                minwidth = 320
             elif column in {"backtest_file", "params_file"}:
                 width = 360
+                minwidth = 220
+                stretch = True
             elif column in {"training_window", "validation_window"}:
                 width = 160
-            self.sieve_results_tree.column(column, width=width, stretch=column in {"strategy", "backtest_file", "params_file"})
+                minwidth = 130
+            self.sieve_results_tree.column(column, width=width, minwidth=minwidth, stretch=stretch)
         self.sieve_results_tree.grid(row=0, column=0, sticky="nsew", padx=(8, 0), pady=(8, 0))
         scroll_y = ttk.Scrollbar(results, orient="vertical", command=self.sieve_results_tree.yview)
         scroll_y.grid(row=0, column=1, sticky="ns", pady=(8, 0), padx=(4, 8))
