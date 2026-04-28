@@ -150,20 +150,24 @@ def _result_row(
 
 
 def _append_result(runtime_dir: Path, row: dict[str, Any]) -> None:
-    results_file = runtime_dir / "results.json"
+    job_id = str(row.get("job_id") or "unknown")
+    results_file = runtime_dir / "results" / f"{_safe_name(job_id)}.json"
     payload = load_json(results_file, {"rows": []})
     rows = payload.get("rows") if isinstance(payload, dict) else []
     if not isinstance(rows, list):
         rows = []
     rows.append(row)
+    updated_at = datetime.now().astimezone().isoformat()
     save_json(
         results_file,
         {
             "schema_version": 2,
-            "updated_at": datetime.now().astimezone().isoformat(),
+            "job_id": job_id,
+            "updated_at": updated_at,
             "rows": rows,
         },
     )
+    save_json(runtime_dir / "latest.json", {"job_id": job_id, "path": str(results_file), "updated_at": updated_at})
 
 
 def _run_strategy_window(
@@ -319,7 +323,7 @@ def main(argv: list[str] | None = None) -> int:
                     )
     state["updated_at"] = datetime.now().astimezone().isoformat()
     explorer_save_json(state_file, state)
-    print(f"\nEntry Sieve results: {runtime_dir / 'results.json'}")
+    print(f"\nEntry Sieve results: {runtime_dir / 'results' / f'{_safe_name(job_id)}.json'}")
     return 0
 
 

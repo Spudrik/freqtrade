@@ -48,6 +48,18 @@ class EntrySieveService:
         self.python_exe = python_exe or sys.executable
         self.runtime_dir = self.app_dir / "launcher_v2" / "runtime" / "entry_sieve"
 
+    @property
+    def jobs_dir(self) -> Path:
+        return self.runtime_dir / "jobs"
+
+    @property
+    def results_dir(self) -> Path:
+        return self.runtime_dir / "results"
+
+    @property
+    def archive_dir(self) -> Path:
+        return self.runtime_dir / "archive"
+
     def resolve_path(self, value: str) -> Path:
         path = Path(str(value)).expanduser()
         return path if path.is_absolute() else (self.app_dir / path)
@@ -74,9 +86,11 @@ class EntrySieveService:
         strategies = self.discover_strategies(settings.strategy_filter)
         if not strategies:
             raise ValueError("Entry Sieve found no top-level strategy files for the current filter.")
-        self.runtime_dir.mkdir(parents=True, exist_ok=True)
+        self.jobs_dir.mkdir(parents=True, exist_ok=True)
+        self.results_dir.mkdir(parents=True, exist_ok=True)
+        self._archive_legacy_results()
         job_id = datetime.now().strftime("entry_sieve_%Y%m%dT%H%M%S")
-        job_path = self.runtime_dir / f"{job_id}.json"
+        job_path = self.jobs_dir / f"{job_id}.json"
         job = {
             "schema_version": 1,
             "job_id": job_id,
@@ -106,13 +120,80 @@ class EntrySieveService:
         job_path = self.build_job(settings)
         return [self.python_exe, "-u", "-m", "launcher_v2.services.entry_sieve_runner", "--job-file", str(job_path)]
 
-    def load_results(self) -> list[dict[str, Any]]:
-        path = self.runtime_dir / "results.json"
+    def load_result_batches(self) -> list[dict[str, Any]]:
+        batches: list[dict[str, Any]] = []
+        latest_id = self._latest_result_batch_id()
+        for path in sorted(self.results_dir.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True):
+            batch_id = path.stem
+            batches.append(self._batch_summary(batch_id, path, latest_id == batch_id))
+        for path in sorted(self.archive_dir.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True):
+            batch_id = f"archive/{path.stem}"
+            batches.append(self._batch_summary(batch_id, path, latest_id == batch_id))
+        legacy = self.runtime_dir / "results.json"
+        if legacy.exists():
+            batches.append(self._batch_summary("legacy/results", legacy, False))
+        return batches
+
+    def load_results(self, batch_id: str = "") -> list[dict[str, Any]]:
+        path = self._resolve_result_batch(batch_id)
         if not path.exists():
             return []
         data = json.loads(path.read_text(encoding="utf-8"))
         rows = data.get("rows") if isinstance(data, dict) else []
         return rows if isinstance(rows, list) else []
+
+    def _archive_legacy_results(self) -> None:
+        legacy = self.runtime_dir / "results.json"
+        if not legacy.exists():
+            return
+        self.archive_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%dT%H%M%S")
+        target = self.archive_dir / f"legacy_results_{timestamp}.json"
+        legacy.replace(target)
+
+    def _latest_result_batch_id(self) -> str:
+        latest = self.runtime_dir / "latest.json"
+        if not latest.exists():
+            return ""
+        try:
+            data = json.loads(latest.read_text(encoding="utf-8"))
+        except Exception:
+            return ""
+        return str(data.get("job_id") or "")
+
+    def _resolve_result_batch(self, batch_id: str) -> Path:
+        clean_id = str(batch_id or "").strip()
+        if clean_id.startswith("archive/"):
+            return self.archive_dir / f"{Path(clean_id).name}.json"
+        if clean_id.startswith("legacy/"):
+            return self.runtime_dir / "results.json"
+        if not clean_id:
+            latest_id = self._latest_result_batch_id()
+            if latest_id:
+                return self.results_dir / f"{latest_id}.json"
+            batches = self.load_result_batches()
+            if batches:
+                return Path(str(batches[0].get("path") or ""))
+            return self.results_dir / "missing.json"
+        return self.results_dir / f"{Path(clean_id).name}.json"
+
+    def _batch_summary(self, batch_id: str, path: Path, is_latest: bool) -> dict[str, Any]:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            data = {}
+        rows = data.get("rows") if isinstance(data, dict) else []
+        row_count = len(rows) if isinstance(rows, list) else 0
+        updated_at = str(data.get("updated_at") or data.get("finished_at") or "")
+        latest_marker = " latest" if is_latest else ""
+        return {
+            "id": batch_id,
+            "label": f"{batch_id} ({row_count} rows{latest_marker})",
+            "path": str(path),
+            "row_count": row_count,
+            "updated_at": updated_at,
+            "latest": is_latest,
+        }
 
     def _validate(self, settings: EntrySieveSettings) -> None:
         if not settings.training_windows:

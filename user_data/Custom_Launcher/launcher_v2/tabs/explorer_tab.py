@@ -47,6 +47,7 @@ class ExplorerTab(BaseTab):
         self.sieve_strategy_filter_var = tk.StringVar(value="*.py")
         self.sieve_take_profit_var = tk.StringVar(value="2")
         self.sieve_stoploss_var = tk.StringVar(value="2")
+        self.sieve_result_batch_var = tk.StringVar(value="")
         self.sieve_filter_var = tk.StringVar(value="")
         self._sieve_sort_column = "profit_total_abs"
         self._sieve_sort_reverse = True
@@ -57,6 +58,7 @@ class ExplorerTab(BaseTab):
         self.coverage_tree: ttk.Treeview | None = None
         self.target_params_tree: ttk.Treeview | None = None
         self.open_support_params_tree: ttk.Treeview | None = None
+        self.sieve_result_batch_combo: ttk.Combobox | None = None
         self.sieve_results_tree: ttk.Treeview | None = None
         self.target_params_label_var = tk.StringVar(value="Select a target to view child params")
         self.open_support_label_var = tk.StringVar(value="Open support params appear when Search breadth = open")
@@ -228,9 +230,12 @@ class ExplorerTab(BaseTab):
         self._editable_entry(controls, 0, 0, "Strategy filter", self.sieve_strategy_filter_var)
         self._editable_entry(controls, 0, 2, "Take profit %", self.sieve_take_profit_var)
         self._editable_entry(controls, 0, 4, "Stoploss %", self.sieve_stoploss_var)
-        self._editable_entry(controls, 1, 0, "Result filter", self.sieve_filter_var)
-        ttk.Button(controls, text="Run Entry Sieve", command=self._run_entry_sieve).grid(row=1, column=2, sticky="w", padx=8, pady=4)
-        ttk.Button(controls, text="Refresh results", command=self._refresh_sieve_results).grid(row=1, column=3, sticky="w", padx=8, pady=4)
+        ttk.Label(controls, text="Result batch").grid(row=1, column=0, sticky="w", padx=8, pady=4)
+        self.sieve_result_batch_combo = ttk.Combobox(controls, textvariable=self.sieve_result_batch_var, state="readonly")
+        self.sieve_result_batch_combo.grid(row=1, column=1, sticky="ew", padx=8, pady=4)
+        self._editable_entry(controls, 1, 2, "Result filter", self.sieve_filter_var)
+        ttk.Button(controls, text="Run Entry Sieve", command=self._run_entry_sieve).grid(row=2, column=0, sticky="w", padx=8, pady=4)
+        ttk.Button(controls, text="Refresh results", command=self._refresh_sieve_results).grid(row=2, column=1, sticky="w", padx=8, pady=4)
 
         results = ttk.LabelFrame(sieve_tab, text="Runtime results")
         results.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 8))
@@ -310,6 +315,8 @@ class ExplorerTab(BaseTab):
         self.search_breadth_var.trace_add("write", lambda *_: self._show_target_params(self._active_target_label))
         self.auto_epochs_var.trace_add("write", lambda *_: self._update_epochs_mode_state())
         self.sieve_filter_var.trace_add("write", lambda *_: self._refresh_sieve_results())
+        if self.sieve_result_batch_combo is not None:
+            self.sieve_result_batch_combo.bind("<<ComboboxSelected>>", lambda event: self._refresh_sieve_results(), add="+")
         if self.catalog_tree is not None:
             self.catalog_tree.bind("<<TreeviewSelect>>", self._catalog_selected, add="+")
         if self.coverage_tree is not None:
@@ -590,7 +597,16 @@ class ExplorerTab(BaseTab):
         if self.sieve_results_tree is None:
             return
         try:
-            rows = self.sieve_service.load_results()
+            batches = self.sieve_service.load_result_batches()
+            batch_ids = [str(batch.get("id") or "") for batch in batches]
+            if self.sieve_result_batch_combo is not None:
+                self.sieve_result_batch_combo.configure(values=batch_ids)
+            selected_batch = self.sieve_result_batch_var.get().strip()
+            if batch_ids and selected_batch not in batch_ids:
+                latest = next((str(batch.get("id") or "") for batch in batches if batch.get("latest")), "")
+                selected_batch = latest or batch_ids[0]
+                self.sieve_result_batch_var.set(selected_batch)
+            rows = self.sieve_service.load_results(selected_batch)
         except Exception as exc:
             self.context.shared.status.set(f"Entry Sieve results load failed: {exc}")
             rows = []
@@ -675,6 +691,7 @@ class ExplorerTab(BaseTab):
             "sieve_strategy_filter": self.sieve_strategy_filter_var.get(),
             "sieve_take_profit_pct": self.sieve_take_profit_var.get(),
             "sieve_stoploss_pct": self.sieve_stoploss_var.get(),
+            "sieve_result_batch": self.sieve_result_batch_var.get(),
             "sieve_result_filter": self.sieve_filter_var.get(),
         }
 
@@ -697,6 +714,7 @@ class ExplorerTab(BaseTab):
         self.sieve_strategy_filter_var.set(str(state.get("sieve_strategy_filter") or "*.py"))
         self.sieve_take_profit_var.set(str(state.get("sieve_take_profit_pct") or "2"))
         self.sieve_stoploss_var.set(str(state.get("sieve_stoploss_pct") or "2"))
+        self.sieve_result_batch_var.set(str(state.get("sieve_result_batch") or ""))
         self.sieve_filter_var.set(str(state.get("sieve_result_filter") or ""))
         self._update_epochs_mode_state()
         self.refresh()
