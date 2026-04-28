@@ -217,7 +217,6 @@ class PivotTrendlineMTFResearchStrategy(IStrategy):
         dataframe["enter_tag"] = ""
 
         entry_params = self._active_entry_params()
-        mode = str(entry_params["mode"])
         s1d = int(entry_params["daily_pivot_strength"])
         s1h = int(entry_params["hourly_pivot_strength"])
         h = int(entry_params["projection_horizon"])
@@ -300,25 +299,8 @@ class PivotTrendlineMTFResearchStrategy(IStrategy):
         long_trend_pullback = long_evidence_ok & h1_bull_pullback
         short_trend_pullback = short_evidence_ok & h1_bear_pullback
 
-        false = pd.Series(False, index=dataframe.index, dtype="bool")
-        long_condition = false.copy()
-        short_condition = false.copy()
-        use_support_reclaim = mode in {"support_reclaim", "all"}
-        use_resistance_reject = mode in {"resistance_reject", "all"}
-        use_resistance_breakout = mode in {"resistance_breakout", "all"}
-        use_support_breakdown = mode in {"support_breakdown", "all"}
-        use_trend_pullback = mode in {"trend_pullback", "all"}
-        if use_support_reclaim:
-            long_condition |= long_support_reclaim
-        if use_resistance_reject:
-            short_condition |= short_resistance_reject
-        if use_resistance_breakout:
-            long_condition |= long_resistance_breakout
-        if use_support_breakdown:
-            short_condition |= short_support_breakdown
-        if use_trend_pullback:
-            long_condition |= long_trend_pullback
-            short_condition |= short_trend_pullback
+        long_condition = long_support_reclaim | long_resistance_breakout | long_trend_pullback
+        short_condition = short_resistance_reject | short_support_breakdown | short_trend_pullback
         short_condition &= ~long_condition
 
         self._write_debug_columns(
@@ -352,18 +334,12 @@ class PivotTrendlineMTFResearchStrategy(IStrategy):
             tagged = mask.fillna(False) & dataframe["enter_tag"].eq("")
             dataframe.loc[tagged, "enter_tag"] = tag
 
-        if use_support_reclaim:
-            set_entry_tag(long_support_reclaim & long_condition, "long_support_reclaim")
-        if use_resistance_breakout:
-            set_entry_tag(long_resistance_breakout & long_condition, "long_resistance_breakout")
-        if use_trend_pullback:
-            set_entry_tag(long_trend_pullback & long_condition, "long_trend_pullback")
-        if use_resistance_reject:
-            set_entry_tag(short_resistance_reject & short_condition, "short_resistance_reject")
-        if use_support_breakdown:
-            set_entry_tag(short_support_breakdown & short_condition, "short_support_breakdown")
-        if use_trend_pullback:
-            set_entry_tag(short_trend_pullback & short_condition, "short_trend_pullback")
+        set_entry_tag(long_support_reclaim & long_condition, "long_support_reclaim")
+        set_entry_tag(long_resistance_breakout & long_condition, "long_resistance_breakout")
+        set_entry_tag(long_trend_pullback & long_condition, "long_trend_pullback")
+        set_entry_tag(short_resistance_reject & short_condition, "short_resistance_reject")
+        set_entry_tag(short_support_breakdown & short_condition, "short_support_breakdown")
+        set_entry_tag(short_trend_pullback & short_condition, "short_trend_pullback")
         return dataframe
 
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
@@ -482,10 +458,9 @@ class PivotTrendlineMTFResearchStrategy(IStrategy):
         )
 
     def _active_entry_params(self) -> dict[str, Any]:
-        mode = str(self.entry_mode.value)
-        params: dict[str, Any] = {"mode": mode}
+        params: dict[str, Any] = {"mode": "all"}
         for name in self.ENTRY_PARAM_SPECS:
-            params[name] = getattr(self, f"{mode}_{name}").value
+            params[name] = getattr(self, f"all_{name}").value
         return params
 
     def _daily_levels(self, dataframe: DataFrame, strength: int, horizon: int, entry_params: dict[str, Any]) -> tuple[Series, Series]:

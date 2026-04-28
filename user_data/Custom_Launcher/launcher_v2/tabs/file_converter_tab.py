@@ -4,9 +4,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 import tkinter as tk
-from tkinter import filedialog, messagebox, scrolledtext, ttk
+from tkinter import filedialog, messagebox, ttk
 
 from ..base_tab import BaseTab
+from ..console_pane import ConsolePane
 
 
 SUPPORTED_INPUT_EXTENSIONS = {".py", ".json"}
@@ -101,7 +102,7 @@ class FileConverterTab(BaseTab):
         side.grid_columnconfigure(0, weight=1)
         body.add(side, weight=2)
         ttk.Label(side, text="Log").grid(row=0, column=0, sticky="w")
-        self.log = scrolledtext.ScrolledText(side, wrap="word", height=18)
+        self.log = ConsolePane(side)
         self.log.grid(row=1, column=0, sticky="nsew", pady=(6, 0))
 
         ttk.Label(self, textvariable=self.status_var).grid(row=3, column=0, sticky="ew", padx=8, pady=(0, 8))
@@ -244,8 +245,7 @@ class FileConverterTab(BaseTab):
         return f"{size} B"
 
     def _log(self, message: str) -> None:
-        self.log.insert(tk.END, message + "\n")
-        self.log.see(tk.END)
+        self.log.append(message + "\n")
 
     def get_state(self) -> dict[str, Any]:
         return {

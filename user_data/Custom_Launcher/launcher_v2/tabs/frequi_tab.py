@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 import tkinter as tk
-from tkinter import scrolledtext, ttk
+from tkinter import ttk
 import webbrowser
 
 from ..base_tab import BaseTab
 from ..command_builder import command_text, freqtrade_command
-from ..ui_helpers import append_bounded_text
+from ..console_pane import ConsolePane
 
 
 class FreqUITab(BaseTab):
@@ -32,9 +32,8 @@ class FreqUITab(BaseTab):
         console_frame.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 8))
         console_frame.grid_columnconfigure(0, weight=1)
         console_frame.grid_rowconfigure(0, weight=1)
-        self.console = scrolledtext.ScrolledText(console_frame, wrap="word")
+        self.console = ConsolePane(console_frame)
         self.console.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
-        self.console.configure(background="#101827", foreground="#d8e2f0", insertbackground="#d8e2f0", relief="flat")
 
     def _setup_state(self) -> dict[str, Any]:
         common = self.context.registry.get("common")
@@ -70,4 +69,4 @@ class FreqUITab(BaseTab):
 
     def on_app_event(self, event: str, payload: dict[str, Any]) -> None:
         if event == "process_output":
-            append_bounded_text(self.console, str(payload.get("text") or ""))
+            self.console.append(str(payload.get("text") or ""))

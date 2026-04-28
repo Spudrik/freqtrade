@@ -4,12 +4,13 @@ import json
 from pathlib import Path
 from typing import Any
 import tkinter as tk
-from tkinter import filedialog, messagebox, scrolledtext, ttk
+from tkinter import filedialog, messagebox, ttk
 
 from ..base_tab import BaseTab
 from ..command_builder import command_text
+from ..console_pane import ConsolePane
 from ..services.collector_service import open_path
-from ..ui_helpers import append_bounded_text, labeled_entry
+from ..ui_helpers import labeled_entry
 
 
 class IndicatorExternalValidatorTab(BaseTab):
@@ -121,9 +122,8 @@ class IndicatorExternalValidatorTab(BaseTab):
         console.grid(row=5, column=0, sticky="nsew", padx=8, pady=(0, 8))
         console.grid_columnconfigure(0, weight=1)
         console.grid_rowconfigure(0, weight=1)
-        self.console = scrolledtext.ScrolledText(console, wrap="word")
+        self.console = ConsolePane(console)
         self.console.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
-        self.console.configure(background="#101827", foreground="#d8e2f0", insertbackground="#d8e2f0", relief="flat")
 
     def _path_row(self, parent: tk.Misc, row: int, label: str, variable: tk.StringVar, *, directory: bool) -> None:
         labeled_entry(parent, row, 0, label, variable)
@@ -335,7 +335,7 @@ class IndicatorExternalValidatorTab(BaseTab):
         if event != "process_output":
             return
         text = str(payload.get("text") or "")
-        append_bounded_text(self.console, text)
+        self.console.append(text)
         if "Process exited with code" in text:
             self.refresh_summary()
 

@@ -448,6 +448,29 @@ class ExplorerSummaryTab(BaseTab):
             return f"{value:.6f}"
         return value
 
+    def _is_no_change_duplicate(self, data: dict[str, Any]) -> bool:
+        try:
+            changed_count = int(data.get("params_changed_count") or 0)
+        except Exception:
+            changed_count = 0
+        if changed_count != 0:
+            return False
+        champion = data.get("champion") if isinstance(data.get("champion"), dict) else {}
+        challenger = data.get("challenger") if isinstance(data.get("challenger"), dict) else {}
+        if not champion or not challenger:
+            return False
+        fields = (
+            "objective_total",
+            "max_drawdown_pct",
+            "drawdown_penalty_total",
+            "final_score",
+            "profit_total",
+            "trade_count",
+            "losing_window_count",
+            "winrate",
+        )
+        return all(champion.get(field) == challenger.get(field) for field in fields)
+
     def _apply_summary(self, data: dict[str, Any], evolution: list[dict[str, Any]]) -> None:
         if not data:
             self.loop_var.set("-")
@@ -475,10 +498,12 @@ class ExplorerSummaryTab(BaseTab):
         self.decision_var.set(str(data.get("decision_code") or "-"))
         self.changed_var.set(str(data.get("params_changed_count") if data.get("params_changed_count") is not None else "-"))
 
+        no_change_duplicate = self._is_no_change_duplicate(data)
         score_rows = []
-        for row in data.get("score_table") or []:
-            if isinstance(row, dict):
-                score_rows.append((row.get("metric", ""), self._display(row.get("champion")), self._display(row.get("challenger")), self._display(row.get("delta")), row.get("role", "")))
+        if not no_change_duplicate:
+            for row in data.get("score_table") or []:
+                if isinstance(row, dict):
+                    score_rows.append((row.get("metric", ""), self._display(row.get("champion")), self._display(row.get("challenger")), self._display(row.get("delta")), row.get("role", "")))
         if not score_rows:
             champion = data.get("champion") or {}
             challenger = data.get("challenger") or {}
@@ -493,9 +518,16 @@ class ExplorerSummaryTab(BaseTab):
                 ("Losing windows", champion.get("losing_window_count", ""), challenger.get("losing_window_count", ""), delta.get("losing_window_count", ""), "Info"),
                 ("Winrate", self._display(champion.get("winrate", "")), self._display(challenger.get("winrate", "")), self._display(delta.get("winrate", "")), "Info"),
             ]
+        if no_change_duplicate:
+            score_rows = [
+                (row[0], row[1], "No parameter changes" if idx == 0 else "", "", row[4])
+                for idx, row in enumerate(score_rows)
+            ]
         error_text = str(data.get("error") or "").strip()
+        if no_change_duplicate and not error_text:
+            error_text = "Hyperopt returned no parameter changes; challenger was not a distinct candidate."
         if error_text:
-            score_rows.append(("Failure reason", error_text, "", "", str(data.get("decision_code") or "")))
+            score_rows.append(("Review note", error_text, "", "", str(data.get("decision_code") or "")))
         set_tree_rows(self.score_tree, score_rows)
 
         validation_rows: list[tuple[Any, ...]] = []
@@ -516,18 +548,21 @@ class ExplorerSummaryTab(BaseTab):
                     "",
                 )
             )
-            validation_rows.append(
-                (
-                    window,
-                    regime,
-                    "Challenger",
-                    self._display(item.get("challenger_objective", "")),
-                    self._display(item.get("challenger_max_drawdown_pct", "")),
-                    self._display(item.get("challenger_score", "")),
-                    self._display(item.get("delta_score", "")),
-                    item.get("guard", ""),
+            if no_change_duplicate:
+                validation_rows.append((window, regime, "Challenger", "No parameter changes", "", "", "", ""))
+            else:
+                validation_rows.append(
+                    (
+                        window,
+                        regime,
+                        "Challenger",
+                        self._display(item.get("challenger_objective", "")),
+                        self._display(item.get("challenger_max_drawdown_pct", "")),
+                        self._display(item.get("challenger_score", "")),
+                        self._display(item.get("delta_score", "")),
+                        item.get("guard", ""),
+                    )
                 )
-            )
         if not validation_rows and error_text:
             validation_rows.append(("Explorer", "", "Error", error_text, "", "", "", str(data.get("decision_code") or "")))
         set_tree_rows(self.validation_tree, validation_rows)

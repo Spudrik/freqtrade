@@ -526,6 +526,56 @@ def complete_pending(
     return current_snapshot
 
 
+def reject_no_change_handoff(
+    *,
+    args: argparse.Namespace,
+    run_id: str,
+    metadata_file: Path,
+    audit_file: Path,
+    audit: dict[str, Any],
+    strategy_file: Path,
+    strategy_class: str,
+    catalog: dict[str, Any],
+    state: dict[str, Any],
+    handoff: HyperoptHandoff,
+) -> None:
+    comparison = rejected_comparison("REJECTED_SCORE_NOT_IMPROVED")
+    update_usage_counts(state, args.target_type, handoff.target_name, args.search_breadth, False, None)
+    save_json(Path(args.state_file), state)
+    summary = summarize_and_write(
+        args=args,
+        run_id=run_id,
+        metadata_file=metadata_file,
+        audit_file=audit_file,
+        audit=audit,
+        strategy_file=strategy_file,
+        strategy_class=strategy_class,
+        catalog=catalog,
+        state=state,
+        handoff=handoff,
+        comparison=comparison,
+        validation=None,
+        error="Hyperopt returned no parameter changes; challenger was not validated.",
+    )
+    emit_status(
+        "loop_decision",
+        {
+            "run_id": run_id,
+            "loop_index": handoff.loop_index,
+            "decision_code": summary["decision_code"],
+            "guard": summary["guard"],
+            "accepted": False,
+            "target_label": handoff.target["target_label"],
+            "search_breadth": args.search_breadth,
+            "params_changed_count": 0,
+            "final_score_delta": None,
+        },
+    )
+    print_score_table(summary)
+    print_validation_table(summary)
+    print("Hyperopt returned no parameter changes; loop rejected before challenger validation.")
+
+
 def _loop_epochs(args: argparse.Namespace, preset: dict[str, Any], target: dict[str, Any], manual_epochs_text: str, auto_epochs_cap: int) -> str:
     if args.auto_epochs:
         value = max(1, int(len(target.get("resolved_params") or [])) * 20)
@@ -705,6 +755,37 @@ def main(argv: list[str] | None = None) -> int:
                 print("No tunable params were returned for the target; loop rejected.")
                 next_loop_index += 1
                 continue
+            if not any(bool(item.get("changed")) for item in handoff.changes):
+                if pending is not None:
+                    current_snapshot = complete_pending(
+                        pending=pending,
+                        args=args,
+                        run_id=run_id,
+                        metadata_file=metadata_file,
+                        audit_file=audit_file,
+                        audit=audit,
+                        strategy_file=strategy_file,
+                        strategy_class=strategy_class,
+                        strategy_param_file=strategy_param_file,
+                        catalog=catalog,
+                        state=state,
+                        current_snapshot=current_snapshot,
+                    )
+                    pending = None
+                reject_no_change_handoff(
+                    args=args,
+                    run_id=run_id,
+                    metadata_file=metadata_file,
+                    audit_file=audit_file,
+                    audit=audit,
+                    strategy_file=strategy_file,
+                    strategy_class=strategy_class,
+                    catalog=catalog,
+                    state=state,
+                    handoff=handoff,
+                )
+                next_loop_index += 1
+                continue
 
             if pending is not None:
                 current_snapshot = complete_pending(
@@ -753,6 +834,22 @@ def main(argv: list[str] | None = None) -> int:
                     if handoff is None:
                         update_usage_counts(state, args.target_type, target_name, args.search_breadth, False, None)
                         save_json(state_file, state)
+                        next_loop_index += 1
+                        pending = None
+                        continue
+                    if not any(bool(item.get("changed")) for item in handoff.changes):
+                        reject_no_change_handoff(
+                            args=args,
+                            run_id=run_id,
+                            metadata_file=metadata_file,
+                            audit_file=audit_file,
+                            audit=audit,
+                            strategy_file=strategy_file,
+                            strategy_class=strategy_class,
+                            catalog=catalog,
+                            state=state,
+                            handoff=handoff,
+                        )
                         next_loop_index += 1
                         pending = None
                         continue

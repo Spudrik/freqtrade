@@ -4,11 +4,12 @@ from pathlib import Path
 from typing import Any
 from zipfile import BadZipFile, ZipFile
 import tkinter as tk
-from tkinter import filedialog, scrolledtext, ttk
+from tkinter import filedialog, ttk
 
 from ..base_tab import BaseTab
 from ..command_builder import command_text, freqtrade_command
-from ..ui_helpers import append_bounded_text, labeled_entry
+from ..console_pane import ConsolePane
+from ..ui_helpers import labeled_entry
 
 
 BREAKDOWN_VALUES = ["none", "day", "week", "month", "year"]
@@ -110,7 +111,7 @@ class ReviewTab(BaseTab):
         console.grid(row=2, column=0, sticky="nsew", padx=8, pady=(0, 8))
         console.grid_columnconfigure(0, weight=1)
         console.grid_rowconfigure(0, weight=1)
-        self.console = scrolledtext.ScrolledText(console, wrap="word")
+        self.console = ConsolePane(console)
         self.console.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
 
     def _path_row(self, parent: tk.Misc, row: int, label: str, variable: tk.StringVar, filetypes: list[tuple[str, str]], *, save: bool = False) -> None:
@@ -156,8 +157,7 @@ class ReviewTab(BaseTab):
     def _run_review_command(self, args: list[str], title: str) -> None:
         result = freqtrade_command(self.context.shared.python_exe.get(), args)
         self.preview_var.set(command_text(result.preview_command))
-        self.console.insert(tk.END, "\n" + "=" * 90 + "\n" + title + "\n" + self.preview_var.get() + "\n")
-        self.console.see(tk.END)
+        self.console.append("\n" + "=" * 90 + "\n" + title + "\n" + self.preview_var.get() + "\n")
         self.context.emit("save_state", {"reason": "review_run"})
         self.context.process_runner.run(result.preview_command, cwd=self.context.shared.project_root.get() or None, owner=self.tab_key)
 
@@ -238,7 +238,7 @@ class ReviewTab(BaseTab):
         filename = self._backtest_filename()
         if filename:
             if self._backtest_has_signals(filename) is False:
-                self.console.insert(tk.END, "\nSelected backtest zip has no signal data. Re-run backtest with signal export before analysis.\n")
+                self.console.append("\nSelected backtest zip has no signal data. Re-run backtest with signal export before analysis.\n")
                 return
             args.extend(["--backtest-filename", filename])
         for key, switch in (
@@ -264,7 +264,7 @@ class ReviewTab(BaseTab):
 
     def on_app_event(self, event: str, payload: dict[str, Any]) -> None:
         if event == "process_output":
-            append_bounded_text(self.console, str(payload.get("text") or ""))
+            self.console.append(str(payload.get("text") or ""))
 
     def get_state(self) -> dict[str, Any]:
         return {

@@ -489,6 +489,62 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             candidate_snapshot = merge_params_into_snapshot(champion_snapshot, candidate_params)
             changes = describe_param_changes(candidate_params, current_strategy_values(strategy_param_file))
+            if not any(bool(item.get("changed")) for item in changes):
+                update_usage_counts(state, args.target_type, target_name, args.search_breadth, False, None)
+                save_json(state_file, state)
+                comparison = rejected_comparison("REJECTED_SCORE_NOT_IMPROVED")
+                summary = latest_summary(
+                    run_id=run_id,
+                    loop_index=loop_index,
+                    loop_total=args.max_loops,
+                    strategy_file=strategy_file,
+                    strategy_class=strategy_class,
+                    target=target,
+                    target_selection=args.target_selection,
+                    training_windows=[compact_window(training_window)],
+                    validation_windows=[compact_window(window) for window in validation_windows],
+                    comparison=comparison,
+                    params_changed_count=0,
+                    catalog=catalog,
+                    state=state,
+                )
+                summary["error"] = "Hyperopt returned no parameter changes; challenger was not validated."
+                write_latest_summary(metadata_file, summary)
+                audit["loops"].append(
+                    {
+                        "loop_index": loop_index,
+                        "target": target,
+                        "training_window": compact_window(training_window),
+                        "validation_windows": [compact_window(window) for window in validation_windows],
+                        "hyperopt_file": str(hyperopt_file),
+                        "hyperopt_requested_epochs": int(loop_epochs_text),
+                        "hyperopt_epoch_count": epoch_count,
+                        "changes": changes,
+                        "comparison": comparison,
+                        "summary": summary,
+                        "decision_code": "REJECTED_SCORE_NOT_IMPROVED",
+                        "error": summary["error"],
+                    }
+                )
+                write_audit(audit_file, audit)
+                emit_status(
+                    "loop_decision",
+                    {
+                        "run_id": run_id,
+                        "loop_index": loop_index,
+                        "decision_code": summary["decision_code"],
+                        "guard": summary["guard"],
+                        "accepted": False,
+                        "target_label": target["target_label"],
+                        "search_breadth": args.search_breadth,
+                        "params_changed_count": 0,
+                        "final_score_delta": None,
+                    },
+                )
+                print_score_table(summary)
+                print_validation_table(summary)
+                print("Hyperopt returned no parameter changes; loop rejected before challenger validation.")
+                continue
 
             champion_scored, champion_records = backtest_snapshot(
                 python_exe=python_exe,
