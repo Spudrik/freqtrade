@@ -6,6 +6,7 @@ from tkinter import ttk
 
 
 MAX_CONSOLE_LINES = 5000
+MAX_SEARCH_TERMS = 20
 
 
 class ConsolePane(ttk.Frame):
@@ -28,6 +29,7 @@ class ConsolePane(ttk.Frame):
         self.search_combo = ttk.Combobox(tools, textvariable=self.search_term_var, values=self.search_terms, width=34)
         self.search_combo.pack(side="left", padx=(6, 6))
         self.search_combo.bind("<Return>", lambda _event: self.find_next(reset=True))
+        self.search_combo.bind("<<ComboboxSelected>>", lambda _event: self.find_next(reset=True))
         ttk.Button(tools, text="Find", command=lambda: self.find_next(reset=True)).pack(side="left", padx=(0, 6))
         ttk.Button(tools, text="Next", command=self.find_next).pack(side="left", padx=(0, 6))
         ttk.Button(tools, text="Back", command=self.find_previous).pack(side="left", padx=(0, 6))
@@ -98,7 +100,7 @@ class ConsolePane(ttk.Frame):
         lowered = normalized.lower()
         self.search_terms = [item for item in self.search_terms if item.lower() != lowered]
         self.search_terms.insert(0, normalized)
-        self.search_terms = self.search_terms[:5]
+        self.search_terms = self.search_terms[:MAX_SEARCH_TERMS]
         self.search_combo.configure(values=self.search_terms)
 
     def refresh_search_matches(self) -> None:
@@ -165,6 +167,6 @@ class ConsolePane(ttk.Frame):
         self.search_term_var.set(str(state.get("search_term") or ""))
         terms = state.get("search_terms") or []
         if isinstance(terms, list):
-            self.search_terms = [str(item).strip() for item in terms if str(item).strip()][:5]
+            self.search_terms = [str(item).strip() for item in terms if str(item).strip()][:MAX_SEARCH_TERMS]
         self.search_combo.configure(values=self.search_terms)
         self.follow_tail_var.set(bool(state.get("follow_tail", True)))

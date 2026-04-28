@@ -254,6 +254,7 @@ class FileConverterTab(BaseTab):
             "recursive": self.recursive_var.get(),
             "filter": self.filter_var.get(),
             "replace_existing": self.replace_existing_var.get(),
+            "console": self.log.get_state(),
         }
 
     def set_state(self, state: dict[str, Any]) -> None:
@@ -265,3 +266,6 @@ class FileConverterTab(BaseTab):
         self.recursive_var.set(bool(state.get("recursive", True)))
         self.filter_var.set(str(state.get("filter") or "All"))
         self.replace_existing_var.set(bool(state.get("replace_existing", True)))
+        console_state = state.get("console")
+        if isinstance(console_state, dict):
+            self.log.set_state(console_state)

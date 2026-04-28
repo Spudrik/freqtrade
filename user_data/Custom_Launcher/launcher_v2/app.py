@@ -172,9 +172,8 @@ class LauncherV2(tk.Tk):
             "run": {
                 "run_type": preset.get("run_type"),
                 "extra_args": preset.get("run_extra_args"),
-                "search_term": preset.get("run_search_term"),
-                "search_terms": preset.get("run_search_terms"),
-                "follow_tail": preset.get("run_follow_tail"),
+                "raw_console": preset.get("run_raw_console"),
+                "results_console": preset.get("run_results_console"),
             },
             "common": {
                 "project_root": preset.get("project_root"),
@@ -250,6 +249,7 @@ class LauncherV2(tk.Tk):
                 "rejected_signals": preset.get("review_rejected_signals"),
                 "analysis_to_csv": preset.get("review_analysis_to_csv"),
                 "analysis_csv_path": preset.get("review_analysis_csv_path"),
+                "console": preset.get("review_console"),
             },
             "explorer": {
                 "target_type": preset.get("explorer_target_type"),
@@ -312,6 +312,7 @@ class LauncherV2(tk.Tk):
                 "recursive": preset.get("file_converter_recursive"),
                 "filter": preset.get("file_converter_filter"),
                 "replace_existing": preset.get("file_converter_replace_existing"),
+                "console": preset.get("file_converter_console"),
             },
             "indicator_external_validator": {
                 "datadir": preset.get("indicator_validator_datadir"),
@@ -331,6 +332,7 @@ class LauncherV2(tk.Tk):
                 "profile_bins": preset.get("indicator_validator_profile_bins"),
                 "profile_chunk_size": preset.get("indicator_validator_profile_chunk_size"),
                 "quiet": preset.get("indicator_validator_quiet"),
+                "console": preset.get("indicator_validator_console"),
             },
         }
         for tab_key, state in mapping.items():
@@ -359,9 +361,8 @@ class LauncherV2(tk.Tk):
         preset = {
             "run_type": run.get("run_type", "Backtest"),
             "run_extra_args": run.get("extra_args", ""),
-            "run_search_term": run.get("search_term", ""),
-            "run_search_terms": list(run.get("search_terms") or []),
-            "run_follow_tail": bool(run.get("follow_tail", True)),
+            "run_raw_console": dict(run.get("raw_console") or {}),
+            "run_results_console": dict(run.get("results_console") or {}),
             "reason": reason,
             "project_root": common.get("project_root", ""),
             "python_exe": common.get("python_exe", ""),
@@ -428,6 +429,7 @@ class LauncherV2(tk.Tk):
             "review_rejected_signals": bool(review.get("rejected_signals", False)),
             "review_analysis_to_csv": bool(review.get("analysis_to_csv", False)),
             "review_analysis_csv_path": review.get("analysis_csv_path", ""),
+            "review_console": dict(review.get("console") or {}),
             "explorer_target_type": explorer.get("target_type", "family"),
             "explorer_target_selection": explorer.get("target_selection", "random"),
             "explorer_target_name": explorer.get("target_name", ""),
@@ -480,6 +482,7 @@ class LauncherV2(tk.Tk):
             "file_converter_recursive": bool(file_converter.get("recursive", True)),
             "file_converter_filter": file_converter.get("filter", "All"),
             "file_converter_replace_existing": bool(file_converter.get("replace_existing", True)),
+            "file_converter_console": dict(file_converter.get("console") or {}),
             "indicator_validator_datadir": indicator_validator.get("datadir", ""),
             "indicator_validator_pairs": indicator_validator.get("pairs", ""),
             "indicator_validator_timeframes": indicator_validator.get("timeframes", "1h"),
@@ -497,6 +500,7 @@ class LauncherV2(tk.Tk):
             "indicator_validator_profile_bins": indicator_validator.get("profile_bins", "48"),
             "indicator_validator_profile_chunk_size": indicator_validator.get("profile_chunk_size", "512"),
             "indicator_validator_quiet": bool(indicator_validator.get("quiet", False)),
+            "indicator_validator_console": dict(indicator_validator.get("console") or {}),
         }
         presets[AUTO_PRESET_NAME] = preset
         path = self._preset_path()

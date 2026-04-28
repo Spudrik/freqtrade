@@ -378,31 +378,29 @@ class RunTab(BaseTab):
         return {
             "run_type": self.run_type_var.get(),
             "extra_args": self.extra_args_var.get(),
-            "search_term": raw_state.get("search_term", ""),
-            "search_terms": raw_state.get("search_terms", []),
-            "follow_tail": raw_state.get("follow_tail", True),
-            "result_search_term": result_state.get("search_term", ""),
-            "result_search_terms": result_state.get("search_terms", []),
-            "result_follow_tail": result_state.get("follow_tail", True),
+            "raw_console": raw_state,
+            "results_console": result_state,
         }
 
     def set_state(self, state: dict[str, Any]) -> None:
         self.run_type_var.set(str(state.get("run_type") or "Backtest"))
         self.extra_args_var.set(str(state.get("extra_args") or ""))
         if self.raw_console is not None:
-            self.raw_console.set_state(
-                {
+            raw_state = state.get("raw_console")
+            if not isinstance(raw_state, dict):
+                raw_state = {
                     "search_term": state.get("search_term", ""),
                     "search_terms": state.get("search_terms", []),
                     "follow_tail": state.get("follow_tail", True),
                 }
-            )
+            self.raw_console.set_state(raw_state)
         if self.results_console is not None:
-            self.results_console.set_state(
-                {
+            result_state = state.get("results_console")
+            if not isinstance(result_state, dict):
+                result_state = {
                     "search_term": state.get("result_search_term", ""),
                     "search_terms": state.get("result_search_terms", []),
                     "follow_tail": state.get("result_follow_tail", True),
                 }
-            )
+            self.results_console.set_state(result_state)
         self._refresh_preview()

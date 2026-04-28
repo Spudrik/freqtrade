@@ -290,6 +290,7 @@ class ReviewTab(BaseTab):
             "rejected_signals": self.rejected_signals_var.get(),
             "analysis_to_csv": self.analysis_to_csv_var.get(),
             "analysis_csv_path": self.analysis_csv_path_var.get(),
+            "console": self.console.get_state(),
         }
 
     def set_state(self, state: dict[str, Any]) -> None:
@@ -315,3 +316,6 @@ class ReviewTab(BaseTab):
         self.rejected_signals_var.set(bool(state.get("rejected_signals", False)))
         self.analysis_to_csv_var.set(bool(state.get("analysis_to_csv", False)))
         self.analysis_csv_path_var.set(str(state.get("analysis_csv_path") or ""))
+        console_state = state.get("console")
+        if isinstance(console_state, dict):
+            self.console.set_state(console_state)

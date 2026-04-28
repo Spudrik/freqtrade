@@ -340,7 +340,9 @@ class IndicatorExternalValidatorTab(BaseTab):
             self.refresh_summary()
 
     def get_state(self) -> dict[str, Any]:
-        return self._state()
+        state = self._state()
+        state["console"] = self.console.get_state()
+        return state
 
     def set_state(self, state: dict[str, Any]) -> None:
         self.datadir_var.set(str(state.get("datadir") or self.context.shared.datadir.get()))
@@ -360,5 +362,8 @@ class IndicatorExternalValidatorTab(BaseTab):
         self.profile_bins_var.set(str(state.get("profile_bins") or "48"))
         self.profile_chunk_size_var.set(str(state.get("profile_chunk_size") or "512"))
         self.quiet_var.set(bool(state.get("quiet", False)))
+        console_state = state.get("console")
+        if isinstance(console_state, dict):
+            self.console.set_state(console_state)
         self.refresh_preview()
         self.refresh_summary()
