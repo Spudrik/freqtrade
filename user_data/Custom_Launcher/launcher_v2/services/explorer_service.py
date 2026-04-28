@@ -87,7 +87,6 @@ class ExplorerRunSettings:
     auto_epochs_cap: str = ""
     random_state: str = ""
     sampling_seed: str = ""
-    backtest_workers: str = "12"
     strategy_param_file: str = ""
     split_venv_pipeline: bool = False
     backtest_python_exe: str = ""
@@ -119,7 +118,6 @@ class ExplorerRunSettings:
             auto_epochs_cap=str(state.get("auto_epochs_cap") or ""),
             random_state=str(state.get("random_state") or ""),
             sampling_seed=str(state.get("sampling_seed") or ""),
-            backtest_workers=str(state.get("backtest_workers") or "12"),
             strategy_param_file=str(state.get("strategy_param_file") or ""),
             split_venv_pipeline=_to_bool(state.get("split_venv_pipeline") or state.get("explorer_split_venv_pipeline")),
             backtest_python_exe=str(state.get("backtest_python_exe") or state.get("explorer_backtest_python_exe") or default_backtest_python),
@@ -146,7 +144,6 @@ class ExplorerRunSettings:
             "auto_epochs_cap": self.auto_epochs_cap,
             "random_state": self.random_state,
             "sampling_seed": self.sampling_seed,
-            "backtest_workers": self.backtest_workers,
             "strategy_param_file": self.strategy_param_file,
             "split_venv_pipeline": self.split_venv_pipeline,
             "backtest_python_exe": self.backtest_python_exe,
@@ -208,7 +205,6 @@ class ExplorerService:
             self._append(command, "--epochs", settings.epochs)
         self._append(command, "--random-state", settings.random_state)
         self._append(command, "--sampling-seed", settings.sampling_seed)
-        self._append(command, "--backtest-workers", settings.backtest_workers)
         self._append(command, "--strategy-param-file", settings.strategy_param_file)
         if settings.split_venv_pipeline:
             self._append(command, "--backtest-python-exe", settings.backtest_python_exe)

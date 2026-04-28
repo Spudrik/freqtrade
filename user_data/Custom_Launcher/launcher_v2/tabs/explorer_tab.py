@@ -40,7 +40,6 @@ class ExplorerTab(BaseTab):
         self.auto_epochs_cap_var = tk.StringVar(value="")
         self.random_state_var = tk.StringVar(value="")
         self.sampling_seed_var = tk.StringVar(value="")
-        self.backtest_workers_var = tk.StringVar(value="12")
         default_settings = ExplorerRunSettings.from_state({}, context.app_dir)
         self.split_venv_pipeline_var = tk.BooleanVar(value=False)
         self.backtest_python_exe_var = tk.StringVar(value=default_settings.backtest_python_exe)
@@ -102,7 +101,6 @@ class ExplorerTab(BaseTab):
         self.epochs_entry = self._editable_entry(controls, 1, 4, "Epochs", self.epochs_var)
         self._editable_entry(controls, 2, 0, "Random seed", self.random_state_var)
         self._editable_entry(controls, 2, 2, "Sampling seed", self.sampling_seed_var)
-        self._editable_entry(controls, 2, 4, "Backtest workers", self.backtest_workers_var)
         ttk.Checkbutton(controls, text="Auto epochs (20x params)", variable=self.auto_epochs_var).grid(row=3, column=0, columnspan=2, sticky="w", padx=8, pady=4)
         self.auto_epochs_cap_entry = self._editable_entry(controls, 3, 2, "Auto epoch cap", self.auto_epochs_cap_var)
         ttk.Checkbutton(controls, text="Split-venv pipeline", variable=self.split_venv_pipeline_var).grid(row=4, column=0, columnspan=2, sticky="w", padx=8, pady=4)
@@ -542,7 +540,6 @@ class ExplorerTab(BaseTab):
             "auto_epochs_cap": self.auto_epochs_cap_var.get(),
             "random_state": self.random_state_var.get(),
             "sampling_seed": self.sampling_seed_var.get(),
-            "backtest_workers": self.backtest_workers_var.get(),
             "split_venv_pipeline": self.split_venv_pipeline_var.get(),
             "backtest_python_exe": self.backtest_python_exe_var.get(),
             "pipeline_handoff_dir": self.pipeline_handoff_dir_var.get(),
@@ -557,7 +554,9 @@ class ExplorerTab(BaseTab):
             epochs=self.epochs_var.get(),
             random_state=self.random_state_var.get(),
             sampling_seed=self.sampling_seed_var.get(),
-            backtest_workers=self.backtest_workers_var.get(),
+            split_venv_pipeline=self.split_venv_pipeline_var.get(),
+            backtest_python_exe=self.backtest_python_exe_var.get(),
+            pipeline_handoff_dir=self.pipeline_handoff_dir_var.get(),
             strategy_filter=self.sieve_strategy_filter_var.get(),
             take_profit_pct=self.sieve_take_profit_var.get(),
             stoploss_pct=self.sieve_stoploss_var.get(),
@@ -670,7 +669,6 @@ class ExplorerTab(BaseTab):
             "auto_epochs_cap": self.auto_epochs_cap_var.get(),
             "random_state": self.random_state_var.get(),
             "sampling_seed": self.sampling_seed_var.get(),
-            "backtest_workers": self.backtest_workers_var.get(),
             "split_venv_pipeline": self.split_venv_pipeline_var.get(),
             "backtest_python_exe": self.backtest_python_exe_var.get(),
             "pipeline_handoff_dir": self.pipeline_handoff_dir_var.get(),
@@ -693,7 +691,6 @@ class ExplorerTab(BaseTab):
         self.auto_epochs_cap_var.set(settings.auto_epochs_cap)
         self.random_state_var.set(settings.random_state)
         self.sampling_seed_var.set(settings.sampling_seed)
-        self.backtest_workers_var.set(settings.backtest_workers)
         self.split_venv_pipeline_var.set(bool(settings.split_venv_pipeline))
         self.backtest_python_exe_var.set(settings.backtest_python_exe)
         self.pipeline_handoff_dir_var.set(settings.pipeline_handoff_dir)

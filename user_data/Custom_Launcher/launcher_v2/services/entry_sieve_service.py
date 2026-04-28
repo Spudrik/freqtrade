@@ -34,7 +34,9 @@ class EntrySieveSettings:
     epochs: str = "200"
     random_state: str = ""
     sampling_seed: str = ""
-    backtest_workers: str = "1"
+    split_venv_pipeline: bool = False
+    backtest_python_exe: str = ""
+    pipeline_handoff_dir: str = ""
     strategy_filter: str = "*.py"
     take_profit_pct: str = "2"
     stoploss_pct: str = "2"
@@ -88,7 +90,9 @@ class EntrySieveService:
             "python_exe": str(self.python_exe),
             "random_state": str(settings.random_state),
             "sampling_seed": str(settings.sampling_seed),
-            "backtest_workers": str(settings.backtest_workers),
+            "split_venv_pipeline": bool(settings.split_venv_pipeline),
+            "backtest_python_exe": str(settings.backtest_python_exe),
+            "pipeline_handoff_dir": str(settings.pipeline_handoff_dir),
             "strategy_filter": str(settings.strategy_filter),
             "take_profit_pct": str(settings.take_profit_pct),
             "stoploss_pct": str(settings.stoploss_pct),
