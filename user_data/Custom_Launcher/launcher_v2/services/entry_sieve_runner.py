@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import Future, ThreadPoolExecutor
 from copy import deepcopy
+from dataclasses import dataclass
 from datetime import datetime
 import json
 import os
@@ -71,6 +73,24 @@ def _build_preset(base_preset: dict[str, Any], strategy_file: Path, strategy_cla
     preset["backtest_export"] = "trades"
     preset["backtest_directory"] = str(runtime_dir / "backtests")
     return preset
+
+
+@dataclass
+class PendingBacktests:
+    job_id: str
+    strategy: dict[str, str]
+    training_window: dict[str, Any]
+    validation_windows: list[dict[str, Any]]
+    preset: dict[str, Any]
+    python_exe: str
+    cwd: Path
+    env: dict[str, str]
+    hyperopt_file: Path
+    params_file: Path
+    best_params_count: int
+    epoch_count: int
+    hyperopt_loss: float | None
+    future: Future[list[dict[str, Any]]] | None = None
 
 
 def _prepare_runtime_strategy(source_file: Path, run_dir: Path) -> Path:
@@ -170,7 +190,66 @@ def _append_result(runtime_dir: Path, row: dict[str, Any]) -> None:
     save_json(runtime_dir / "latest.json", {"job_id": job_id, "path": str(results_file), "updated_at": updated_at})
 
 
-def _run_strategy_window(
+def _run_backtest_batch(batch: PendingBacktests) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for validation_window in batch.validation_windows:
+        metrics, backtest_file = run_backtest(
+            python_exe=batch.python_exe,
+            cwd=batch.cwd,
+            preset=batch.preset,
+            timerange=str(validation_window.get("timerange") or ""),
+            env=batch.env,
+        )
+        rows.append(
+            _result_row(
+                job_id=batch.job_id,
+                strategy=batch.strategy,
+                training_window=batch.training_window,
+                validation_window=validation_window,
+                status="ok",
+                hyperopt_file=batch.hyperopt_file,
+                backtest_file=backtest_file,
+                params_file=batch.params_file,
+                best_params_count=batch.best_params_count,
+                epoch_count=batch.epoch_count,
+                hyperopt_loss=batch.hyperopt_loss,
+                metrics=metrics,
+            )
+        )
+    return rows
+
+
+def _error_rows_for_batch(batch: PendingBacktests, error: str) -> list[dict[str, Any]]:
+    return [
+        _result_row(
+            job_id=batch.job_id,
+            strategy=batch.strategy,
+            training_window=batch.training_window,
+            validation_window=validation_window,
+            status="error",
+            hyperopt_file=batch.hyperopt_file,
+            params_file=batch.params_file,
+            best_params_count=batch.best_params_count,
+            epoch_count=batch.epoch_count,
+            hyperopt_loss=batch.hyperopt_loss,
+            error=error,
+        )
+        for validation_window in batch.validation_windows
+    ]
+
+
+def _finish_pending(runtime_dir: Path, pending: PendingBacktests | None) -> None:
+    if pending is None or pending.future is None:
+        return
+    try:
+        rows = pending.future.result()
+    except Exception as exc:
+        rows = _error_rows_for_batch(pending, str(exc))
+    for row in rows:
+        _append_result(runtime_dir, row)
+
+
+def _prepare_strategy_window(
     *,
     job: dict[str, Any],
     base_preset: dict[str, Any],
@@ -179,7 +258,8 @@ def _run_strategy_window(
     strategy: dict[str, str],
     training_window: dict[str, Any],
     validation_windows: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
+    backtest_python_exe: str,
+) -> PendingBacktests:
     source_file = Path(strategy["strategy_file"]).resolve()
     strategy_class = str(strategy["strategy_class"])
     run_name = f"{_safe_name(strategy.get('name') or source_file.stem)}__{_safe_name(window_label(training_window))}"
@@ -218,31 +298,7 @@ def _run_strategy_window(
     explorer_save_json(archive_params_file, snapshot)
 
     hyperopt_loss = best_epoch.get("loss")
-    rows: list[dict[str, Any]] = []
-    for validation_window in validation_windows:
-        metrics, backtest_file = run_backtest(
-            python_exe=python_exe,
-            cwd=cwd,
-            preset=preset,
-            timerange=str(validation_window.get("timerange") or ""),
-            env=env,
-        )
-        rows.append(
-            _result_row(
-                job_id=str(job.get("job_id") or ""),
-                strategy=strategy,
-                training_window=training_window,
-                validation_window=validation_window,
-                status="ok",
-                hyperopt_file=hyperopt_file,
-                backtest_file=backtest_file,
-                params_file=archive_params_file,
-                best_params_count=sum(len(values) for values in candidate_params.values() if isinstance(values, dict)),
-                epoch_count=epoch_count,
-                hyperopt_loss=float(hyperopt_loss) if isinstance(hyperopt_loss, (int, float)) else None,
-                metrics=metrics,
-            )
-        )
+    best_params_count = sum(len(values) for values in candidate_params.values() if isinstance(values, dict))
     state.setdefault("completed_runs", []).append(
         {
             "strategy": strategy.get("name") or source_file.stem,
@@ -251,12 +307,26 @@ def _run_strategy_window(
             "validation_windows": [compact_window(window) for window in validation_windows],
             "hyperopt_file": str(hyperopt_file),
             "params_file": str(archive_params_file),
-            "best_params_count": sum(len(values) for values in candidate_params.values() if isinstance(values, dict)),
+            "best_params_count": best_params_count,
             "epoch_count": epoch_count,
             "finished_at": datetime.now().astimezone().isoformat(),
         }
     )
-    return rows
+    return PendingBacktests(
+        job_id=str(job.get("job_id") or ""),
+        strategy=strategy,
+        training_window=training_window,
+        validation_windows=validation_windows,
+        preset=preset,
+        python_exe=backtest_python_exe,
+        cwd=cwd,
+        env=env,
+        hyperopt_file=hyperopt_file,
+        params_file=archive_params_file,
+        best_params_count=best_params_count,
+        epoch_count=epoch_count,
+        hyperopt_loss=float(hyperopt_loss) if isinstance(hyperopt_loss, (int, float)) else None,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -280,6 +350,10 @@ def main(argv: list[str] | None = None) -> int:
     strategies = [strategy for strategy in job.get("strategies") or [] if isinstance(strategy, dict)]
     base_preset = presets[preset_name]
     job_id = str(job.get("job_id") or job_file.stem)
+    split_venv_pipeline = bool(job.get("split_venv_pipeline"))
+    backtest_python_exe = str(job.get("backtest_python_exe") or base_preset.get("python_exe") or sys.executable)
+    if split_venv_pipeline and not Path(backtest_python_exe).expanduser().exists():
+        raise SystemExit(f"Entry Sieve split-venv backtest Python does not exist: {backtest_python_exe}")
     state_file = runtime_dir / "state.json"
     state = explorer_load_json(state_file, {})
     if not isinstance(state, dict):
@@ -288,39 +362,50 @@ def main(argv: list[str] | None = None) -> int:
     total_runs = len(strategies) * len(training_windows)
     print(f"Entry Sieve job: {job_id}")
     print(f"Strategies: {len(strategies)} | training windows: {len(training_windows)} | validation windows: {len(validation_windows)} | runs: {total_runs}")
+    if split_venv_pipeline:
+        print(f"Split-venv backtests: {backtest_python_exe}")
 
     run_index = 0
-    for strategy in strategies:
-        strategy_name = strategy.get("name") or Path(str(strategy.get("strategy_file") or "")).stem
-        for training_window in training_windows:
-            run_index += 1
-            print(f"\nEntry Sieve {run_index}/{total_runs}: {strategy_name} | train={window_label(training_window)}")
-            try:
-                rows = _run_strategy_window(
-                    job=job,
-                    base_preset=base_preset,
-                    runtime_dir=runtime_dir,
-                    state=state,
-                    strategy=strategy,
-                    training_window=training_window,
-                    validation_windows=validation_windows,
-                )
-                for row in rows:
-                    _append_result(runtime_dir, row)
-            except Exception as exc:
-                print(f"Entry Sieve run failed: {exc}")
-                for validation_window in validation_windows:
-                    _append_result(
-                        runtime_dir,
-                        _result_row(
-                            job_id=job_id,
-                            strategy=strategy,
-                            training_window=training_window,
-                            validation_window=validation_window,
-                            status="error",
-                            error=str(exc),
-                        ),
+    pending: PendingBacktests | None = None
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="entry-sieve-backtest") as executor:
+        for strategy in strategies:
+            strategy_name = strategy.get("name") or Path(str(strategy.get("strategy_file") or "")).stem
+            for training_window in training_windows:
+                run_index += 1
+                print(f"\nEntry Sieve {run_index}/{total_runs}: {strategy_name} | train={window_label(training_window)}")
+                try:
+                    batch = _prepare_strategy_window(
+                        job=job,
+                        base_preset=base_preset,
+                        runtime_dir=runtime_dir,
+                        state=state,
+                        strategy=strategy,
+                        training_window=training_window,
+                        validation_windows=validation_windows,
+                        backtest_python_exe=backtest_python_exe,
                     )
+                    if split_venv_pipeline:
+                        _finish_pending(runtime_dir, pending)
+                        batch.future = executor.submit(_run_backtest_batch, batch)
+                        pending = batch
+                    else:
+                        for row in _run_backtest_batch(batch):
+                            _append_result(runtime_dir, row)
+                except Exception as exc:
+                    print(f"Entry Sieve run failed: {exc}")
+                    for validation_window in validation_windows:
+                        _append_result(
+                            runtime_dir,
+                            _result_row(
+                                job_id=job_id,
+                                strategy=strategy,
+                                training_window=training_window,
+                                validation_window=validation_window,
+                                status="error",
+                                error=str(exc),
+                            ),
+                        )
+        _finish_pending(runtime_dir, pending)
     state["updated_at"] = datetime.now().astimezone().isoformat()
     explorer_save_json(state_file, state)
     print(f"\nEntry Sieve results: {runtime_dir / 'results' / f'{_safe_name(job_id)}.json'}")
