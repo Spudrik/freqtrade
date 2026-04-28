@@ -162,7 +162,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--auto-epochs-cap", default="", help="Optional cap for auto epochs. 0/blank means no cap.")
     parser.add_argument("--random-state", default="")
     parser.add_argument("--sampling-seed", type=int, default=None)
-    parser.add_argument("--backtest-workers", type=int, default=1, help="Accepted for UI compatibility; simplified runner currently validates serially.")
     parser.add_argument("--metadata-file", required=True)
     parser.add_argument("--state-file", required=True)
     parser.add_argument("--strategy-param-file", default="")
