@@ -41,6 +41,9 @@ class VolatilityCycleConfig:
     exhaustion_range_atr: float = 1.80
     exhaustion_volume_rvol: float = 2.00
     close_location_extreme: float = 0.55
+    compression_release_lookback: int = 8
+    entry_cooldown_bars: int = 8
+    context_window: int = 24
     trendline_prefix: str = "tl"
     output_prefix: str = "vc"
 
@@ -60,6 +63,9 @@ def add_volatility_cycles(
     exhaustion_range_atr: float | None = None,
     exhaustion_volume_rvol: float | None = None,
     close_location_extreme: float | None = None,
+    compression_release_lookback: int | None = None,
+    entry_cooldown_bars: int | None = None,
+    context_window: int | None = None,
     trendline_prefix: str | None = None,
     output_prefix: str | None = None,
 ) -> DataFrame:
@@ -78,6 +84,9 @@ def add_volatility_cycles(
         exhaustion_range_atr=exhaustion_range_atr,
         exhaustion_volume_rvol=exhaustion_volume_rvol,
         close_location_extreme=close_location_extreme,
+        compression_release_lookback=compression_release_lookback,
+        entry_cooldown_bars=entry_cooldown_bars,
+        context_window=context_window,
         trendline_prefix=trendline_prefix,
         output_prefix=output_prefix,
     )
@@ -120,12 +129,23 @@ def add_volatility_cycles(
         + 0.10 * tl_compression_score
     )
 
-    range_expansion = _clip01(atr_ratio / cfg.expansion_atr_ratio)
-    volume_expansion = _clip01(rvol / cfg.expansion_volume_rvol)
+    range_expansion = _clip01(
+        (atr_ratio - 1.0) / max(cfg.expansion_atr_ratio - 1.0, 1e-9)
+    )
+    volume_expansion = _clip01(
+        (rvol - 1.0) / max(cfg.expansion_volume_rvol - 1.0, 1e-9)
+    )
     expansion_score = _clip01(0.60 * range_expansion + 0.40 * volume_expansion)
+    range_atr = _safe_div(candle_range, atr)
+    exhaustion_range_score = _clip01(
+        (range_atr - 1.0) / max(cfg.exhaustion_range_atr - 1.0, 1e-9)
+    )
+    exhaustion_volume_score = _clip01(
+        (rvol - 1.0) / max(cfg.exhaustion_volume_rvol - 1.0, 1e-9)
+    )
     exhaustion_score = _clip01(
-        0.50 * _clip01(_safe_div(candle_range, atr * cfg.exhaustion_range_atr))
-        + 0.30 * _clip01(rvol / cfg.exhaustion_volume_rvol)
+        0.50 * exhaustion_range_score
+        + 0.30 * exhaustion_volume_score
         + 0.20 * close_location.abs().ge(cfg.close_location_extreme).astype("float64")
     )
 
@@ -134,17 +154,79 @@ def add_volatility_cycles(
     exhaustion_up = exhaustion_score.gt(0.65) & close_location.gt(cfg.close_location_extreme)
     exhaustion_down = exhaustion_score.gt(0.65) & close_location.lt(-cfg.close_location_extreme)
 
-    long_score = _clip01(0.45 * compression_score.shift(1).fillna(0.0) + 0.40 * expansion_long.astype("float64") + 0.15 * exhaustion_down.astype("float64"))
-    short_score = _clip01(0.45 * compression_score.shift(1).fillna(0.0) + 0.40 * expansion_short.astype("float64") + 0.15 * exhaustion_up.astype("float64"))
+    recent_compression = (
+        compression_score.shift(1)
+        .rolling(cfg.compression_release_lookback, min_periods=1)
+        .max()
+        .fillna(0.0)
+    )
+    expansion_long_setup = recent_compression * expansion_long.astype("float64")
+    expansion_short_setup = recent_compression * expansion_short.astype("float64")
+    long_score = _clip01(
+        0.60 * expansion_long_setup
+        + 0.25 * expansion_long.astype("float64")
+        + 0.15 * exhaustion_down.astype("float64")
+    )
+    short_score = _clip01(
+        0.60 * expansion_short_setup
+        + 0.25 * expansion_short.astype("float64")
+        + 0.15 * exhaustion_up.astype("float64")
+    )
     abs_score = pd.concat([long_score, short_score], axis=1).max(axis=1)
+    score_margin = long_score - short_score
     score_state = pd.Series(
         np.select([long_score.gt(short_score), short_score.gt(long_score)], [1.0, -1.0], default=0.0),
         index=frame.index,
     )
+    context_long = long_score.ewm(span=cfg.context_window, min_periods=1, adjust=False).mean()
+    context_short = short_score.ewm(span=cfg.context_window, min_periods=1, adjust=False).mean()
+    context_margin = context_long - context_short
+    full_bull = long_score.ge(0.35) & score_margin.ge(0.08) & (
+        expansion_long_setup.ge(0.20) | exhaustion_down
+    )
+    full_bear = short_score.ge(0.35) & score_margin.le(-0.08) & (
+        expansion_short_setup.ge(0.20) | exhaustion_up
+    )
+    bullish_chop = ~full_bull & ~full_bear & context_long.ge(0.16) & context_margin.ge(0.03)
+    bearish_chop = ~full_bull & ~full_bear & context_short.ge(0.16) & context_margin.le(-0.03)
+    market_context = pd.Series(
+        np.select(
+            [full_bull, bullish_chop, full_bear, bearish_chop],
+            [2.0, 1.0, -2.0, -1.0],
+            default=0.0,
+        ),
+        index=frame.index,
+        dtype="float64",
+    )
+    entry_breakout_long = _dedupe_events(expansion_long_setup.ge(0.25), cfg.entry_cooldown_bars)
+    entry_exhaustion_reversal_long = _dedupe_events(
+        exhaustion_down & long_score.ge(short_score),
+        cfg.entry_cooldown_bars,
+    )
+    entry_breakdown_short = _dedupe_events(expansion_short_setup.ge(0.25), cfg.entry_cooldown_bars)
+    entry_exhaustion_reversal_short = _dedupe_events(
+        exhaustion_up & short_score.ge(long_score),
+        cfg.entry_cooldown_bars,
+    )
+    suggested_entry_long = entry_breakout_long | entry_exhaustion_reversal_long
+    suggested_entry_short = entry_breakdown_short | entry_exhaustion_reversal_short
+    hold_long = (market_context.gt(0.0) | expansion_long) & ~exhaustion_up
+    hold_short = (market_context.lt(0.0) | expansion_short) & ~exhaustion_down
+    exit_long = _dedupe_events(
+        exhaustion_up | expansion_short_setup.ge(0.25) | short_score.gt(long_score + 0.12),
+        cfg.entry_cooldown_bars,
+    )
+    exit_short = _dedupe_events(
+        exhaustion_down | expansion_long_setup.ge(0.25) | long_score.gt(short_score + 0.12),
+        cfg.entry_cooldown_bars,
+    )
+    compression_phase = compression_score.ge(0.35) & expansion_score.le(0.45)
+    expansion_phase = expansion_score.ge(0.65)
+    exhaustion_phase = exhaustion_score.ge(0.65)
     cycle_state = pd.Series(
         np.select(
-            [compression_score.gt(0.55), expansion_score.gt(0.60), exhaustion_score.gt(0.65)],
-            [1.0, 2.0, 3.0],
+            [exhaustion_phase, compression_phase, expansion_phase],
+            [3.0, 1.0, 2.0],
             default=0.0,
         ),
         index=frame.index,
@@ -155,14 +237,32 @@ def add_volatility_cycles(
         f"{p}_atr_ratio": atr_ratio,
         f"{p}_range_ratio": range_ratio,
         f"{p}_rvol": rvol,
+        f"{p}_range_atr": range_atr,
         f"{p}_compression_score": compression_score,
         f"{p}_expansion_score": expansion_score,
         f"{p}_exhaustion_score": exhaustion_score,
         f"{p}_cycle_state": cycle_state,
+        f"{p}_compression_phase": compression_phase,
+        f"{p}_expansion_phase": expansion_phase,
+        f"{p}_exhaustion_phase": exhaustion_phase,
         f"{p}_expansion_long": expansion_long,
         f"{p}_expansion_short": expansion_short,
+        f"{p}_recent_compression": recent_compression,
+        f"{p}_expansion_long_setup": expansion_long_setup,
+        f"{p}_expansion_short_setup": expansion_short_setup,
         f"{p}_exhaustion_up": exhaustion_up,
         f"{p}_exhaustion_down": exhaustion_down,
+        f"{p}_market_context": market_context,
+        f"{p}_entry_breakout_long": entry_breakout_long,
+        f"{p}_entry_exhaustion_reversal_long": entry_exhaustion_reversal_long,
+        f"{p}_entry_breakdown_short": entry_breakdown_short,
+        f"{p}_entry_exhaustion_reversal_short": entry_exhaustion_reversal_short,
+        f"{p}_hold_long": hold_long,
+        f"{p}_hold_short": hold_short,
+        f"{p}_exit_long": exit_long,
+        f"{p}_exit_short": exit_short,
+        f"{p}_suggested_entry_long": suggested_entry_long,
+        f"{p}_suggested_entry_short": suggested_entry_short,
         f"{p}_score_long": long_score,
         f"{p}_score_short": short_score,
         f"{p}_score_abs": abs_score,
@@ -183,7 +283,15 @@ def _resolve_config(config: VolatilityCycleConfig | None, **overrides: object) -
 
 
 def _validate_config(cfg: VolatilityCycleConfig) -> None:
-    if min(cfg.atr_period, cfg.short_window, cfg.long_window, cfg.volume_window) < 2:
+    if min(
+        cfg.atr_period,
+        cfg.short_window,
+        cfg.long_window,
+        cfg.volume_window,
+        cfg.compression_release_lookback,
+        cfg.entry_cooldown_bars,
+        cfg.context_window,
+    ) < 2:
         raise ValueError("windows must be at least 2")
     if cfg.short_window >= cfg.long_window:
         raise ValueError("short_window must be smaller than long_window")
@@ -223,6 +331,12 @@ def _safe_div(numerator: Series, denominator: Series) -> Series:
 
 def _clip01(series: Series) -> Series:
     return pd.to_numeric(series, errors="coerce").replace([np.inf, -np.inf], np.nan).clip(0.0, 1.0).fillna(0.0)
+
+
+def _dedupe_events(mask: Series, cooldown_bars: int) -> Series:
+    event = pd.Series(mask, index=mask.index).astype("boolean").fillna(False).astype(bool)
+    previous_count = event.astype("float64").shift(1).rolling(int(cooldown_bars), min_periods=1).sum().fillna(0.0)
+    return event & previous_count.eq(0.0)
 
 
 def _num(frame: DataFrame, column: str) -> Series:

@@ -116,6 +116,30 @@ VOL tuning levers that strategies may expose to hyperopt:
 - Effort/result thresholds: `absorption_zscore`, `low_result_atr`, `wide_result_atr`, `accumulation_close_location`, `absorption_close_location`, and `exhaustion_close_location`.
 - Pressure/sweep thresholds: `pressure_zscore_min`, `spring_close_location_min`, `upthrust_close_location_max`, `sweep_reclaim_close_location`, `absorption_delta_tolerance`, and `stoprun_delta_tolerance`.
 
+## Volatility Cycle Strategy Outputs
+
+Volatility Cycles (`vc`) should describe transitions between compression, expansion, and exhaustion. It should not mark ordinary candles as expansion; expansion means ATR/range and participation are above their recent baseline.
+
+Expected behaviour:
+- `vc_compression_score` should rise during tight ranges, low ATR ratio, and dry participation.
+- `vc_expansion_score` should rise only when short-term ATR/range and relative volume push meaningfully above baseline.
+- `vc_exhaustion_score` should rise around large stretched candles with high participation and extreme close location.
+- Entry diagnostics should be sparse release/exhaustion events, not every candle in a volatile trend.
+
+Strategy-facing VC concepts:
+- Core cycle evidence: `vc_compression_score`, `vc_expansion_score`, `vc_exhaustion_score`, `vc_cycle_state`, `vc_compression_phase`, `vc_expansion_phase`, `vc_exhaustion_phase`, `vc_atr_ratio`, `vc_range_ratio`, `vc_range_atr`, and `vc_rvol`.
+- Compression release evidence: `vc_recent_compression`, `vc_expansion_long_setup`, and `vc_expansion_short_setup` show when expansion follows a recent squeeze.
+- Directional context: `vc_market_context` uses `+2`, `+1`, `0`, `-1`, `-2`; it is volatility-direction context, not a full trend regime.
+- Entry diagnostics: `vc_entry_breakout_long`, `vc_entry_breakdown_short`, `vc_entry_exhaustion_reversal_long`, and `vc_entry_exhaustion_reversal_short` are reason-specific sparse events.
+- Composite triggers: `vc_suggested_entry_long/short` combine the reason-specific diagnostics for plotting and broad smoke tests.
+- Position evidence: `vc_hold_long`, `vc_hold_short`, `vc_exit_long`, and `vc_exit_short` expose whether volatility behaviour supports the direction or warns of exhaustion/opposite expansion.
+
+VC tuning levers that strategies may expose to hyperopt:
+- Windows: `atr_period`, `short_window`, `long_window`, `volume_window`, `compression_release_lookback`, `entry_cooldown_bars`, and `context_window`.
+- Compression thresholds: `compression_atr_ratio` and `dry_volume_rvol`.
+- Expansion thresholds: `expansion_atr_ratio` and `expansion_volume_rvol`.
+- Exhaustion thresholds: `exhaustion_range_atr`, `exhaustion_volume_rvol`, and `close_location_extreme`.
+
 ## Pivot Structure Strategy Outputs
 
 Pivot Structure should separate tactical local swings from larger structural market memory.
