@@ -26,7 +26,11 @@ Use simple tab modules and shared helpers to replace the monolithic launcher gra
 - Prefer one trading hypothesis per strategy file.
 - Keep the first-pass capital model simple: fixed stake, no leverage experiments, no adds, no peels.
 - Standardize exits early when comparing entry quality.
-- Use clear prefixes for experimental strategy files so they are easy to group and filter, including `test_` for split research files and `codex_` for original exploratory ideas.
+- Use clear prefixes for experimental strategy files so they are easy to group and filter. Current entry-sieve strategy files use the `sieve1_` file prefix and `Sieve1` class prefix.
+- Strategy files intended for HyperOpt must be standalone modules. Do not use parent strategy classes, mixin strategy bases, or external strategy helper files in hyperopted strategy logic.
+- Sieve1 results are informative diagnostics for refining entry signals; do not treat them as pass/fail or acceptance decisions.
+- Future Sieve2/Sieve3/Sieve4 passes may test exits, adds, global guards, or other ideas, but do not implement those without explicit user request.
+- Check that local definitions for sieve, strategies, entries, exits, guards, and result interpretation are still accurate before changing this area. Report stale definitions or deviations to the user.
 - Keep the ladder and daily-structure family split into separate files when the goal is to isolate entry edge.
 - Strategy parameter tags are limited to `family:*` and `mode:*` only.
 - Use `family` as the top-level block, limited to only: `entries`, `exits`, `adjust_position`, `stake`, `risk`.
