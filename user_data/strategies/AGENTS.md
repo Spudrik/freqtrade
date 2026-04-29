@@ -7,6 +7,8 @@
 - Sieve1 is the entry-quality sieve. Future Sieve2/Sieve3/Sieve4 passes may test exits, adds, global guards, or other ideas, but do not implement those without explicit user request.
 - Use the `sieve1_` file prefix and `Sieve1` class prefix for current entry-sieve strategy files so future sieve generations can be filtered cleanly.
 - Sieve1 strategy names should describe the entry idea directly. Do not use vague generator-origin tokens such as `test` or `codex` in filenames, class names, or visible entry tags.
+- Sieve1 strategies with multiple core entry ideas should use `sieve1_multiN_` filenames and `Sieve1MultiN` class names, where `N` is the number of core entry concepts being tested for confluence.
+- Broad `sieve1_multiN_` confluence probes may use hyperoptable batch selectors/enables to discover useful combinations. When Sieve1 results show a promising confluence scenario, flag it to the user as a candidate for extraction into a narrower dedicated strategy for refinement.
 - Split Sieve1 files by entry concept, not by every guard combination. Optional guards such as 4h/1d volume-profile context should be hyperoptable enable/disable parameters inside the entry-concept strategy.
 - Daily TOP10 strategy files should normally be kept out of Sieve1 runs by targeted `sieve1_*.py` filtering because they contain broader strategy-management scaffolding, not just entry-condition refinement.
 - Before editing sieve or strategy infrastructure, check that local definitions for "sieve", "strategy", "entry", "exit", "guard", "acceptance", and result interpretation are still accurate. Report deviations or stale instructions to the user instead of silently coding against outdated definitions.

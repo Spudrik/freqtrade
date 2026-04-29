@@ -17,11 +17,11 @@ from user_data.Indicators.complex_volume_profile import add_volume_profile
 HYPEROPT_PARAM_ENV = "HYBRID_RECOVERY_HYPEROPT_PARAMS"
 ENTRY_SIEVE_TAKE_PROFIT_ENV = "ENTRY_SIEVE_TAKE_PROFIT_PCT"
 ENTRY_SIEVE_STOPLOSS_ENV = "ENTRY_SIEVE_STOPLOSS_PCT"
-ENTRY_MODE = "entry_confluence_four_way_breakout_long"
-ENTRY_TAG = "confluence_four_way_breakout_long"
+ENTRY_MODE = "entry_multi2_liquidity_vp_reclaim_long"
+ENTRY_TAG = "multi2_liquidity_vp_reclaim_long"
 SIDE = "long"
-CONCEPT = "confluence_four_way_breakout"
-PERIOD_KIND = "select"
+CONCEPT = "multi2_liquidity_vp_reclaim"
+PERIOD_KIND = "fixed"
 GUARD_MODE_CHOICES = ["direction", "score", "context", "score_or_context", "balance"]
 PERIOD_CHOICES = ["day", "week", "month"]
 PRICE_SOURCE_CHOICES = ["close", "hl2", "hlc3", "ohlc4"]
@@ -87,9 +87,9 @@ def _num(frame: DataFrame, column: str, default: float | Series = 0.0) -> Series
     return pd.to_numeric(frame[column], errors="coerce").replace([np.inf, -np.inf], np.nan)
 
 
-class Sieve1ConfluenceFourWayBreakoutLong(IStrategy):
+class Sieve1Multi2LiquidityVpReclaimLong(IStrategy):
     """
-    Sieve1 entry concept: confluence_four_way_breakout_long.
+    Sieve1 entry concept: multi2_liquidity_vp_reclaim_long.
 
     This is entry-quality research only. It has no custom exit, no DCA, and no
     position-management hooks. Optional guards are hyperoptable inside this
@@ -120,7 +120,7 @@ class Sieve1ConfluenceFourWayBreakoutLong(IStrategy):
     equal_level_lookback = tagged_parameter(IntParameter(12, 240, default=72, space="buy", optimize=True, load=True))
     equal_level_tolerance_pct = tagged_parameter(DecimalParameter(0.001, 0.025, decimals=3, default=0.006, space="buy", optimize=True, load=True))
     equal_level_min_touches = tagged_parameter(IntParameter(2, 6, default=2, space="buy", optimize=True, load=True))
-    confluence_period = tagged_parameter(CategoricalParameter(PERIOD_CHOICES, default="day", space="buy", optimize=True, load=True))
+    multi_period = tagged_parameter(CategoricalParameter(PERIOD_CHOICES, default="day", space="buy", optimize=False, load=True))
 
     avwap_anchor_lookback = tagged_parameter(IntParameter(24, 336, default=120, space="buy", optimize=True, load=True))
     avwap_band_mult = tagged_parameter(DecimalParameter(0.25, 3.00, decimals=2, default=1.25, space="buy", optimize=True, load=True))
@@ -257,7 +257,7 @@ class Sieve1ConfluenceFourWayBreakoutLong(IStrategy):
 
     def _selected_period(self) -> str:
         if PERIOD_KIND == "select":
-            return str(self.confluence_period.value)
+            return str(self.multi_period.value)
         if PERIOD_KIND in PERIOD_CHOICES:
             return PERIOD_KIND
         return "day"
@@ -414,25 +414,25 @@ class Sieve1ConfluenceFourWayBreakoutLong(IStrategy):
             return self._range_low_sweep_reclaim(dataframe)
         if CONCEPT == "range_high_sweep_reject":
             return self._range_high_sweep_reject(dataframe)
-        if CONCEPT == "confluence_prior_vp_breakout":
+        if CONCEPT == "multi2_prior_vp_breakout":
             return self._prior_high_breakout(dataframe) & self._vp_bull_ok(dataframe)
-        if CONCEPT == "confluence_prior_vp_breakdown":
+        if CONCEPT == "multi2_prior_vp_breakdown":
             return self._prior_low_breakdown(dataframe) & self._vp_bear_ok(dataframe)
-        if CONCEPT == "confluence_prior_avwap_vp_breakout":
+        if CONCEPT == "multi3_prior_avwap_vp_breakout":
             return self._prior_high_breakout(dataframe) & self._avwap_trend_bull(dataframe) & self._vp_bull_ok(dataframe)
-        if CONCEPT == "confluence_prior_avwap_vp_breakdown":
+        if CONCEPT == "multi3_prior_avwap_vp_breakdown":
             return self._prior_low_breakdown(dataframe) & self._avwap_trend_bear(dataframe) & self._vp_bear_ok(dataframe)
-        if CONCEPT == "confluence_demand_vp_reclaim":
+        if CONCEPT == "multi2_demand_vp_reclaim":
             return self._demand_reclaim(dataframe) & self._vp_bull_ok(dataframe)
-        if CONCEPT == "confluence_supply_vp_reject":
+        if CONCEPT == "multi2_supply_vp_reject":
             return self._supply_reject(dataframe) & self._vp_bear_ok(dataframe)
-        if CONCEPT == "confluence_liquidity_vp_reclaim":
+        if CONCEPT == "multi2_liquidity_vp_reclaim":
             return self._equal_lows_sweep_reclaim(dataframe) & self._vp_bull_ok(dataframe)
-        if CONCEPT == "confluence_liquidity_vp_reject":
+        if CONCEPT == "multi2_liquidity_vp_reject":
             return self._equal_highs_sweep_reject(dataframe) & self._vp_bear_ok(dataframe)
-        if CONCEPT == "confluence_four_way_breakout":
+        if CONCEPT == "multi4_prior_range_avwap_vp_breakout":
             return self._prior_high_breakout(dataframe) & self._rolling_resistance_breakout(dataframe) & self._avwap_trend_bull(dataframe) & self._vp_bull_ok(dataframe)
-        if CONCEPT == "confluence_four_way_breakdown":
+        if CONCEPT == "multi4_prior_range_avwap_vp_breakdown":
             return self._prior_low_breakdown(dataframe) & self._rolling_support_breakdown(dataframe) & self._avwap_trend_bear(dataframe) & self._vp_bear_ok(dataframe)
         return pd.Series(False, index=dataframe.index, dtype="bool")
 
@@ -619,4 +619,4 @@ class Sieve1ConfluenceFourWayBreakoutLong(IStrategy):
         return _num(dataframe, f"{prefix}_market_context").le(0)
 
 
-apply_explicit_hyperopt_surface(Sieve1ConfluenceFourWayBreakoutLong)
+apply_explicit_hyperopt_surface(Sieve1Multi2LiquidityVpReclaimLong)
