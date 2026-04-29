@@ -14,6 +14,7 @@ Use simple tab modules and shared helpers to replace the monolithic launcher gra
 - Do not create another architecture pattern.
 - Do not add promotion/comparison/random-tag/namespace controls to ExplorerV2.
 - Keep FreqUI launch available as a simple `freqtrade webserver` surface using Setup config/userdir/datadir.
+- Any foreground process launched through `ProcessRunner` must be terminated as a process tree on Stop and app close; this includes Freqtrade/Explorer hyperopt/backtest workers. Detached news/web/orderbook collectors are intentionally outside this shutdown path.
 - Do not change strategy trading logic unless the current task is explicitly strategy research work.
 - Do not delete old launcher code unless the current phase explicitly says deletion is safe.
 - If unsure, stop and report instead of broadening scope.
