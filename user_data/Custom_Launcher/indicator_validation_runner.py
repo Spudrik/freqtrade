@@ -16,6 +16,7 @@ import json
 import math
 from pathlib import Path
 import re
+import sys
 from typing import Any
 
 import numpy as np
@@ -28,17 +29,22 @@ USER_DATA_DIR = THIS_DIR.parent
 PROJECT_ROOT = USER_DATA_DIR.parent
 RUNTIME_DIR = USER_DATA_DIR / "Indicator_External_Validator"
 
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from user_data.Indicators.complex_pattern_structure import add_pattern_structure
-from user_data.Indicators.complex_pivot_structure import add_pivot_structure
+from user_data.Indicators.complex_pivot_structure import PivotStructureConfig, add_pivot_structure
 from user_data.Indicators.complex_relative_strength import add_relative_strength
+from user_data.Indicators.complex_structural_trendlines import StructuralTrendlineConfig, add_structural_trendlines
 from user_data.Indicators.complex_trendline_projection import TrendlineProjectionConfig, add_trendline_projection
 from user_data.Indicators.complex_volatility_cycles import add_volatility_cycles
 from user_data.Indicators.complex_volume_indicators import add_complex_volume_indicators
 from user_data.Indicators.complex_volume_profile import VolumeProfileConfig, add_volume_profile
+from user_data.Indicators.market_regime import add_market_regime
 
 
-INDICATOR_ORDER = ("pa", "tl", "vol", "vp", "pat", "vc", "rs")
-STATE_COLUMNS = {"pa_state", "tl_state", "vol_state", "vp_state", "pat_state", "vc_state", "rs_state"}
+INDICATOR_ORDER = ("pa", "tl", "stl", "vol", "vp", "pat", "vc", "rs", "regime")
+STATE_COLUMNS = {"pa_state", "tl_state", "stl_state", "vol_state", "vp_state", "pat_state", "vc_state", "rs_state"}
 OHLCV_COLUMNS = ("date", "open", "high", "low", "close", "volume")
 
 
@@ -56,7 +62,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pairs", default="", help="Pairs to include. Blank means all discovered pairs up to --max-pairs.")
     parser.add_argument("--timeframes", default="1h", help="Space/comma separated timeframes, e.g. '30m 1h 4h'.")
     parser.add_argument("--timerange", default="", help="Optional Freqtrade-style timerange, e.g. 20230101-20250101.")
-    parser.add_argument("--indicators", default="all", help="all or comma/space list from: pa tl vol vp pat vc rs.")
+    parser.add_argument("--indicators", default="all", help="all or comma/space list from: pa tl stl vol vp pat vc rs regime.")
     parser.add_argument("--score-scope", choices=("base", "all"), default="base", help="base validates *_score_long/short/abs only; all includes component score columns.")
     parser.add_argument("--benchmark", default="BTC/USDT:USDT", help="Benchmark pair for relative strength.")
     parser.add_argument("--forward-windows", default="3 6 12 24", help="Forward candle windows for outcome tests.")
@@ -102,6 +108,7 @@ def main() -> int:
     decile_rows: list[dict[str, Any]] = []
     behavior_rows: list[dict[str, Any]] = []
     contract_rows: list[dict[str, Any]] = []
+    event_rows: list[dict[str, Any]] = []
     failures: list[dict[str, str]] = []
 
     for file in files:
@@ -122,21 +129,24 @@ def main() -> int:
             rows, deciles = outcome_checks(frame, score_columns, forward_windows, args.deciles, context)
             score_rows.extend(rows)
             decile_rows.extend(deciles)
+            event_rows.extend(entry_event_checks(frame, selected, forward_windows, context))
         except Exception as exc:
             failures.append({"file": str(file.path), "reason": repr(exc)})
 
-    summary = summarize_run(score_rows, behavior_rows, contract_rows, failures, args, selected, files)
+    summary = summarize_run(score_rows, behavior_rows, contract_rows, event_rows, failures, args, selected, files)
     summary_path = output_dir / "latest_indicator_validation_summary.json"
     score_path = output_dir / "latest_indicator_score_metrics.csv"
     decile_path = output_dir / "latest_indicator_deciles.csv"
     behavior_path = output_dir / "latest_indicator_behavior.csv"
     contract_path = output_dir / "latest_indicator_contract.csv"
+    event_path = output_dir / "latest_indicator_entry_events.csv"
 
     write_json(summary_path, summary)
     write_csv(score_path, score_rows)
     write_csv(decile_path, decile_rows)
     write_csv(behavior_path, behavior_rows)
     write_csv(contract_path, contract_rows)
+    write_csv(event_path, event_rows)
 
     print_report(summary, score_rows, behavior_rows, failures)
     print("")
@@ -145,7 +155,8 @@ def main() -> int:
     print(f"Deciles CSV: {decile_path}")
     print(f"Behaviour CSV: {behavior_path}")
     print(f"Contract CSV: {contract_path}")
-    return 0 if score_rows else 2
+    print(f"Entry events CSV: {event_path}")
+    return 0 if score_rows or event_rows else 2
 
 
 def normalize_indicators(value: str) -> list[str]:
@@ -297,12 +308,17 @@ def load_benchmarks(datadir: Path, benchmark: str, timeframes: list[str], timera
 
 def add_selected_indicators(frame: DataFrame, selected: list[str], benchmark: DataFrame | None, args: argparse.Namespace) -> DataFrame:
     out = frame.copy()
-    needs_pa = any(item in selected for item in ("pa", "tl", "pat"))
+    needs_pa = any(item in selected for item in ("pa", "tl", "stl", "pat"))
     needs_tl = any(item in selected for item in ("tl", "pat", "vc"))
     if needs_pa:
-        out = add_pivot_structure(out)
+        if "stl" in selected:
+            out = add_pivot_structure(out, PivotStructureConfig(strength=5, strengths=(3, 5, 8, 13, 21)))
+        else:
+            out = add_pivot_structure(out)
     if needs_tl:
         out = add_trendline_projection(out, TrendlineProjectionConfig(missing_pivot_mode="skip"))
+    if "stl" in selected:
+        out = add_structural_trendlines(out, StructuralTrendlineConfig(missing_pivot_mode="raise"))
     if "vol" in selected:
         out = add_complex_volume_indicators(out)
     if "vp" in selected:
@@ -320,6 +336,8 @@ def add_selected_indicators(frame: DataFrame, selected: list[str], benchmark: Da
         out = add_volatility_cycles(out)
     if "rs" in selected and benchmark is not None and len(benchmark) > 0:
         out = add_relative_strength(out, benchmark)
+    if "regime" in selected:
+        out = add_market_regime(out, {"regime_confirm_bars": 3})
     return out
 
 
@@ -330,12 +348,18 @@ def selected_score_columns(frame: DataFrame, selected: list[str], scope: str) ->
         for indicator in selected
         for direction in ("score_long", "score_short", "score_abs")
     }
+    regime_names = {"regime_bull_score", "regime_bear_score", "regime_chop_score", "regime_crash_score"}
     return [
         str(column)
         for column in frame.columns
-        if "_score_" in str(column)
-        and score_indicator_key(str(column)) in selected_set
-        and (scope == "all" or str(column) in base_names)
+        if score_indicator_key(str(column)) in selected_set
+        and (
+            (
+                "_score_" in str(column)
+                and (scope == "all" or str(column) in base_names)
+            )
+            or ("regime" in selected_set and str(column) in regime_names)
+        )
     ]
 
 
@@ -381,6 +405,23 @@ def contract_checks(frame: DataFrame, score_columns: list[str], selected: list[s
                 "contract_pass": values.issubset({-1.0, 0.0, 1.0}),
             }
         )
+    if "regime" in selected and "regime_code" in frame.columns:
+        numeric = pd.to_numeric(frame["regime_code"], errors="coerce")
+        values = set(numeric.dropna().unique().tolist())
+        rows.append(
+            {
+                **context,
+                "score": "regime_code",
+                "rows": int(len(frame)),
+                "finite_rows": int(numeric.notna().sum()),
+                "min": safe_float(numeric.min()),
+                "max": safe_float(numeric.max()),
+                "mean": safe_float(numeric.mean()),
+                "nonzero_ratio": safe_float(numeric.ne(0).mean()),
+                "has_variation": bool(len(values) > 1),
+                "contract_pass": values.issubset({-2.0, -1.0, 0.0, 1.0, 9.0}),
+            }
+        )
     return rows
 
 
@@ -390,16 +431,22 @@ def behavior_checks(frame: DataFrame, selected: list[str], context: dict[str, An
         "pa_score_short": ["pa_ms_down_sequence_score", "pa_ms_state", "pa_trend_bias"],
         "tl_score_long": ["tl_support_quality", "tl_trend_bias", "tl_support_reclaim"],
         "tl_score_short": ["tl_resistance_quality", "tl_trend_bias", "tl_resistance_reject"],
+        "stl_score_long": ["stl_support_score", "stl_support_reclaim", "stl_resistance_breakout_1", "stl_triangle_score"],
+        "stl_score_short": ["stl_resistance_score", "stl_resistance_reject", "stl_support_breakdown_1", "stl_triangle_score"],
         "vol_score_long": ["vol_cvd_trend_confirm_long", "vol_evr_bull_absorption", "vol_liq_stoprun_long", "vol_avwap_reclaim_long"],
         "vol_score_short": ["vol_cvd_trend_confirm_short", "vol_evr_bear_absorption", "vol_liq_stoprun_short", "vol_avwap_reject_short"],
         "vp_score_long": ["vp_poc_migration_score_long", "vp_vah_breakout_with_pressure", "vp_lower_rejection_with_pressure", "vp_lvn_accept_long"],
         "vp_score_short": ["vp_poc_migration_score_short", "vp_val_breakdown_with_pressure", "vp_upper_rejection_with_pressure", "vp_lvn_accept_short"],
         "pat_score_long": ["pat_impulse_up_score", "pat_range_contraction_score", "pat_flag_long", "pat_breakout_long"],
         "pat_score_short": ["pat_impulse_down_score", "pat_range_contraction_score", "pat_flag_short", "pat_breakout_short"],
-        "vc_score_long": ["vc_compression_score", "vc_expansion_long", "vc_exhaustion_down"],
-        "vc_score_short": ["vc_compression_score", "vc_expansion_short", "vc_exhaustion_up"],
+        "vc_score_long": ["vc_expansion_long_setup", "vc_expansion_long", "vc_exhaustion_down"],
+        "vc_score_short": ["vc_expansion_short_setup", "vc_expansion_short", "vc_exhaustion_up"],
         "rs_score_long": ["rs_ret_medium", "rs_percentile", "rs_outperforming"],
         "rs_score_short": ["rs_ret_medium", "rs_percentile", "rs_underperforming"],
+        "regime_bull_score": ["regime_bull_core", "regime_trend_slope_pct", "regime_directional_pressure"],
+        "regime_bear_score": ["regime_bear_core", "regime_trend_slope_pct", "regime_directional_pressure"],
+        "regime_chop_score": ["regime_range_compression_score", "regime_adx", "regime_atr_ratio"],
+        "regime_crash_score": ["regime_drawdown_from_recent_high", "regime_atr_ratio", "regime_bear_pressure"],
     }
     rows: list[dict[str, Any]] = []
     selected_set = set(selected)
@@ -439,11 +486,11 @@ def evidence_series(series: Series, score_col: str) -> Series:
     if pd.api.types.is_bool_dtype(series):
         return series.astype("float64")
     numeric = pd.to_numeric(series, errors="coerce").replace([np.inf, -np.inf], np.nan).fillna(0.0)
-    if score_col.endswith("_short") and series.name in {"pa_ms_state", "pa_trend_bias", "tl_trend_bias", "rs_ret_medium", "rs_percentile"}:
+    if score_col.endswith("_short") and series.name in {"pa_ms_state", "pa_trend_bias", "tl_trend_bias", "rs_ret_medium", "rs_percentile", "regime_trend_slope_pct", "regime_directional_pressure"}:
         if series.name == "rs_percentile":
             return (1.0 - numeric).clip(0.0, 1.0)
         return (numeric < 0.0).astype("float64")
-    if series.name in {"pa_ms_state", "pa_trend_bias", "tl_trend_bias"}:
+    if series.name in {"pa_ms_state", "pa_trend_bias", "tl_trend_bias", "regime_trend_slope_pct", "regime_directional_pressure"}:
         return (numeric > 0.0).astype("float64")
     return normalize_observed(numeric)
 
@@ -519,6 +566,83 @@ def outcome_checks(
     return rows, decile_rows
 
 
+def entry_event_checks(
+    frame: DataFrame,
+    selected: list[str],
+    forward_windows: list[int],
+    context: dict[str, Any],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    event_columns = selected_entry_event_columns(frame, selected)
+    if not event_columns:
+        return rows
+
+    close = pd.to_numeric(frame["close"], errors="coerce")
+    high = pd.to_numeric(frame["high"], errors="coerce")
+    low = pd.to_numeric(frame["low"], errors="coerce")
+    for window in forward_windows:
+        future_return = close.shift(-window) / close - 1.0
+        future_high = pd.concat([high.shift(-i) for i in range(1, window + 1)], axis=1).max(axis=1)
+        future_low = pd.concat([low.shift(-i) for i in range(1, window + 1)], axis=1).min(axis=1)
+        long_mfe = future_high / close - 1.0
+        long_mae = (future_low / close - 1.0).clip(upper=0.0).abs()
+        short_mfe = close / future_low - 1.0
+        short_mae = (future_high / close - 1.0).clip(lower=0.0)
+
+        for column in event_columns:
+            direction = score_direction(column)
+            if direction == "short":
+                expected = -future_return
+                mfe = short_mfe
+                mae = short_mae
+            else:
+                expected = future_return
+                mfe = long_mfe
+                mae = long_mae
+            event = frame[column].fillna(False).astype("bool")
+            valid = pd.DataFrame({"event": event, "expected": expected, "mfe": mfe, "mae": mae}).replace([np.inf, -np.inf], np.nan).dropna()
+            hits = valid.loc[valid["event"]]
+            baseline_expected = safe_float(valid["expected"].mean()) if len(valid) else None
+            baseline_win_rate = safe_float((valid["expected"] > 0.0).mean()) if len(valid) else None
+            event_expected = safe_float(hits["expected"].mean()) if len(hits) else None
+            event_mfe = safe_float(hits["mfe"].mean()) if len(hits) else None
+            event_mae = safe_float(hits["mae"].mean()) if len(hits) else None
+            rows.append(
+                {
+                    **context,
+                    "event": column,
+                    "direction": direction,
+                    "forward_window": window,
+                    "rows": int(len(valid)),
+                    "event_rows": int(len(hits)),
+                    "event_rate": safe_float(len(hits) / len(valid)) if len(valid) else None,
+                    "baseline_expected_mean": baseline_expected,
+                    "event_expected_mean": event_expected,
+                    "event_expected_median": safe_float(hits["expected"].median()) if len(hits) else None,
+                    "edge_vs_baseline": safe_float((event_expected or 0.0) - (baseline_expected or 0.0)) if len(hits) and baseline_expected is not None else None,
+                    "baseline_win_rate": baseline_win_rate,
+                    "event_win_rate": safe_float((hits["expected"] > 0.0).mean()) if len(hits) else None,
+                    "event_mfe_mean": event_mfe,
+                    "event_mae_mean": event_mae,
+                    "event_mfe_mae_ratio": safe_float((event_mfe or 0.0) / event_mae) if event_mae else None,
+                }
+            )
+    return rows
+
+
+def selected_entry_event_columns(frame: DataFrame, selected: list[str]) -> list[str]:
+    selected_set = set(selected)
+    columns: list[str] = []
+    for indicator in selected:
+        if indicator not in selected_set:
+            continue
+        for direction in ("long", "short"):
+            column = f"{indicator}_suggested_entry_{direction}"
+            if column in frame.columns:
+                columns.append(column)
+    return columns
+
+
 def score_direction(score_col: str) -> str:
     if score_col.endswith("_score_abs") or "_score_abs_" in score_col:
         return "abs"
@@ -545,7 +669,7 @@ def score_validity_metrics(bucket_stats: DataFrame, valid: DataFrame, score_col:
     bucket_index = pd.to_numeric(bucket_stats["bucket"], errors="coerce")
     expected_mean = pd.to_numeric(bucket_stats["expected_mean"], errors="coerce")
     mfe_mae = pd.to_numeric(bucket_stats["mfe_mean"], errors="coerce") / pd.to_numeric(bucket_stats["mae_mean"], errors="coerce").replace(0.0, np.nan)
-    corr = expected_mean.corr(bucket_index) if len(bucket_stats) > 2 else np.nan
+    corr = safe_corr(expected_mean, bucket_index)
     top = bucket_stats.iloc[-1]
     bottom = bucket_stats.iloc[0]
     top_bottom_edge = float(top["expected_mean"] - bottom["expected_mean"])
@@ -554,7 +678,7 @@ def score_validity_metrics(bucket_stats: DataFrame, valid: DataFrame, score_col:
     monotonic_score = clip01(((corr if np.isfinite(corr) else 0.0) + 1.0) / 2.0)
     edge_score = 1.0 if top_bottom_edge > 0.0 else 0.0
     mfe_score = 1.0 if np.isfinite(top_mfe_mae) and np.isfinite(bottom_mfe_mae) and top_mfe_mae > bottom_mfe_mae else 0.0
-    mean_score_corr = valid["score"].corr(valid["expected"]) if len(valid) > 2 else np.nan
+    mean_score_corr = safe_corr(valid["score"], valid["expected"])
     validity = clip01(0.40 * monotonic_score + 0.30 * edge_score + 0.20 * mfe_score + 0.10 * clip01(((mean_score_corr if np.isfinite(mean_score_corr) else 0.0) + 1.0) / 2.0))
     return {
         **context,
@@ -578,6 +702,7 @@ def summarize_run(
     score_rows: list[dict[str, Any]],
     behavior_rows: list[dict[str, Any]],
     contract_rows: list[dict[str, Any]],
+    event_rows: list[dict[str, Any]],
     failures: list[dict[str, str]],
     args: argparse.Namespace,
     selected: list[str],
@@ -586,6 +711,7 @@ def summarize_run(
     score_df = pd.DataFrame(score_rows)
     behavior_df = pd.DataFrame(behavior_rows)
     contract_df = pd.DataFrame(contract_rows)
+    event_df = pd.DataFrame(event_rows)
     top_scores: list[dict[str, Any]] = []
     if not score_df.empty:
         group = score_df.groupby("score", as_index=False).agg(
@@ -595,6 +721,19 @@ def summarize_run(
         )
         group = group.sort_values(["avg_validity", "avg_edge"], ascending=False)
         top_scores = records(group.head(20))
+    top_entry_events: list[dict[str, Any]] = []
+    if not event_df.empty and "event_rows" in event_df:
+        active = event_df[event_df["event_rows"].fillna(0).astype(float) > 0]
+        if not active.empty:
+            event_group = active.groupby("event", as_index=False).agg(
+                avg_edge=("edge_vs_baseline", "mean"),
+                avg_expected=("event_expected_mean", "mean"),
+                avg_win_rate=("event_win_rate", "mean"),
+                total_events=("event_rows", "sum"),
+                tested_windows=("forward_window", "count"),
+            )
+            event_group = event_group.sort_values(["avg_edge", "avg_win_rate", "total_events"], ascending=False)
+            top_entry_events = records(event_group.head(20))
     return {
         "created_at": datetime.now(timezone.utc).isoformat(),
         "config": {
@@ -614,10 +753,12 @@ def summarize_run(
         "score_metric_rows": len(score_rows),
         "behavior_rows": len(behavior_rows),
         "contract_rows": len(contract_rows),
+        "entry_event_rows": len(event_rows),
         "failures": failures,
         "contract_pass_rate": safe_float(contract_df["contract_pass"].mean()) if "contract_pass" in contract_df else None,
         "behavior_pass_rate": safe_float(behavior_df["alignment_pass"].mean()) if "alignment_pass" in behavior_df else None,
         "top_scores": top_scores,
+        "top_entry_events": top_entry_events,
     }
 
 
@@ -626,6 +767,7 @@ def print_report(summary: dict[str, Any], score_rows: list[dict[str, Any]], beha
     print("Indicator Validation Summary")
     print(f"Files discovered: {summary['files_discovered']}")
     print(f"Score metric rows: {summary['score_metric_rows']}")
+    print(f"Entry event rows: {summary.get('entry_event_rows', 0)}")
     print(f"Contract pass rate: {format_pct(summary.get('contract_pass_rate'))}")
     print(f"Behaviour pass rate: {format_pct(summary.get('behavior_pass_rate'))}")
     if failures:
@@ -640,6 +782,15 @@ def print_report(summary: dict[str, Any], score_rows: list[dict[str, Any]], beha
             print(
                 f"  {row.get('score')}: validity={float(row.get('avg_validity') or 0):.3f} "
                 f"edge={float(row.get('avg_edge') or 0):.5f} tests={int(row.get('tested_windows') or 0)}"
+            )
+    top_entry_events = summary.get("top_entry_events") or []
+    if top_entry_events:
+        print("")
+        print("Top suggested-entry events")
+        for row in top_entry_events[:10]:
+            print(
+                f"  {row.get('event')}: edge={float(row.get('avg_edge') or 0):.5f} "
+                f"win={float(row.get('avg_win_rate') or 0):.3f} events={int(row.get('total_events') or 0)}"
             )
 
 
@@ -658,6 +809,15 @@ def normalize_observed(series: Series) -> Series:
     if numeric.min() >= 0.0 and numeric.max() <= 1.0:
         return numeric
     return clip01((numeric - numeric.rolling(240, min_periods=20).min()) / (numeric.rolling(240, min_periods=20).max() - numeric.rolling(240, min_periods=20).min()).replace(0.0, np.nan))
+
+
+def safe_corr(left: Series, right: Series) -> float:
+    values = pd.DataFrame({"left": left, "right": right}).replace([np.inf, -np.inf], np.nan).dropna()
+    if len(values) < 3:
+        return np.nan
+    if float(values["left"].std(ddof=0)) <= 1e-12 or float(values["right"].std(ddof=0)) <= 1e-12:
+        return np.nan
+    return float(values["left"].corr(values["right"]))
 
 
 def clip01(value: Any) -> Any:

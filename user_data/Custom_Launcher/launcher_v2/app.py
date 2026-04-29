@@ -74,6 +74,7 @@ class LauncherV2(tk.Tk):
         )
         self.state_path = app_dir / "launcher_v2" / "runtime" / "launcher_v2_state.json"
         self.process_runner = ProcessRunner(self.output_queue, log_dir=app_dir / "launcher_v2" / "runtime" / "process_logs")
+        self._closing = False
         self.context = LauncherContext(
             app_dir=app_dir,
             preset_path=self.state_path,
@@ -264,7 +265,6 @@ class LauncherV2(tk.Tk):
                 "auto_epochs_cap": preset.get("explorer_auto_epochs_cap"),
                 "random_state": preset.get("explorer_random_state"),
                 "sampling_seed": preset.get("explorer_sampling_seed"),
-                "backtest_workers": preset.get("explorer_backtest_workers"),
                 "split_venv_pipeline": preset.get("explorer_split_venv_pipeline"),
                 "backtest_python_exe": preset.get("explorer_backtest_python_exe"),
                 "pipeline_handoff_dir": preset.get("explorer_pipeline_handoff_dir"),
@@ -442,7 +442,6 @@ class LauncherV2(tk.Tk):
             "explorer_auto_epochs_cap": explorer.get("auto_epochs_cap", ""),
             "explorer_random_state": explorer.get("random_state", ""),
             "explorer_sampling_seed": explorer.get("sampling_seed", ""),
-            "explorer_backtest_workers": explorer.get("backtest_workers", "12"),
             "explorer_split_venv_pipeline": bool(explorer.get("split_venv_pipeline", False)),
             "explorer_backtest_python_exe": explorer.get("backtest_python_exe", ""),
             "explorer_pipeline_handoff_dir": explorer.get("pipeline_handoff_dir", ""),
@@ -568,7 +567,8 @@ class LauncherV2(tk.Tk):
                     "log_file": str(self.process_runner.last_log_file or ""),
                 }
             )
-        self.after(10 if processed >= OUTPUT_DRAIN_MAX_LINES or char_count >= OUTPUT_DRAIN_MAX_CHARS else 75, self._drain_output_queue)
+        if not self._closing:
+            self.after(10 if processed >= OUTPUT_DRAIN_MAX_LINES or char_count >= OUTPUT_DRAIN_MAX_CHARS else 75, self._drain_output_queue)
 
     def _dispatch_process_output(self, payload: dict[str, Any]) -> None:
         owner = str(payload.get("owner") or "")
@@ -591,6 +591,11 @@ class LauncherV2(tk.Tk):
                 tab.on_app_event("process_output", payload)
 
     def _on_close(self) -> None:
+        self._closing = True
+        if self.process_runner.is_running():
+            self.shared.status.set("Stopping Freqtrade process tree")
+            self.update_idletasks()
+            self.process_runner.stop(timeout_seconds=8.0)
         self.destroy()
 
 

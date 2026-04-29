@@ -96,8 +96,7 @@
     "explorer_max_loops": "0",
     "explorer_epochs": "200",
     "explorer_random_state": "1",
-    "explorer_sampling_seed": "",
-    "explorer_backtest_workers": "1"
+    "explorer_sampling_seed": ""
   },
   "Backup": {
     "run_type": "Hyperopt",
@@ -196,8 +195,7 @@
     "explorer_max_loops": "0",
     "explorer_epochs": "200",
     "explorer_random_state": "1",
-    "explorer_sampling_seed": "",
-    "explorer_backtest_workers": "1"
+    "explorer_sampling_seed": ""
   },
   "BackTest2021-26": {
     "run_type": "Backtest",
@@ -336,8 +334,7 @@
     "explorer_max_loops": "0",
     "explorer_epochs": "200",
     "explorer_random_state": "0",
-    "explorer_sampling_seed": "",
-    "explorer_backtest_workers": "16"
+    "explorer_sampling_seed": ""
   },
   "top10": {
     "run_type": "Backtest",
@@ -476,8 +473,7 @@
     "explorer_max_loops": "0",
     "explorer_epochs": "200",
     "explorer_random_state": "0",
-    "explorer_sampling_seed": "",
-    "explorer_backtest_workers": "16"
+    "explorer_sampling_seed": ""
   },
   "LauncherV2-current": {
     "run_type": "Backtest",
@@ -616,13 +612,22 @@
     "explorer_max_loops": "20",
     "explorer_epochs": "10",
     "explorer_random_state": "",
-    "explorer_sampling_seed": "",
-    "explorer_backtest_workers": "12"
+    "explorer_sampling_seed": ""
   },
   "LauncherV2-auto": {
     "run_type": "Backtest",
     "run_extra_args": "",
-    "reason": "explorer_run",
+    "run_raw_console": {
+      "search_term": "",
+      "search_terms": [],
+      "follow_tail": true
+    },
+    "run_results_console": {
+      "search_term": "",
+      "search_terms": [],
+      "follow_tail": true
+    },
+    "reason": "orderbook_start",
     "project_root": "C:\\FreqTradeStuff\\_worktrees\\freqtrade-new2026-clean",
     "python_exe": "C:\\Python3-11\\python.exe",
     "userdir": "C:\\FreqTradeStuff\\_worktrees\\freqtrade-new2026-clean\\user_data",
@@ -640,16 +645,16 @@
     "timeframe": "1h",
     "timerange": "20200101-20260102",
     "max_open_trades": "",
-    "stake_amount": "",
-    "dry_run_wallet": "1000",
+    "stake_amount": "100",
+    "dry_run_wallet": "10000",
     "fee": "",
     "backtest_export": "signals",
     "backtest_breakdown": "none",
     "hyperopt_epochs": "200",
     "hyperopt_spaces": "buy sell roi stoploss ",
-    "hyperopt_jobs": "15",
+    "hyperopt_jobs": "10",
     "hyperopt_random_state": "",
-    "hyperopt_loss": "CalmarHyperOptLoss",
+    "hyperopt_loss": "ProfitWinrateModerateRiskHyperOptLoss",
     "hyperopt_ignore_missing_spaces": true,
     "hyperopt_disable_param_export": false,
     "download_exchange": "",
@@ -691,10 +696,15 @@
     "review_rejected_signals": false,
     "review_analysis_to_csv": false,
     "review_analysis_csv_path": "",
+    "review_console": {
+      "search_term": "",
+      "search_terms": [],
+      "follow_tail": true
+    },
     "explorer_target_type": "mode",
     "explorer_target_selection": "specific",
-    "explorer_target_name": "pivot_trendline_resistance_breakout",
-    "explorer_search_breadth": "open",
+    "explorer_target_name": "",
+    "explorer_search_breadth": "targeted",
     "explorer_training_windows": [
       "late_2020_consolidation",
       "spring_2021_crash",
@@ -707,10 +717,9 @@
     "explorer_max_loops": "0",
     "explorer_epochs": "60",
     "explorer_auto_epochs": true,
-    "explorer_auto_epochs_cap": "400",
+    "explorer_auto_epochs_cap": "100",
     "explorer_random_state": "0",
     "explorer_sampling_seed": "",
-    "explorer_backtest_workers": "16",
     "explorer_split_venv_pipeline": true,
     "explorer_backtest_python_exe": "C:\\FreqTradeStuff\\_worktrees\\freqtrade-new2026-clean\\runtime\\venvs\\freqtrade-backtest\\Scripts\\python.exe",
     "explorer_pipeline_handoff_dir": "C:\\FreqTradeStuff\\_worktrees\\freqtrade-new2026-clean\\user_data\\explorer_reports\\pipeline",
@@ -750,6 +759,11 @@
     "file_converter_recursive": true,
     "file_converter_filter": "All",
     "file_converter_replace_existing": true,
+    "file_converter_console": {
+      "search_term": "",
+      "search_terms": [],
+      "follow_tail": true
+    },
     "indicator_validator_datadir": "C:\\FreqTradeStuff\\_worktrees\\freqtrade-new2026-clean\\user_data\\data",
     "indicator_validator_pairs": "",
     "indicator_validator_timeframes": "1h",
@@ -766,6 +780,11 @@
     "indicator_validator_profile_window": "96",
     "indicator_validator_profile_bins": "48",
     "indicator_validator_profile_chunk_size": "512",
-    "indicator_validator_quiet": false
+    "indicator_validator_quiet": false,
+    "indicator_validator_console": {
+      "search_term": "",
+      "search_terms": [],
+      "follow_tail": true
+    }
   }
 }
