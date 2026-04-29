@@ -4,7 +4,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from pandas import DataFrame
+from pandas import DataFrame, Series
 
 REGIME_CODE_CRASH = -2
 REGIME_CODE_BEAR = -1
@@ -13,20 +13,334 @@ REGIME_CODE_BULL = 1
 REGIME_CODE_UNKNOWN = 9
 
 
-def _float_col(dataframe: DataFrame, column: str) -> pd.Series:
-    if column not in dataframe.columns:
-        return pd.Series(np.nan, index=dataframe.index, dtype="float64")
-    return pd.to_numeric(dataframe[column], errors="coerce")
+def add_regime_input_columns(dataframe: DataFrame, params: dict[str, Any]) -> DataFrame:
+    """Append reusable OHLCV market-regime inputs.
+
+    This module intentionally avoids strategy-specific BTC/pair context,
+    position-adjustment, and stake logic. It emits evidence about the traded
+    market itself: EMA trend stack, ADX/DMI trend quality, ATR expansion,
+    drawdown from recent highs, range compression, and relative volume.
+    """
+
+    _validate_ohlcv(dataframe)
+    frame = dataframe.copy()
+    close = _float_col(frame, "close").replace(0.0, np.nan)
+    high = _float_col(frame, "high")
+    low = _float_col(frame, "low")
+    volume = _float_col(frame, "volume").clip(lower=0.0).fillna(0.0)
+
+    atr_period = _positive_int(params.get("regime_atr_period", 14), 14)
+    atr_ema_window = _positive_int(params.get("regime_atr_ema_window", 96), 96)
+    adx_period = _positive_int(params.get("regime_adx_period", 14), 14)
+    ema_fast_window = _positive_int(params.get("regime_ema_fast", 48), 48)
+    ema_slow_window = _positive_int(params.get("regime_ema_slow", 144), 144)
+    ema_long_window = _positive_int(params.get("regime_ema_long", 480), 480)
+    volume_window = _positive_int(params.get("regime_volume_window", 96), 96)
+    range_window = _positive_int(params.get("regime_range_window", 72), 72)
+    slope_window = _positive_int(params.get("regime_slope_window", 48), 48)
+    drawdown_window = _positive_int(params.get("regime_drawdown_window", 240), 240)
+
+    atr = _true_range(frame).ewm(alpha=1.0 / atr_period, adjust=False, min_periods=atr_period).mean()
+    atr_pct = _ratio(atr, close)
+    atr_pct_ema = atr_pct.ewm(span=atr_ema_window, min_periods=max(2, atr_ema_window // 4), adjust=False).mean()
+    dmi = _dmi(frame, adx_period)
+
+    ema_fast = close.ewm(span=ema_fast_window, min_periods=ema_fast_window, adjust=False).mean()
+    ema_slow = close.ewm(span=ema_slow_window, min_periods=ema_slow_window, adjust=False).mean()
+    ema_long = close.ewm(span=ema_long_window, min_periods=max(2, ema_long_window // 4), adjust=False).mean()
+    trend_slope_pct = ema_slow.pct_change(slope_window)
+    price_location_atr = _ratio(close - ema_slow, atr)
+
+    volume_mean = volume.rolling(volume_window, min_periods=max(2, volume_window // 4)).mean()
+    recent_high = high.rolling(drawdown_window, min_periods=max(2, drawdown_window // 4)).max()
+    range_span = _ratio(
+        high.rolling(range_window, min_periods=max(2, range_window // 4)).max()
+        - low.rolling(range_window, min_periods=max(2, range_window // 4)).min(),
+        close,
+    )
+    range_peak = range_span.rolling(range_window, min_periods=max(2, range_window // 4)).max()
+
+    bull_core = close.gt(ema_fast) & ema_fast.gt(ema_slow) & ema_slow.gt(ema_long) & dmi["plus_di"].gt(dmi["minus_di"])
+    bear_core = close.lt(ema_fast) & ema_fast.lt(ema_slow) & ema_slow.lt(ema_long) & dmi["minus_di"].gt(dmi["plus_di"])
+
+    frame["regime_atr"] = atr
+    frame["regime_atr_pct"] = atr_pct
+    frame["regime_atr_pct_ema"] = atr_pct_ema
+    frame["regime_atr_ratio"] = _ratio(atr_pct, atr_pct_ema).replace([np.inf, -np.inf], np.nan)
+    frame["regime_adx"] = dmi["adx"]
+    frame["regime_plus_di"] = dmi["plus_di"]
+    frame["regime_minus_di"] = dmi["minus_di"]
+    frame["regime_ema_fast"] = ema_fast
+    frame["regime_ema_slow"] = ema_slow
+    frame["regime_ema_long"] = ema_long
+    frame["regime_trend_slope_pct"] = trend_slope_pct
+    frame["regime_price_location_atr"] = price_location_atr
+    frame["regime_volume_ratio"] = _ratio(volume, volume_mean)
+    frame["regime_drawdown_from_recent_high"] = _ratio(recent_high - close, recent_high).clip(lower=0.0)
+    frame["regime_range_compression_score"] = (1.0 - _ratio(range_span, range_peak)).clip(lower=0.0, upper=1.0).fillna(0.0)
+    frame["regime_bull_core"] = bull_core.fillna(False)
+    frame["regime_bear_core"] = bear_core.fillna(False)
+
+    for confirm in _confirm_choices(params):
+        window = max(1, int(confirm))
+        frame[f"regime_bull_confirm_{window}"] = bull_core.astype("int8").rolling(window, min_periods=window).sum().ge(window)
+        frame[f"regime_bear_confirm_{window}"] = bear_core.astype("int8").rolling(window, min_periods=window).sum().ge(window)
+
+    selected_confirm = max(1, int(params.get("regime_confirm_bars", 1)))
+    bull_confirm_count = bull_core.astype("int8").rolling(selected_confirm, min_periods=1).sum().fillna(0.0)
+    bear_confirm_count = bear_core.astype("int8").rolling(selected_confirm, min_periods=1).sum().fillna(0.0)
+    frame["regime_confirm_count"] = np.maximum(bull_confirm_count, bear_confirm_count).astype("float64")
+    return frame
 
 
-def _bool_col(dataframe: DataFrame, column: str) -> pd.Series:
-    if column not in dataframe.columns:
-        return pd.Series(False, index=dataframe.index, dtype="bool")
-    return pd.Series(dataframe[column], index=dataframe.index).astype("boolean").fillna(False).astype(bool)
+def add_regime_score_columns(dataframe: DataFrame, params: dict[str, Any]) -> DataFrame:
+    frame = dataframe.copy()
+    trend_min = float(params.get("regime_adx_trend_min", 22.0))
+    bear_spike = float(params.get("regime_bear_atr_spike", 1.5))
+    confirm = max(1, int(params.get("regime_confirm_bars", 1)))
+    slope_scale = max(float(params.get("regime_slope_scale", 0.035)), 1e-9)
+    volume_confirm_min = max(float(params.get("regime_volume_confirm_min", 1.05)), 1e-9)
+
+    adx = _float_col(frame, "regime_adx")
+    atr_ratio = _float_col(frame, "regime_atr_ratio")
+    volume_ratio = _float_col(frame, "regime_volume_ratio")
+    slope = _float_col(frame, "regime_trend_slope_pct")
+    price_location = _float_col(frame, "regime_price_location_atr")
+    drawdown = _float_col(frame, "regime_drawdown_from_recent_high").fillna(0.0)
+    compression = _float_col(frame, "regime_range_compression_score").fillna(0.0)
+
+    bull_confirm = _bool_col(frame, f"regime_bull_confirm_{confirm}") | _bool_col(frame, "regime_bull_core")
+    bear_confirm = _bool_col(frame, f"regime_bear_confirm_{confirm}") | _bool_col(frame, "regime_bear_core")
+    trend_strength = _clip01((adx - trend_min * 0.55) / max(trend_min * 0.75, 1e-9))
+    volume_confirm = _clip01((volume_ratio - 0.75) / max(volume_confirm_min - 0.75, 1e-9))
+    slope_up = _clip01(slope / slope_scale)
+    slope_down = _clip01(-slope / slope_scale)
+    price_above = _clip01(price_location / 2.0)
+    price_below = _clip01(-price_location / 2.0)
+    volatility_expansion = _clip01((atr_ratio - 1.0) / max(bear_spike - 1.0, 1e-9))
+    drawdown_pressure = _clip01(drawdown / 0.15)
+
+    base_valid = adx.notna() & atr_ratio.notna() & slope.notna()
+    bull_score = _clip01(
+        0.30 * bull_confirm.astype("float64")
+        + 0.25 * trend_strength
+        + 0.20 * slope_up
+        + 0.15 * price_above
+        + 0.10 * volume_confirm
+    ).where(base_valid, 0.0)
+    bear_score = _clip01(
+        0.30 * bear_confirm.astype("float64")
+        + 0.25 * trend_strength
+        + 0.20 * slope_down
+        + 0.15 * price_below
+        + 0.10 * drawdown_pressure
+    ).where(base_valid, 0.0)
+    chop_score = _clip01(
+        0.35 * (adx.lt(trend_min * 0.75)).astype("float64")
+        + 0.30 * compression
+        + 0.20 * atr_ratio.lt(1.10).astype("float64")
+        + 0.15 * (~bull_confirm & ~bear_confirm).astype("float64")
+    ).where(base_valid, 0.0)
+    crash_score = _clip01(
+        0.40 * bear_score
+        + 0.35 * volatility_expansion
+        + 0.25 * drawdown_pressure
+    ).where(base_valid, 0.0)
+
+    frame["regime_bull_score"] = bull_score
+    frame["regime_bear_score"] = bear_score
+    frame["regime_chop_score"] = chop_score
+    frame["regime_crash_score"] = crash_score
+    frame["regime_crash_pressure"] = crash_score
+    frame["regime_bear_pressure"] = np.maximum(bear_score, crash_score).clip(0.0, 1.0)
+    frame["regime_bull_pressure"] = (bull_score * (1.0 - frame["regime_bear_pressure"])).clip(0.0, 1.0)
+    frame["regime_directional_pressure"] = frame["regime_bull_pressure"] - frame["regime_bear_pressure"]
+    frame["regime_bull_flag"] = bull_score.ge(0.55) & bull_score.gt(bear_score) & base_valid
+    frame["regime_bear_flag"] = bear_score.ge(0.55) & bear_score.gt(bull_score) & base_valid
+    frame["regime_crash_flag"] = crash_score.ge(0.70) & drawdown.ge(0.06) & base_valid
+    frame["regime_core_valid"] = base_valid
+    return frame
 
 
-def _ratio(numerator: pd.Series, denominator: pd.Series) -> pd.Series:
-    return numerator / denominator.replace(0.0, np.nan)
+def add_regime_state_columns(dataframe: DataFrame, params: dict[str, Any]) -> DataFrame:
+    frame = dataframe.copy()
+    valid = _bool_col(frame, "regime_core_valid")
+    confirm = max(1, int(params.get("regime_confirm_bars", 1)))
+    cooldown = max(2, int(params.get("regime_event_cooldown_bars", 8)))
+    early_bear_min = float(params.get("regime_early_bear_min", 0.42))
+    early_crash_min = float(params.get("regime_early_crash_min", 0.58))
+    bull_recovery_min = float(params.get("regime_bull_recovery_min", 0.48))
+    bull_pressure = _float_col(frame, "regime_bull_pressure").fillna(0.0)
+    bear_pressure = _float_col(frame, "regime_bear_pressure").fillna(0.0)
+    crash_pressure = _float_col(frame, "regime_crash_pressure").fillna(0.0)
+    directional_pressure = _float_col(frame, "regime_directional_pressure").fillna(0.0)
+    chop_score = _float_col(frame, "regime_chop_score").fillna(0.0)
+    atr_ratio = _float_col(frame, "regime_atr_ratio").fillna(1.0)
+    drawdown = _float_col(frame, "regime_drawdown_from_recent_high").fillna(0.0)
+    slope = _float_col(frame, "regime_trend_slope_pct").fillna(0.0)
+    price_location = _float_col(frame, "regime_price_location_atr").fillna(0.0)
+
+    early_bear_warning = valid & (
+        (
+            bear_pressure.ge(early_bear_min)
+            & directional_pressure.le(-0.08)
+            & (price_location.lt(-0.25) | slope.lt(0.0) | drawdown.ge(0.04))
+        )
+        | (drawdown.ge(0.07) & price_location.lt(0.0) & atr_ratio.ge(1.05))
+    )
+    crash_warning = valid & (
+        crash_pressure.ge(early_crash_min)
+        | (drawdown.ge(0.10) & atr_ratio.ge(1.20) & price_location.lt(-0.50))
+    )
+    bull_recovery = valid & (
+        bull_pressure.ge(bull_recovery_min)
+        & directional_pressure.ge(0.08)
+        & slope.ge(0.0)
+        & price_location.gt(0.0)
+    )
+
+    crash_candidate = valid & _confirmed(crash_warning, confirm)
+    bear_candidate = valid & _confirmed(early_bear_warning, confirm)
+    bull_candidate = valid & _confirmed(bull_recovery, confirm)
+    chop_candidate = valid & chop_score.ge(0.62) & bull_pressure.lt(0.40) & bear_pressure.lt(0.40)
+
+    regime_code = pd.Series(REGIME_CODE_UNKNOWN, index=frame.index, dtype="int64")
+    regime_code = regime_code.where(~valid, REGIME_CODE_CHOP)
+    regime_code = regime_code.where(~chop_candidate, REGIME_CODE_CHOP)
+    regime_code = regime_code.where(~bull_candidate, REGIME_CODE_BULL)
+    regime_code = regime_code.where(~bear_candidate, REGIME_CODE_BEAR)
+    regime_code = regime_code.where(~crash_candidate, REGIME_CODE_CRASH)
+    frame["regime_code"] = regime_code
+
+    bullish_chop = valid & regime_code.eq(REGIME_CODE_CHOP) & bull_pressure.gt(bear_pressure + 0.08)
+    bearish_chop = valid & regime_code.eq(REGIME_CODE_CHOP) & (
+        bear_pressure.gt(bull_pressure + 0.08) | early_bear_warning
+    )
+    market_context = pd.Series(
+        np.select(
+            [
+                regime_code.eq(REGIME_CODE_BULL),
+                bullish_chop,
+                regime_code.isin([REGIME_CODE_BEAR, REGIME_CODE_CRASH]),
+                bearish_chop,
+            ],
+            [2.0, 1.0, -2.0, -1.0],
+            default=0.0,
+        ),
+        index=frame.index,
+        dtype="float64",
+    ).where(valid, 0.0)
+    frame["regime_market_context"] = market_context
+    frame["regime_bear_warning"] = early_bear_warning
+    frame["regime_crash_warning"] = crash_warning
+    frame["regime_bull_recovery"] = bull_recovery
+    frame["regime_entry_risk_on_long"] = _dedupe_events(bull_recovery & market_context.gt(0.0), cooldown)
+    frame["regime_entry_risk_off_short"] = _dedupe_events(early_bear_warning | crash_warning, cooldown)
+    frame["regime_suggested_entry_long"] = frame["regime_entry_risk_on_long"]
+    frame["regime_suggested_entry_short"] = frame["regime_entry_risk_off_short"]
+    frame["regime_hold_long"] = valid & market_context.gt(0.0) & ~early_bear_warning & ~crash_warning
+    frame["regime_hold_short"] = valid & market_context.lt(0.0)
+    frame["regime_exit_long"] = _dedupe_events(early_bear_warning | crash_warning | regime_code.isin([REGIME_CODE_BEAR, REGIME_CODE_CRASH]), cooldown)
+    frame["regime_exit_short"] = _dedupe_events(bull_recovery | regime_code.eq(REGIME_CODE_BULL), cooldown)
+    frame["regime_score_long"] = bull_pressure
+    frame["regime_score_short"] = bear_pressure
+    frame["regime_score_abs"] = pd.concat([bull_pressure, bear_pressure, crash_pressure], axis=1).max(axis=1)
+    frame["regime_state"] = pd.Series(
+        np.select([market_context.gt(0.0), market_context.lt(0.0)], [1.0, -1.0], default=0.0),
+        index=frame.index,
+        dtype="float64",
+    )
+
+    scores = np.column_stack(
+        [
+            _float_col(frame, "regime_bull_score").fillna(0.0).to_numpy(),
+            _float_col(frame, "regime_bear_score").fillna(0.0).to_numpy(),
+            _float_col(frame, "regime_chop_score").fillna(0.0).to_numpy(),
+            _float_col(frame, "regime_crash_score").fillna(0.0).to_numpy(),
+        ]
+    )
+    top = scores.max(axis=1)
+    second = np.partition(scores, -2, axis=1)[:, -2]
+    frame["regime_confidence"] = pd.Series(np.clip(top - second, 0.0, 1.0), index=frame.index).where(valid, 0.0)
+    prev_code = regime_code.shift(1).fillna(REGIME_CODE_UNKNOWN).astype("int64")
+    frame["regime_changed"] = regime_code.ne(prev_code) & valid & prev_code.ne(REGIME_CODE_UNKNOWN)
+    return frame
+
+
+def add_regime_response_columns(dataframe: DataFrame, params: dict[str, Any]) -> DataFrame:
+    """Append simple regime response multipliers for legacy callers.
+
+    New strategy research should treat these as optional outputs. The core
+    indicator value is in the input, score, and state columns above.
+    """
+
+    frame = dataframe.copy()
+    bull = _float_col(frame, "regime_bull_pressure").fillna(0.0).clip(0.0, 1.0)
+    bear = _float_col(frame, "regime_bear_pressure").fillna(0.0).clip(0.0, 1.0)
+    crash = _float_col(frame, "regime_crash_pressure").fillna(0.0).clip(0.0, 1.0)
+    weight_sum = bull + bear
+    overweight = weight_sum.gt(1.0)
+    bull_weight = bull.where(~overweight, _ratio(bull, weight_sum)).fillna(0.0)
+    bear_weight = bear.where(~overweight, _ratio(bear, weight_sum)).fillna(0.0)
+    chop = (1.0 - bull_weight - bear_weight).clip(0.0, 1.0)
+
+    frame["regime_gap_mult_active"] = (
+        chop * float(params.get("regime_gap_mult_chop", 1.0))
+        + bull_weight * float(params.get("regime_gap_mult_bull", 0.85))
+        + bear_weight * float(params.get("regime_gap_mult_bear", 1.25))
+    )
+    frame["regime_exit_mult_active"] = (
+        chop * float(params.get("regime_exit_mult_chop", 1.0))
+        + bull_weight * float(params.get("regime_exit_mult_bull", 1.15))
+        + bear_weight * float(params.get("regime_exit_mult_bear", 0.85))
+    )
+    frame["regime_risk_mult_active"] = (1.0 + bull_weight * 0.15 - bear_weight * 0.25 - crash * 0.35).clip(0.25, 1.25)
+    frame["regime_stake_mult_active"] = (1.0 + bull_weight * 0.20 - bear_weight * 0.25 - crash * 0.40).clip(0.20, 1.25)
+    frame["regime_spacing_mult_active"] = (1.0 - bull_weight * 0.15 + bear_weight * 0.35 + crash * 0.50).clip(0.75, 1.75)
+    frame["regime_peel_fraction_mult_active"] = (1.0 - bull_weight * 0.10 + bear_weight * 0.30 + crash * 0.45).clip(0.75, 1.75)
+    return frame
+
+
+def add_market_regime(dataframe: DataFrame, params: dict[str, Any] | None = None) -> DataFrame:
+    """Convenience wrapper for the full regime indicator pass."""
+
+    resolved = params or {}
+    out = add_regime_input_columns(dataframe, resolved)
+    out = add_regime_score_columns(out, resolved)
+    return add_regime_state_columns(out, resolved)
+
+
+def _dmi(frame: DataFrame, period: int) -> dict[str, Series]:
+    high = _float_col(frame, "high")
+    low = _float_col(frame, "low")
+    up_move = high.diff()
+    down_move = -low.diff()
+    plus_dm = pd.Series(np.where((up_move > down_move) & (up_move > 0.0), up_move, 0.0), index=frame.index, dtype="float64")
+    minus_dm = pd.Series(np.where((down_move > up_move) & (down_move > 0.0), down_move, 0.0), index=frame.index, dtype="float64")
+    atr = _true_range(frame).ewm(alpha=1.0 / period, adjust=False, min_periods=period).mean()
+    plus_di = 100.0 * _ratio(plus_dm.ewm(alpha=1.0 / period, adjust=False, min_periods=period).mean(), atr)
+    minus_di = 100.0 * _ratio(minus_dm.ewm(alpha=1.0 / period, adjust=False, min_periods=period).mean(), atr)
+    dx = 100.0 * _ratio((plus_di - minus_di).abs(), plus_di + minus_di)
+    adx = dx.ewm(alpha=1.0 / period, adjust=False, min_periods=period).mean()
+    return {"adx": adx, "plus_di": plus_di, "minus_di": minus_di}
+
+
+def _true_range(frame: DataFrame) -> Series:
+    high = _float_col(frame, "high")
+    low = _float_col(frame, "low")
+    close = _float_col(frame, "close")
+    prev_close = close.shift(1)
+    return pd.concat([(high - low).abs(), (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(axis=1)
+
+
+def _confirmed(candidate: Series, window: int) -> Series:
+    return candidate.astype("int8").rolling(max(1, int(window)), min_periods=max(1, int(window))).sum().fillna(0.0).ge(window)
+
+
+def _dedupe_events(mask: Series, cooldown_bars: int) -> Series:
+    event = pd.Series(mask, index=mask.index).astype("boolean").fillna(False).astype(bool)
+    previous_count = event.astype("float64").shift(1).rolling(max(1, int(cooldown_bars)), min_periods=1).sum().fillna(0.0)
+    return event & previous_count.eq(0.0)
 
 
 def _confirm_choices(params: dict[str, Any]) -> list[int]:
@@ -44,259 +358,37 @@ def _confirm_choices(params: dict[str, Any]) -> list[int]:
     return sorted(set(values))
 
 
-def add_regime_input_columns(dataframe: DataFrame, params: dict[str, Any]) -> DataFrame:
-    frame = dataframe.copy()
-    atr_pct_col = str(params.get("atr_pct_col") or "atr_pct_96")
-    atr_pct_ema_col = str(params.get("atr_pct_ema_col") or "atr_pct_ema_96_40")
-    volume_ratio_col = str(params.get("volume_ratio_col") or "volume_ratio_10")
-
-    close = _float_col(frame, "close")
-    high = _float_col(frame, "high")
-    low = _float_col(frame, "low")
-    atr_pct = _float_col(frame, atr_pct_col)
-    atr_pct_ema = _float_col(frame, atr_pct_ema_col)
-
-    frame["regime_adx"] = _float_col(frame, "adx")
-    frame["regime_atr_pct"] = atr_pct
-    frame["regime_atr_pct_ema"] = atr_pct_ema
-    frame["regime_atr_ratio"] = _ratio(atr_pct, atr_pct_ema).replace([np.inf, -np.inf], np.nan)
-    frame["regime_volume_ratio"] = _float_col(frame, volume_ratio_col)
-    frame["regime_btc_1d_rsi"] = _float_col(frame, "btc_1d_rsi")
-
-    recent_high = high.rolling(72, min_periods=1).max()
-    frame["regime_drawdown_from_recent_high"] = _ratio(recent_high - close, recent_high).clip(lower=0.0)
-
-    range_span = _ratio(high.rolling(24, min_periods=1).max() - low.rolling(24, min_periods=1).min(), close)
-    range_peak = range_span.rolling(24, min_periods=1).max()
-    frame["regime_range_compression_score"] = (1.0 - _ratio(range_span, range_peak)).clip(lower=0.0, upper=1.0).fillna(0.0)
-
-    btc_bull_stack = _bool_col(frame, "btc_1d_trend_stack_bull")
-    btc_bear_stack = _bool_col(frame, "btc_1d_trend_stack_bear")
-    pair_bull_stack = _bool_col(frame, "pair_1d_trend_stack_bull")
-    pair_bear_stack = _bool_col(frame, "pair_1d_trend_stack_bear")
-    btc_breakout = _bool_col(frame, "btc_1d_breakout_confirmed") | _bool_col(frame, "btc_1d_breakout_retest_hold")
-    pair_breakout = _bool_col(frame, "pair_1d_breakout_confirmed") | _bool_col(frame, "pair_1d_breakout_retest_hold")
-    btc_support = _bool_col(frame, "btc_1d_support_reversal_confirmed") | _bool_col(frame, "btc_1d_support_bounce_confirmed")
-    pair_support = _bool_col(frame, "pair_1d_support_reversal_confirmed") | _bool_col(frame, "pair_1d_support_bounce_confirmed")
-
-    frame["regime_btc_1d_trend_score"] = (
-        btc_bull_stack.astype("int8")
-        + btc_breakout.astype("int8")
-        + btc_support.astype("int8")
-        - btc_bear_stack.astype("int8")
-    ).astype("float64")
-    frame["regime_pair_1d_trend_score"] = (
-        pair_bull_stack.astype("int8")
-        + pair_breakout.astype("int8")
-        + pair_support.astype("int8")
-        - pair_bear_stack.astype("int8")
-    ).astype("float64")
-
-    trend_stack_bull = _bool_col(frame, "trend_stack_bull")
-    trend_stack_bear = _bool_col(frame, "trend_stack_bear")
-    di_bull = _bool_col(frame, "di_bull")
-    di_bear = _bool_col(frame, "di_bear")
-    regime_bull_core = trend_stack_bull & di_bull
-    regime_bear_core = trend_stack_bear & di_bear
-    frame["regime_bull_core"] = regime_bull_core
-    frame["regime_bear_core"] = regime_bear_core
-
-    for confirm in _confirm_choices(params):
-        window = max(1, int(confirm))
-        frame[f"regime_bull_confirm_{window}"] = (regime_bull_core.astype("int8").rolling(window).sum() >= window)
-        frame[f"regime_bear_confirm_{window}"] = (regime_bear_core.astype("int8").rolling(window).sum() >= window)
-
-    selected_confirm = max(1, int(params.get("regime_confirm_bars", 1)))
-    bull_confirm_count = regime_bull_core.astype("int8").rolling(selected_confirm).sum().fillna(0.0)
-    bear_confirm_count = regime_bear_core.astype("int8").rolling(selected_confirm).sum().fillna(0.0)
-    frame["regime_confirm_count"] = np.maximum(bull_confirm_count, bear_confirm_count).astype("float64")
-    return frame
+def _positive_int(value: Any, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
 
 
-def add_regime_score_columns(dataframe: DataFrame, params: dict[str, Any]) -> DataFrame:
-    frame = dataframe.copy()
-    trend_min = float(params.get("regime_adx_trend_min", 25.0))
-    bear_spike = float(params.get("regime_bear_atr_spike", 1.5))
-    confirm = max(1, int(params.get("regime_confirm_bars", 1)))
-    use_btc_regime = bool(params.get("use_btc_1d_rsi_regime", False))
-    use_pair_context = bool(params.get("enable_pair_1d_context", False))
-    btc_bull_min = float(params.get("btc_1d_rsi_bull_min", 55.0))
-    btc_bear_max = float(params.get("btc_1d_rsi_bear_max", 40.0))
-
-    adx = _float_col(frame, "regime_adx")
-    atr_pct = _float_col(frame, "regime_atr_pct")
-    atr_pct_ema = _float_col(frame, "regime_atr_pct_ema")
-    atr_ratio = _float_col(frame, "regime_atr_ratio")
-    btc_rsi = _float_col(frame, "regime_btc_1d_rsi")
-    pair_rsi = _float_col(frame, "pair_1d_rsi")
-    btc_adx = _float_col(frame, "btc_1d_adx")
-    pair_adx = _float_col(frame, "pair_1d_adx")
-
-    bull_confirm = _bool_col(frame, f"regime_bull_confirm_{confirm}")
-    bear_confirm = _bool_col(frame, f"regime_bear_confirm_{confirm}")
-
-    btc_bull_stack = _bool_col(frame, "btc_1d_trend_stack_bull")
-    btc_bear_stack = _bool_col(frame, "btc_1d_trend_stack_bear")
-    pair_bull_stack = _bool_col(frame, "pair_1d_trend_stack_bull")
-    pair_bear_stack = _bool_col(frame, "pair_1d_trend_stack_bear")
-    btc_breakout = _bool_col(frame, "btc_1d_breakout_confirmed") | _bool_col(frame, "btc_1d_breakout_retest_hold")
-    pair_breakout = _bool_col(frame, "pair_1d_breakout_confirmed") | _bool_col(frame, "pair_1d_breakout_retest_hold")
-    btc_support = _bool_col(frame, "btc_1d_support_reversal_confirmed") | _bool_col(frame, "btc_1d_support_bounce_confirmed")
-    pair_support = _bool_col(frame, "pair_1d_support_reversal_confirmed") | _bool_col(frame, "pair_1d_support_bounce_confirmed")
-
-    pair_bull_context = pair_bull_stack | pair_breakout | pair_support
-    pair_bear_context = pair_bear_stack
-    false_mask = pd.Series(False, index=frame.index, dtype="bool")
-
-    bull_htf_ok = pd.Series(True, index=frame.index, dtype="bool")
-    bear_htf_ok = pd.Series(True, index=frame.index, dtype="bool")
-    btc_context_bull_extra = pair_bull_context if use_pair_context else false_mask
-    btc_context_bear_extra = pair_bear_context if use_pair_context else false_mask
-
-    if use_btc_regime:
-        bull_htf_ok = (
-            btc_rsi.notna()
-            & (btc_rsi >= btc_bull_min)
-            & (btc_bull_stack | btc_breakout | btc_support | btc_context_bull_extra)
-        )
-        bear_htf_ok = (btc_rsi <= btc_bear_max) | btc_bear_stack | btc_context_bear_extra
-
-    if use_pair_context:
-        pair_known = pair_rsi.notna()
-        pair_bull_ok = (pair_rsi >= 50.0) | pair_bull_context
-        pair_bear_ok = (pair_rsi <= 45.0) & pair_bear_context
-        bull_htf_ok = pd.Series(np.where(pair_known, bull_htf_ok & pair_bull_ok, bull_htf_ok), index=frame.index, dtype="bool")
-        bear_htf_ok = pd.Series(np.where(pair_known, bear_htf_ok | pair_bear_ok, bear_htf_ok), index=frame.index, dtype="bool")
-
-    bear_htf_ok = bear_htf_ok | (btc_adx.notna() & btc_bear_stack & (btc_adx >= trend_min))
-    if use_pair_context:
-        bear_htf_ok = bear_htf_ok | (pair_adx.notna() & pair_bear_stack & (pair_adx >= trend_min))
-
-    base_valid = adx.notna() & atr_pct.notna() & atr_pct_ema.notna()
-    if use_btc_regime:
-        base_valid &= btc_rsi.notna()
-
-    bear_base = (adx >= trend_min) | (atr_pct >= atr_pct_ema * bear_spike)
-    bull_flag = bull_confirm & (adx >= trend_min) & bull_htf_ok
-    bear_flag = bear_confirm & bear_base & bear_htf_ok
-
-    drawdown = _float_col(frame, "regime_drawdown_from_recent_high").fillna(0.0)
-    crash_spike_threshold = max(bear_spike * 1.25, bear_spike + 0.5)
-    crash_flag = bear_flag & (atr_ratio >= crash_spike_threshold) & (drawdown >= 0.08)
-
-    bull_score = (
-        0.40 * bull_confirm.astype("float64")
-        + 0.30 * (adx >= trend_min).astype("float64")
-        + 0.30 * bull_htf_ok.astype("float64")
-    ).clip(lower=0.0, upper=1.0)
-    bear_score = (
-        0.35 * bear_confirm.astype("float64")
-        + 0.35 * bear_base.astype("float64")
-        + 0.30 * bear_htf_ok.astype("float64")
-    ).clip(lower=0.0, upper=1.0)
-    chop_score = (
-        0.50 * (~bull_flag & ~bear_flag).astype("float64")
-        + 0.30 * (adx < trend_min).astype("float64")
-        + 0.20 * (1.0 - np.clip((atr_ratio.fillna(1.0) - 1.0), 0.0, 1.0))
-    ).clip(lower=0.0, upper=1.0)
-    crash_score = (
-        0.45 * bear_flag.astype("float64")
-        + 0.35 * np.clip((atr_ratio.fillna(0.0) - bear_spike) / max(bear_spike, 1.0), 0.0, 1.0)
-        + 0.20 * np.clip(drawdown / 0.15, 0.0, 1.0)
-    ).clip(lower=0.0, upper=1.0)
-
-    frame["regime_bull_score"] = bull_score.where(base_valid, 0.0)
-    frame["regime_bear_score"] = bear_score.where(base_valid, 0.0)
-    frame["regime_chop_score"] = chop_score.where(base_valid, 0.0)
-    frame["regime_crash_score"] = crash_score.where(base_valid, 0.0)
-    frame["regime_crash_pressure"] = frame["regime_crash_score"].clip(lower=0.0, upper=1.0)
-    frame["regime_bear_pressure"] = (
-        np.maximum(frame["regime_bear_score"], frame["regime_crash_score"])
-        + 0.25 * frame["regime_crash_score"]
-    ).clip(lower=0.0, upper=1.0)
-    frame["regime_bull_pressure"] = (
-        frame["regime_bull_score"] * (1.0 - frame["regime_bear_pressure"])
-    ).clip(lower=0.0, upper=1.0)
-    frame["regime_directional_pressure"] = frame["regime_bull_pressure"] - frame["regime_bear_pressure"]
-    frame["regime_bull_flag"] = bull_flag & base_valid
-    frame["regime_bear_flag"] = bear_flag & base_valid
-    frame["regime_crash_flag"] = crash_flag & base_valid
-    frame["regime_core_valid"] = base_valid
-    return frame
+def _validate_ohlcv(dataframe: DataFrame) -> None:
+    required = {"open", "high", "low", "close", "volume"}
+    missing = sorted(required.difference(dataframe.columns))
+    if missing:
+        raise ValueError(f"DataFrame is missing OHLCV columns: {missing}")
 
 
-def add_regime_state_columns(dataframe: DataFrame, params: dict[str, Any]) -> DataFrame:
-    frame = dataframe.copy()
-    valid = _bool_col(frame, "regime_core_valid")
-    confirm = max(1, int(params.get("regime_confirm_bars", 1)))
-    bull_pressure = _float_col(frame, "regime_bull_pressure").fillna(0.0)
-    bear_pressure = _float_col(frame, "regime_bear_pressure").fillna(0.0)
-    crash_pressure = _float_col(frame, "regime_crash_pressure").fillna(0.0)
-    directional_pressure = _float_col(frame, "regime_directional_pressure").fillna(0.0)
-    chop_score = _float_col(frame, "regime_chop_score").fillna(0.0)
-
-    crash_candidate = valid & (crash_pressure >= 0.70)
-    bear_candidate = valid & (bear_pressure >= 0.45) & (directional_pressure <= -0.20)
-    bull_candidate = valid & (bull_pressure >= 0.50) & (directional_pressure >= 0.25)
-    chop_candidate = valid & (chop_score >= 0.70) & (bull_pressure < 0.25) & (bear_pressure < 0.25)
-
-    def confirmed(candidate: pd.Series) -> pd.Series:
-        return candidate.astype("int8").rolling(confirm).sum().fillna(0.0) >= confirm
-
-    regime_code = pd.Series(REGIME_CODE_UNKNOWN, index=frame.index, dtype="int64")
-    regime_code = regime_code.where(~confirmed(chop_candidate), REGIME_CODE_CHOP)
-    regime_code = regime_code.where(~confirmed(bull_candidate), REGIME_CODE_BULL)
-    regime_code = regime_code.where(~confirmed(bear_candidate), REGIME_CODE_BEAR)
-    regime_code = regime_code.where(~confirmed(crash_candidate), REGIME_CODE_CRASH)
-    frame["regime_code"] = regime_code
-
-    scores = np.column_stack(
-        [
-            _float_col(frame, "regime_bull_score").fillna(0.0).to_numpy(),
-            _float_col(frame, "regime_bear_score").fillna(0.0).to_numpy(),
-            _float_col(frame, "regime_chop_score").fillna(0.0).to_numpy(),
-            _float_col(frame, "regime_crash_score").fillna(0.0).to_numpy(),
-        ]
-    )
-    top = scores.max(axis=1)
-    second = np.partition(scores, -2, axis=1)[:, -2]
-    confidence = np.clip(top - second, 0.0, 1.0)
-    confidence_series = pd.Series(confidence, index=frame.index, dtype="float64").where(valid, 0.0)
-    frame["regime_confidence"] = confidence_series
-
-    prev_code = regime_code.shift(1).fillna(REGIME_CODE_UNKNOWN).astype("int64")
-    frame["regime_changed"] = (regime_code != prev_code) & valid & (prev_code != REGIME_CODE_UNKNOWN)
-    return frame
+def _float_col(dataframe: DataFrame, column: str) -> Series:
+    if column not in dataframe.columns:
+        return pd.Series(np.nan, index=dataframe.index, dtype="float64")
+    return pd.to_numeric(dataframe[column], errors="coerce").replace([np.inf, -np.inf], np.nan)
 
 
-def add_regime_response_columns(dataframe: DataFrame, params: dict[str, Any]) -> DataFrame:
-    frame = dataframe.copy()
+def _bool_col(dataframe: DataFrame, column: str) -> Series:
+    if column not in dataframe.columns:
+        return pd.Series(False, index=dataframe.index, dtype="bool")
+    return pd.Series(dataframe[column], index=dataframe.index).astype("boolean").fillna(False).astype(bool)
 
-    gap_bull = float(params.get("regime_gap_mult_bull", 1.0))
-    gap_chop = float(params.get("regime_gap_mult_chop", 1.0))
-    gap_bear = float(params.get("regime_gap_mult_bear", 1.0))
-    exit_bull = float(params.get("regime_exit_mult_bull", 1.0))
-    exit_chop = float(params.get("regime_exit_mult_chop", 1.0))
-    exit_bear = float(params.get("regime_exit_mult_bear", 1.0))
 
-    bull_weight = _float_col(frame, "regime_bull_pressure").fillna(0.0).clip(lower=0.0, upper=1.0)
-    bear_weight = _float_col(frame, "regime_bear_pressure").fillna(0.0).clip(lower=0.0, upper=1.0)
-    weight_sum = bull_weight + bear_weight
-    overweight = weight_sum > 1.0
-    bull_weight = bull_weight.where(~overweight, bull_weight / weight_sum.replace(0.0, np.nan)).fillna(0.0)
-    bear_weight = bear_weight.where(~overweight, bear_weight / weight_sum.replace(0.0, np.nan)).fillna(0.0)
-    chop_weight = (1.0 - bull_weight - bear_weight).clip(lower=0.0, upper=1.0)
+def _ratio(numerator: Series, denominator: Series) -> Series:
+    denominator = denominator.where(denominator.abs() > 0.0, np.nan)
+    return numerator / denominator
 
-    gap_active = chop_weight * gap_chop + bull_weight * gap_bull + bear_weight * gap_bear
-    exit_active = chop_weight * exit_chop + bull_weight * exit_bull + bear_weight * exit_bear
 
-    stake_active = chop_weight * 1.0 + bull_weight * 1.2 + bear_weight * 0.75
-    spacing_active = chop_weight * 1.1 + bull_weight * 0.8 + bear_weight * 1.5
-    peel_fraction_active = chop_weight * 1.2 + bull_weight * 0.9 + bear_weight * 1.4
-
-    frame["regime_gap_mult_active"] = gap_active
-    frame["regime_exit_mult_active"] = exit_active
-    frame["regime_stake_mult_active"] = stake_active
-    frame["regime_spacing_mult_active"] = spacing_active
-    frame["regime_peel_fraction_mult_active"] = peel_fraction_active
-    return frame
+def _clip01(series: Series) -> Series:
+    return pd.to_numeric(series, errors="coerce").replace([np.inf, -np.inf], np.nan).clip(0.0, 1.0).fillna(0.0)

@@ -163,6 +163,32 @@ RS tuning levers that strategies may expose to hyperopt:
 - Context thresholds: `context_full_min`, `context_full_margin`, `context_soft_min`, and `context_soft_margin`.
 - Benchmark selection: `benchmark_close` and the informative benchmark dataframe/series supplied by the strategy.
 
+## Market Regime Strategy Outputs
+
+Market Regime (`regime`) should identify broad risk-on/risk-off conditions from OHLCV behaviour. Its hardest and most important job is early bear/drawdown warning. It should be treated as a higher-timeframe context layer, not an entry system.
+
+Expected behaviour:
+- Bull regime should persist when price is above a rising EMA stack with supportive DMI/trend pressure.
+- Bear or crash regime should appear when downside trend pressure, drawdown from recent highs, negative slope, and volatility expansion combine.
+- Neutral/chop should be the default valid state when no directional regime has sufficient evidence.
+- `REGIME_CODE_UNKNOWN` should mostly be warmup/invalid data, not normal live-market uncertainty.
+
+Strategy-facing regime concepts:
+- Core inputs: `regime_atr`, `regime_atr_pct`, `regime_atr_ratio`, `regime_adx`, `regime_plus_di`, `regime_minus_di`, EMA columns, `regime_trend_slope_pct`, `regime_price_location_atr`, `regime_volume_ratio`, `regime_drawdown_from_recent_high`, and `regime_range_compression_score`.
+- Scores/pressure: `regime_bull_score`, `regime_bear_score`, `regime_chop_score`, `regime_crash_score`, `regime_bull_pressure`, `regime_bear_pressure`, `regime_crash_pressure`, and `regime_directional_pressure`.
+- Legacy state: `regime_code` uses `-2` crash, `-1` bear, `0` neutral/chop, `1` bull, and `9` unknown/warmup.
+- Shared context: `regime_market_context` uses `+2`, `+1`, `0`, `-1`, `-2`; this is the preferred strategy-facing directional context.
+- Early warnings: `regime_bear_warning` and `regime_crash_warning` are risk-off context flags intended to appear before or during larger drawdown conditions.
+- Recovery context: `regime_bull_recovery` marks improving trend pressure after risk-off or neutral conditions.
+- Entry diagnostics: `regime_entry_risk_on_long` and `regime_entry_risk_off_short` are sparse regime-transition diagnostics, not direct strategy entries.
+- Composite triggers: `regime_suggested_entry_long/short` mirror the risk-on/risk-off diagnostics for plotting and broad tests.
+- Position evidence: `regime_hold_long`, `regime_hold_short`, `regime_exit_long`, and `regime_exit_short` expose whether the broad regime supports or warns against a direction.
+- Legacy response columns from `add_regime_response_columns` are compatibility-only. New strategies should avoid treating regime as stake/risk/exit authority; strategies own final stake, risk, exit, add, and peel decisions.
+
+Regime tuning levers that strategies may expose to hyperopt:
+- Windows: `regime_atr_period`, `regime_atr_ema_window`, `regime_adx_period`, `regime_ema_fast`, `regime_ema_slow`, `regime_ema_long`, `regime_volume_window`, `regime_range_window`, `regime_slope_window`, `regime_drawdown_window`, `regime_confirm_bars`, `regime_confirm_choices`, and `regime_event_cooldown_bars`.
+- Trend/risk thresholds: `regime_adx_trend_min`, `regime_slope_scale`, `regime_volume_confirm_min`, `regime_bear_atr_spike`, `regime_early_bear_min`, `regime_early_crash_min`, and `regime_bull_recovery_min`.
+
 ## Pivot Structure Strategy Outputs
 
 Pivot Structure should separate tactical local swings from larger structural market memory.
