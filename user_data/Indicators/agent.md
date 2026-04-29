@@ -112,3 +112,21 @@ Pivot tuning levers that strategies may expose to hyperopt:
 - Structural pivot sensitivity: `structural_strength`, `structural_min_prominence_atr`, `structural_min_prominence_pct`, `structural_min_pivot_spacing_bars`, `structural_min_pivot_distance_atr`, `structural_min_pivot_distance_pct`.
 - Structural zones: `structural_max_age_bars`, `structural_zone_atr_mult`, `structural_zone_pct`.
 - Compression: `compression_window`, `compression_min_periods`, `compression_full_at_ratio`, `compression_none_at_ratio`.
+
+## Structural Trendline Strategy Outputs
+
+Structural Trendlines (`stl`) should represent sparse, higher-importance support/resistance geometry from confirmed major pivots. They are not intended to draw every local line.
+
+Strategy-facing STL concepts:
+- Core levels: `stl_resistance_line`, `stl_support_line`, and ranked variants describe the best structural lines currently known from confirmed pivots.
+- Line quality: `stl_resistance_score`, `stl_support_score`, touch counts, span, age, and respect ratios explain why a line was selected.
+- Compression: `stl_triangle_score`, `stl_wedge_compression`, and `stl_channel_compression` describe converging support/resistance structure.
+- Directional context: `stl_market_context` uses `+2`, `+1`, `0`, `-1`, `-2`; full states require stronger line score, trend bias, or recent structural line events.
+- Entry diagnostics: `stl_entry_resistance_breakout_long`, `stl_entry_support_reclaim_long`, `stl_entry_triangle_breakout_long`, `stl_entry_support_breakdown_short`, `stl_entry_resistance_reject_short`, and `stl_entry_triangle_breakdown_short` are sparse trigger evidence, not final trade decisions.
+- Position evidence: `stl_hold_long`, `stl_hold_short`, `stl_exit_long`, and `stl_exit_short` expose whether structural lines support holding or suggest caution.
+
+STL tuning levers that strategies may expose to hyperopt:
+- Pivot source: `strength`, `strengths`, `pivot_prefix`, `missing_pivot_mode`, and optional `pivot_config`.
+- Line selection: `ranked_line_count`, `candidate_pivot_count`, `min_touch_count`, `min_anchor_span_bars`, `min_line_span_bars`, `max_line_age_bars`, `min_pivot_prominence_atr`.
+- Respect/proximity: `touch_tolerance_atr_mult`, `touch_tolerance_pct`, `min_respect_ratio`, `min_span_age_ratio`, `max_slope_pct_per_bar`, `max_projection_distance_pct`.
+- Context/events: `breakout_buffer_pct`, `compression_window`, `compression_min_periods`, `score_window`.
