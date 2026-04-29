@@ -130,3 +130,20 @@ STL tuning levers that strategies may expose to hyperopt:
 - Line selection: `ranked_line_count`, `candidate_pivot_count`, `min_touch_count`, `min_anchor_span_bars`, `min_line_span_bars`, `max_line_age_bars`, `min_pivot_prominence_atr`.
 - Respect/proximity: `touch_tolerance_atr_mult`, `touch_tolerance_pct`, `min_respect_ratio`, `min_span_age_ratio`, `max_slope_pct_per_bar`, `max_projection_distance_pct`.
 - Context/events: `breakout_buffer_pct`, `compression_window`, `compression_min_periods`, `score_window`.
+
+## Tactical Trendline Projection Strategy Outputs
+
+Trendline Projection (`tl`) should represent shorter-lived tactical support/resistance lines from confirmed local pivots. It is expected to be noisier and denser than `stl`.
+
+Strategy-facing TL concepts:
+- Core levels: `tl_resistance_line`, `tl_support_line`, ranked line columns, projections, and near/break columns describe current local channel geometry.
+- Quality: `tl_support_quality`, `tl_resistance_quality`, touch counts, violation counts, respect ratios, and score columns show whether a local line has been respected enough to matter.
+- Directional context: `tl_market_context` uses `+2`, `+1`, `0`, `-1`, `-2` and should be treated as tactical context, not higher-timeframe regime.
+- Entry diagnostics: `tl_entry_support_reclaim_long`, `tl_entry_resistance_breakout_long`, `tl_entry_compression_breakout_long`, `tl_entry_resistance_reject_short`, `tl_entry_support_breakdown_short`, and `tl_entry_compression_breakdown_short` are reason-specific trigger evidence.
+- Position evidence: `tl_hold_long`, `tl_hold_short`, `tl_exit_long`, and `tl_exit_short` expose tactical line support or warning evidence.
+
+TL tuning levers that strategies may expose to hyperopt:
+- Pivot source: `strength`, `strengths`, `pivot_prefix`, `missing_pivot_mode`, and optional `pivot_config`.
+- Line quality: `candidate_pivot_count`, `ranked_line_count`, `min_anchor_span_bars`, `max_anchor_age_bars`, `min_anchor_prominence_atr`, `min_fit_touch_count`, `min_respect_ratio`.
+- Channel/projection: `near_zone_atr_mult`, `near_zone_pct`, `breakout_buffer_pct`, `max_line_slope_pct_per_bar`, `min_channel_width_pct`, `max_channel_width_pct`, `max_projection_distance_pct`, `max_active_line_distance_pct`.
+- Context/events: `compression_window`, `compression_min_periods`, `score_window`, `event_windows`.

@@ -58,22 +58,30 @@ class TrendlineProjectionConfig:
     breakout_buffer_pct: float = 0.002
 
     # Quality guards. Use large values to make a guard effectively non-blocking.
-    min_anchor_span_bars: int = 4
+    min_anchor_span_bars: int = 8
     max_anchor_age_bars: int = 180
-    min_anchor_prominence_atr: float = 0.0
-    max_line_slope_pct_per_bar: float = 0.08
+    min_anchor_prominence_atr: float = 1.00
+    max_line_slope_pct_per_bar: float = 0.015
     min_channel_width_pct: float = 0.001
     max_channel_width_pct: float = 0.80
-    max_projection_distance_pct: float = 2.00
+    max_projection_distance_pct: float = 0.60
+    max_active_line_distance_pct: float = 0.10
     compression_window: int = 48
     compression_min_periods: int = 12
     score_window: int = 48
-    min_touch_count: int = 1
+    min_touch_count: int = 3
     min_respect_ratio: float = 0.50
+
+    # Candidate trendline engine. It ranks overlapping confirmed lines from
+    # already-confirmed pivots only; no future pivots/candles are inspected.
+    candidate_pivot_count: int = 9
+    ranked_line_count: int = 5
+    fit_touch_tolerance_pct: float = 0.006
+    min_fit_touch_count: int = 3
 
     # Plot-only break. A large value keeps plot lines continuous. A smaller value
     # inserts NaNs on large line jumps so FreqUI does not draw misleading verticals.
-    plot_break_on_line_change_pct: float = 0.08
+    plot_break_on_line_change_pct: float = 0.012
 
 
 def add_trendline_projection(
@@ -98,11 +106,16 @@ def add_trendline_projection(
     min_channel_width_pct: float | None = None,
     max_channel_width_pct: float | None = None,
     max_projection_distance_pct: float | None = None,
+    max_active_line_distance_pct: float | None = None,
     compression_window: int | None = None,
     compression_min_periods: int | None = None,
     score_window: int | None = None,
     min_touch_count: int | None = None,
     min_respect_ratio: float | None = None,
+    candidate_pivot_count: int | None = None,
+    ranked_line_count: int | None = None,
+    fit_touch_tolerance_pct: float | None = None,
+    min_fit_touch_count: int | None = None,
     plot_break_on_line_change_pct: float | None = None,
 ) -> DataFrame:
     """Append vectorized trendline projection and quality evidence columns.
@@ -135,11 +148,16 @@ def add_trendline_projection(
         min_channel_width_pct=min_channel_width_pct,
         max_channel_width_pct=max_channel_width_pct,
         max_projection_distance_pct=max_projection_distance_pct,
+        max_active_line_distance_pct=max_active_line_distance_pct,
         compression_window=compression_window,
         compression_min_periods=compression_min_periods,
         score_window=score_window,
         min_touch_count=min_touch_count,
         min_respect_ratio=min_respect_ratio,
+        candidate_pivot_count=candidate_pivot_count,
+        ranked_line_count=ranked_line_count,
+        fit_touch_tolerance_pct=fit_touch_tolerance_pct,
+        min_fit_touch_count=min_fit_touch_count,
         plot_break_on_line_change_pct=plot_break_on_line_change_pct,
     )
     _validate_config(cfg)
@@ -180,7 +198,7 @@ def add_trendline_projection(
     selected = int(cfg.strength)
     if selected not in strengths_list:
         selected = strengths_list[0]
-    new_cols.update(_active_alias_columns(new_cols, p, selected, horizons_list, windows_list))
+    new_cols.update(_active_alias_columns(new_cols, p, selected, horizons_list, windows_list, int(cfg.ranked_line_count)))
 
     existing = [col for col in frame.columns if str(col).startswith(f"{p}_")]
     base = frame.drop(columns=existing).copy() if existing else frame.copy()
@@ -208,13 +226,31 @@ def _columns_for_strength(
     res_anchor = _anchor_state(frame, pp, s, "high", bar_index)
     sup_anchor = _anchor_state(frame, pp, s, "low", bar_index)
 
-    resistance_line = _line_from_anchor(bar_index, res_anchor["last_price"], res_anchor["last_index"], res_anchor["slope"])
-    support_line = _line_from_anchor(bar_index, sup_anchor["last_price"], sup_anchor["last_index"], sup_anchor["slope"])
-    resistance_line = resistance_line.clip(lower=0.0)
-    support_line = support_line.clip(lower=0.0)
+    ranked_res = _ranked_trendline_candidates(
+        frame=frame,
+        close=close,
+        bar_index=bar_index,
+        zone_width=zone_width,
+        strength=s,
+        side="high",
+        cfg=cfg,
+    )
+    ranked_sup = _ranked_trendline_candidates(
+        frame=frame,
+        close=close,
+        bar_index=bar_index,
+        zone_width=zone_width,
+        strength=s,
+        side="low",
+        cfg=cfg,
+    )
 
-    res_slope = res_anchor["slope"]
-    sup_slope = sup_anchor["slope"]
+    resistance_line = ranked_res["line_0"]
+    support_line = ranked_sup["line_0"]
+    res_slope = ranked_res["slope_0"]
+    sup_slope = ranked_sup["slope_0"]
+    res_line_valid = ranked_res["valid_0"]
+    sup_line_valid = ranked_sup["valid_0"]
     channel_width_pct = (resistance_line - support_line) / close
     channel_mid = (resistance_line + support_line) / 2.0
     channel_compression = channel_width_pct / channel_width_pct.rolling(
@@ -222,8 +258,6 @@ def _columns_for_strength(
         min_periods=int(cfg.compression_min_periods),
     ).median()
 
-    res_line_valid = _line_validity(res_anchor, res_slope, resistance_line, close, cfg)
-    sup_line_valid = _line_validity(sup_anchor, sup_slope, support_line, close, cfg)
     channel_valid = (
         res_line_valid
         & sup_line_valid
@@ -274,12 +308,12 @@ def _columns_for_strength(
         f"{p}_trend_bias_{s}": trend_bias,
         f"{p}_resistance_line_valid_{s}": res_line_valid,
         f"{p}_support_line_valid_{s}": sup_line_valid,
-        f"{p}_resistance_anchor_span_{s}": res_anchor["span"],
-        f"{p}_support_anchor_span_{s}": sup_anchor["span"],
-        f"{p}_resistance_age_{s}": res_anchor["age"],
-        f"{p}_support_age_{s}": sup_anchor["age"],
-        f"{p}_resistance_anchor_prominence_min_{s}": res_anchor["prominence_min"],
-        f"{p}_support_anchor_prominence_min_{s}": sup_anchor["prominence_min"],
+        f"{p}_resistance_anchor_span_{s}": ranked_res["span_0"],
+        f"{p}_support_anchor_span_{s}": ranked_sup["span_0"],
+        f"{p}_resistance_age_{s}": ranked_res["age_0"],
+        f"{p}_support_age_{s}": ranked_sup["age_0"],
+        f"{p}_resistance_anchor_prominence_min_{s}": ranked_res["prominence_min_0"],
+        f"{p}_support_anchor_prominence_min_{s}": ranked_sup["prominence_min_0"],
         f"{p}_last_pivot_high_{s}": res_anchor["last_price"],
         f"{p}_last_pivot_low_{s}": sup_anchor["last_price"],
         f"{p}_prev_pivot_high_{s}": res_anchor["prev_price"],
@@ -291,6 +325,34 @@ def _columns_for_strength(
         f"{p}_resistance_violation_{s}": resistance_violation,
         f"{p}_support_violation_{s}": support_violation,
     }
+
+    for rank in range(int(cfg.ranked_line_count)):
+        cols.update(
+            {
+                f"{p}_resistance_line_rank{rank}_{s}": ranked_res[f"line_{rank}"],
+                f"{p}_support_line_rank{rank}_{s}": ranked_sup[f"line_{rank}"],
+                f"{p}_resistance_plot_rank{rank}_{s}": _plot_safe_line(
+                    ranked_res[f"line_{rank}"].where(ranked_res[f"valid_{rank}"]),
+                    cfg.plot_break_on_line_change_pct,
+                ),
+                f"{p}_support_plot_rank{rank}_{s}": _plot_safe_line(
+                    ranked_sup[f"line_{rank}"].where(ranked_sup[f"valid_{rank}"]),
+                    cfg.plot_break_on_line_change_pct,
+                ),
+                f"{p}_resistance_score_rank{rank}_{s}": ranked_res[f"score_{rank}"],
+                f"{p}_support_score_rank{rank}_{s}": ranked_sup[f"score_{rank}"],
+                f"{p}_resistance_touch_count_rank{rank}_{s}": ranked_res[f"touch_count_{rank}"],
+                f"{p}_support_touch_count_rank{rank}_{s}": ranked_sup[f"touch_count_{rank}"],
+                f"{p}_resistance_confirmed_rank{rank}_{s}": ranked_res[f"valid_{rank}"],
+                f"{p}_support_confirmed_rank{rank}_{s}": ranked_sup[f"valid_{rank}"],
+                f"{p}_resistance_slope_pct_rank{rank}_{s}": ranked_res[f"slope_pct_{rank}"],
+                f"{p}_support_slope_pct_rank{rank}_{s}": ranked_sup[f"slope_pct_{rank}"],
+                f"{p}_resistance_age_rank{rank}_{s}": ranked_res[f"age_{rank}"],
+                f"{p}_support_age_rank{rank}_{s}": ranked_sup[f"age_{rank}"],
+                f"{p}_resistance_span_rank{rank}_{s}": ranked_res[f"span_{rank}"],
+                f"{p}_support_span_rank{rank}_{s}": ranked_sup[f"span_{rank}"],
+            }
+        )
 
     for h in horizons:
         hp = int(h)
@@ -344,6 +406,229 @@ def _columns_for_strength(
     )
     cols.update(score_cols)
     return cols
+
+
+def _ranked_trendline_candidates(
+    *,
+    frame: DataFrame,
+    close: Series,
+    bar_index: Series,
+    zone_width: Series,
+    strength: int,
+    side: Literal["high", "low"],
+    cfg: TrendlineProjectionConfig,
+) -> dict[str, Series]:
+    pp = cfg.pivot_prefix
+    slots = max(int(cfg.ranked_line_count), 1)
+    pivot_count = max(int(cfg.candidate_pivot_count), int(cfg.min_fit_touch_count), 3)
+    event_price = _num(frame, f"{pp}_pivot_{side}_{strength}")
+    event_prominence = _num(frame, f"{pp}_pivot_{side}_prominence_{strength}")
+    event_index = (bar_index - float(strength)).where(event_price.notna())
+    pivot_allowed = event_price.notna() & event_prominence.fillna(0.0).ge(float(cfg.min_anchor_prominence_atr))
+
+    recent = _recent_pivot_events(
+        event_price.where(pivot_allowed),
+        event_index.where(pivot_allowed),
+        event_prominence.where(pivot_allowed),
+        frame.index,
+        pivot_count,
+    )
+    candidates: list[dict[str, Series]] = []
+    for newer in range(pivot_count - 1):
+        for older in range(newer + 1, pivot_count):
+            candidates.append(
+                _candidate_from_pivot_pair(
+                    close=close,
+                    bar_index=bar_index,
+                    zone_width=zone_width,
+                    recent=recent,
+                    newer=newer,
+                    older=older,
+                    side=side,
+                    cfg=cfg,
+                )
+            )
+    return _rank_candidate_frames(candidates, frame.index, slots)
+
+
+def _recent_pivot_events(
+    event_price: Series,
+    event_index: Series,
+    event_prominence: Series,
+    index: pd.Index,
+    count: int,
+) -> dict[str, list[Series]]:
+    price_events = event_price.dropna()
+    index_events = event_index.where(event_price.notna()).dropna()
+    prominence_events = event_prominence.where(event_price.notna()).dropna()
+    return {
+        "price": [price_events.shift(offset).reindex(index).ffill() for offset in range(count)],
+        "index": [index_events.shift(offset).reindex(index).ffill() for offset in range(count)],
+        "prominence": [prominence_events.shift(offset).reindex(index).ffill() for offset in range(count)],
+    }
+
+
+def _candidate_from_pivot_pair(
+    *,
+    close: Series,
+    bar_index: Series,
+    zone_width: Series,
+    recent: dict[str, list[Series]],
+    newer: int,
+    older: int,
+    side: Literal["high", "low"],
+    cfg: TrendlineProjectionConfig,
+) -> dict[str, Series]:
+    p_new = recent["price"][newer]
+    p_old = recent["price"][older]
+    x_new = recent["index"][newer]
+    x_old = recent["index"][older]
+    prom_new = recent["prominence"][newer]
+    prom_old = recent["prominence"][older]
+
+    span = x_new - x_old
+    anchor_prominence_min = pd.concat([prom_new, prom_old], axis=1).min(axis=1)
+    anchor_valid = (
+        p_new.notna()
+        & p_old.notna()
+        & x_new.notna()
+        & x_old.notna()
+        & span.ge(float(cfg.min_anchor_span_bars))
+        & anchor_prominence_min.ge(float(cfg.min_anchor_prominence_atr))
+    )
+    raw_slope = ((p_new - p_old) / span.replace(0.0, np.nan)).where(anchor_valid)
+
+    zero = pd.Series(0.0, index=close.index, dtype="float64")
+    touch_count = zero.copy()
+    sum_w = zero.copy()
+    sum_x = zero.copy()
+    sum_y = zero.copy()
+    sum_x2 = zero.copy()
+    sum_xy = zero.copy()
+    sum_prom = zero.copy()
+    latest_touch_index = pd.Series(np.nan, index=close.index, dtype="float64")
+    earliest_touch_index = pd.Series(np.nan, index=close.index, dtype="float64")
+    tolerance_pct = max(float(cfg.fit_touch_tolerance_pct), float(cfg.near_zone_pct))
+
+    for price, pivot_index, prominence in zip(recent["price"], recent["index"], recent["prominence"], strict=False):
+        projected_at_pivot = p_new + raw_slope * (pivot_index - x_new)
+        distance_pct = ((price - projected_at_pivot).abs() / price.abs().replace(0.0, np.nan)).replace([np.inf, -np.inf], np.nan)
+        touch = anchor_valid & price.notna() & pivot_index.notna() & distance_pct.le(tolerance_pct)
+        touch_f = touch.fillna(False).astype("float64")
+        weight = touch_f * (1.0 + _clip01(prominence.fillna(0.0) / 4.0))
+        clean_x = pivot_index.fillna(0.0)
+        clean_y = price.fillna(0.0)
+        sum_w = sum_w + weight
+        sum_x = sum_x + weight * clean_x
+        sum_y = sum_y + weight * clean_y
+        sum_x2 = sum_x2 + weight * clean_x * clean_x
+        sum_xy = sum_xy + weight * clean_x * clean_y
+        sum_prom = sum_prom + weight * prominence.fillna(0.0)
+        touch_count = touch_count + touch_f
+        touch_index = pivot_index.where(touch)
+        latest_touch_index = pd.concat([latest_touch_index, touch_index], axis=1).max(axis=1)
+        earliest_touch_index = pd.concat([earliest_touch_index, touch_index], axis=1).min(axis=1)
+
+    mean_x = _safe_div(sum_x, sum_w)
+    mean_y = _safe_div(sum_y, sum_w)
+    variance = sum_x2 - _safe_div(sum_x * sum_x, sum_w)
+    covariance = sum_xy - _safe_div(sum_x * sum_y, sum_w)
+    fit_slope = _safe_div(covariance, variance).where(variance.abs().gt(1e-9), raw_slope)
+    fit_intercept = mean_y - fit_slope * mean_x
+    line = (fit_intercept + fit_slope * bar_index).clip(lower=0.0)
+
+    fit_span = latest_touch_index - earliest_touch_index
+    age = bar_index - latest_touch_index
+    prominence_mean = _safe_div(sum_prom, sum_w)
+    slope_pct = (fit_slope.abs() / close).replace([np.inf, -np.inf], np.nan)
+    current_distance_pct = ((line - close).abs() / close).replace([np.inf, -np.inf], np.nan)
+    current_violation = close.lt(line - zone_width) if side == "low" else close.gt(line + zone_width)
+    active_distance_ok = current_distance_pct.le(float(cfg.max_active_line_distance_pct))
+    active_side_ok = line.le(close + zone_width) if side == "low" else line.ge(close - zone_width)
+    confirmed = touch_count.ge(float(cfg.min_fit_touch_count))
+    valid = (
+        confirmed
+        & line.notna()
+        & line.gt(0.0)
+        & active_distance_ok
+        & active_side_ok
+        & fit_span.ge(float(cfg.min_anchor_span_bars))
+        & age.le(float(cfg.max_anchor_age_bars))
+        & slope_pct.le(float(cfg.max_line_slope_pct_per_bar))
+        & _projection_sane(line, close, cfg)
+    ).fillna(False)
+
+    touch_score = _clip01(touch_count / max(float(cfg.min_fit_touch_count) + 2.0, 1.0))
+    prominence_score = _clip01(prominence_mean / max(float(cfg.min_anchor_prominence_atr) * 3.0, 1.0))
+    distance_score = _clip01(1.0 - current_distance_pct / max(float(cfg.max_projection_distance_pct), 1e-9))
+    span_score = _clip01(fit_span / max(float(cfg.min_anchor_span_bars) * 5.0, 1.0))
+    age_score = _clip01(1.0 - age / max(float(cfg.max_anchor_age_bars), 1.0))
+    slope_score = _clip01(1.0 - slope_pct / max(float(cfg.max_line_slope_pct_per_bar), 1e-9))
+    respect_now = (~current_violation.fillna(False)).astype("float64")
+    score = _clip01(
+        0.35 * touch_score
+        + 0.20 * prominence_score
+        + 0.15 * distance_score
+        + 0.10 * span_score
+        + 0.10 * age_score
+        + 0.05 * slope_score
+        + 0.05 * respect_now
+        - 0.25 * current_violation.fillna(False).astype("float64")
+    ).where(valid)
+    return {
+        "line": line.where(valid),
+        "slope": fit_slope.where(valid),
+        "score": score,
+        "touch_count": touch_count.where(valid),
+        "slope_pct": slope_pct.where(valid),
+        "age": age.where(valid),
+        "span": fit_span.where(valid),
+        "prominence_min": anchor_prominence_min.where(valid),
+    }
+
+
+def _rank_candidate_frames(candidates: list[dict[str, Series]], index: pd.Index, slots: int) -> dict[str, Series]:
+    if not candidates:
+        return _empty_ranked_candidates(index, slots)
+
+    score_frame = pd.concat([candidate["score"] for candidate in candidates], axis=1)
+    score_values = score_frame.astype("float64").to_numpy()
+    score_values = np.where(np.isfinite(score_values), score_values, -np.inf)
+    if score_values.shape[1] == 0:
+        return _empty_ranked_candidates(index, slots)
+
+    order = np.argsort(-score_values, axis=1)
+    sorted_scores = np.take_along_axis(score_values, order, axis=1)
+    row_index = np.arange(len(index))
+    metric_frames = {
+        metric: pd.concat([candidate[metric] for candidate in candidates], axis=1).astype("float64").to_numpy()
+        for metric in ("line", "slope", "touch_count", "slope_pct", "age", "span", "prominence_min")
+    }
+
+    out: dict[str, Series] = {}
+    for rank in range(slots):
+        if rank >= score_values.shape[1]:
+            for metric in ("line", "slope", "score", "touch_count", "slope_pct", "age", "span", "prominence_min"):
+                out[f"{metric}_{rank}"] = pd.Series(np.nan, index=index, dtype="float64")
+            out[f"valid_{rank}"] = pd.Series(False, index=index)
+            continue
+        chosen = order[:, rank]
+        valid = np.isfinite(sorted_scores[:, rank]) & (sorted_scores[:, rank] > -np.inf)
+        out[f"score_{rank}"] = pd.Series(np.where(valid, sorted_scores[:, rank], np.nan), index=index, dtype="float64")
+        out[f"valid_{rank}"] = pd.Series(valid, index=index)
+        for metric, values in metric_frames.items():
+            selected = values[row_index, chosen]
+            out[f"{metric}_{rank}"] = pd.Series(np.where(valid, selected, np.nan), index=index, dtype="float64")
+    return out
+
+
+def _empty_ranked_candidates(index: pd.Index, slots: int) -> dict[str, Series]:
+    out: dict[str, Series] = {}
+    for rank in range(slots):
+        for metric in ("line", "slope", "score", "touch_count", "slope_pct", "age", "span", "prominence_min"):
+            out[f"{metric}_{rank}"] = pd.Series(np.nan, index=index, dtype="float64")
+        out[f"valid_{rank}"] = pd.Series(False, index=index)
+    return out
 
 
 def _anchor_state(frame: DataFrame, prefix: str, strength: int, side: Literal["high", "low"], bar_index: Series) -> dict[str, Series]:
@@ -440,6 +725,14 @@ def _score_columns(
 ) -> dict[str, Series]:
     s = int(strength)
     w = int(cfg.score_window)
+    support_reclaim = pd.Series(support_reclaim, index=trend_bias.index).fillna(False).astype("bool")
+    resistance_reject = pd.Series(resistance_reject, index=trend_bias.index).fillna(False).astype("bool")
+    resistance_breakout = pd.Series(resistance_breakout, index=trend_bias.index).fillna(False).astype("bool")
+    support_breakdown = pd.Series(support_breakdown, index=trend_bias.index).fillna(False).astype("bool")
+    support_touch = pd.Series(support_touch, index=trend_bias.index).fillna(False).astype("bool")
+    resistance_touch = pd.Series(resistance_touch, index=trend_bias.index).fillna(False).astype("bool")
+    support_violation = pd.Series(support_violation, index=trend_bias.index).fillna(False).astype("bool")
+    resistance_violation = pd.Series(resistance_violation, index=trend_bias.index).fillna(False).astype("bool")
     support_touches = _rolling_count(support_touch, w)
     resistance_touches = _rolling_count(resistance_touch, w)
     support_violations = _rolling_count(support_violation, w)
@@ -476,7 +769,54 @@ def _score_columns(
         np.select([long_score.gt(short_score), short_score.gt(long_score)], [1.0, -1.0], default=0.0),
         index=long_score.index,
     )
+    margin = long_score - short_score
+    recent_bull_event = _rolling_count(support_reclaim | resistance_breakout, w).ge(1.0)
+    recent_bear_event = _rolling_count(resistance_reject | support_breakdown, w).ge(1.0)
+    full_bull = (
+        long_score.ge(0.46)
+        & margin.ge(0.08)
+        & (trend_bias.gt(0.0) | support_quality.ge(0.45) | recent_bull_event)
+    )
+    full_bear = (
+        short_score.ge(0.46)
+        & margin.le(-0.08)
+        & (trend_bias.lt(0.0) | resistance_quality.ge(0.45) | recent_bear_event)
+    )
+    bullish_chop = ~full_bull & ~full_bear & margin.ge(0.04) & long_score.ge(0.25)
+    bearish_chop = ~full_bull & ~full_bear & margin.le(-0.04) & short_score.ge(0.25)
+    market_context = pd.Series(
+        np.select([full_bull, full_bear, bullish_chop, bearish_chop], [2, -2, 1, -1], default=0),
+        index=long_score.index,
+        dtype="int8",
+    )
+
+    cooldown = max(3, int(cfg.score_window) // 6)
+    entry_support_reclaim_long = support_reclaim & long_score.ge(short_score - 0.03) & support_quality.ge(0.30)
+    entry_resistance_breakout_long = resistance_breakout & long_score.ge(short_score) & resistance_quality.ge(0.25)
+    entry_compression_breakout_long = resistance_breakout & compression_quality.ge(0.35) & long_score.ge(short_score)
+    entry_resistance_reject_short = resistance_reject & short_score.ge(long_score - 0.03) & resistance_quality.ge(0.30)
+    entry_support_breakdown_short = support_breakdown & short_score.ge(long_score) & support_quality.ge(0.25)
+    entry_compression_breakdown_short = support_breakdown & compression_quality.ge(0.35) & short_score.ge(long_score)
+    hold_long = support_quality.ge(0.40) & long_score.ge(short_score - 0.05) & ~support_breakdown
+    hold_short = resistance_quality.ge(0.40) & short_score.ge(long_score - 0.05) & ~resistance_breakout
+    exit_long = resistance_reject | support_breakdown
+    exit_short = support_reclaim | resistance_breakout
+    suggested_entry_long = entry_support_reclaim_long | entry_resistance_breakout_long | entry_compression_breakout_long
+    suggested_entry_short = entry_resistance_reject_short | entry_support_breakdown_short | entry_compression_breakdown_short
     return {
+        f"{prefix}_market_context_{s}": market_context,
+        f"{prefix}_entry_support_reclaim_long_{s}": _dedupe_events(entry_support_reclaim_long, cooldown),
+        f"{prefix}_entry_resistance_breakout_long_{s}": _dedupe_events(entry_resistance_breakout_long, cooldown),
+        f"{prefix}_entry_compression_breakout_long_{s}": _dedupe_events(entry_compression_breakout_long, cooldown),
+        f"{prefix}_entry_resistance_reject_short_{s}": _dedupe_events(entry_resistance_reject_short, cooldown),
+        f"{prefix}_entry_support_breakdown_short_{s}": _dedupe_events(entry_support_breakdown_short, cooldown),
+        f"{prefix}_entry_compression_breakdown_short_{s}": _dedupe_events(entry_compression_breakdown_short, cooldown),
+        f"{prefix}_hold_long_{s}": hold_long.fillna(False),
+        f"{prefix}_hold_short_{s}": hold_short.fillna(False),
+        f"{prefix}_exit_long_{s}": _dedupe_events(exit_long, cooldown),
+        f"{prefix}_exit_short_{s}": _dedupe_events(exit_short, cooldown),
+        f"{prefix}_suggested_entry_long_{s}": _dedupe_events(suggested_entry_long, cooldown),
+        f"{prefix}_suggested_entry_short_{s}": _dedupe_events(suggested_entry_short, cooldown),
         f"{prefix}_score_long_{s}": long_score,
         f"{prefix}_score_short_{s}": short_score,
         f"{prefix}_score_abs_{s}": abs_score,
@@ -490,11 +830,24 @@ def _safe_div(numerator: Series, denominator: Series) -> Series:
     return numerator / denominator.replace(0.0, np.nan)
 
 
+def _dedupe_events(mask: Series, cooldown_bars: int) -> Series:
+    clean = pd.Series(mask, index=mask.index).fillna(False).astype("bool")
+    prior_recent = _rolling_count(clean.shift(1, fill_value=False), max(int(cooldown_bars), 1))
+    return (clean & prior_recent.eq(0.0)).fillna(False)
+
+
 def _clip01(series: Series) -> Series:
     return pd.to_numeric(series, errors="coerce").replace([np.inf, -np.inf], np.nan).clip(0.0, 1.0).fillna(0.0)
 
 
-def _active_alias_columns(cols: dict[str, Series], prefix: str, strength: int, horizons: list[int], windows: list[int]) -> dict[str, Series]:
+def _active_alias_columns(
+    cols: dict[str, Series],
+    prefix: str,
+    strength: int,
+    horizons: list[int],
+    windows: list[int],
+    ranked_line_count: int,
+) -> dict[str, Series]:
     aliases = (
         "resistance_line", "support_line", "resistance_plot", "support_plot", "channel_mid", "channel_mid_plot",
         "resistance_slope", "support_slope", "resistance_slope_pct", "support_slope_pct", "slope_mean_pct",
@@ -504,6 +857,11 @@ def _active_alias_columns(cols: dict[str, Series], prefix: str, strength: int, h
         "last_pivot_high", "last_pivot_low", "prev_pivot_high", "prev_pivot_low",
         "resistance_touch", "support_touch", "resistance_reject", "support_reclaim",
         "resistance_violation", "support_violation",
+        "suggested_entry_long", "suggested_entry_short",
+        "market_context", "entry_support_reclaim_long", "entry_resistance_breakout_long",
+        "entry_compression_breakout_long", "entry_resistance_reject_short",
+        "entry_support_breakdown_short", "entry_compression_breakdown_short",
+        "hold_long", "hold_short", "exit_long", "exit_short",
         "score_long", "score_short", "score_abs", "state", "support_quality", "resistance_quality",
     )
     out: dict[str, Series] = {}
@@ -511,6 +869,16 @@ def _active_alias_columns(cols: dict[str, Series], prefix: str, strength: int, h
         src = f"{prefix}_{alias}_{strength}"
         if src in cols:
             out[f"{prefix}_{alias}"] = cols[src]
+    for rank in range(max(int(ranked_line_count), 1)):
+        for alias in (
+            "resistance_line_rank", "support_line_rank", "resistance_plot_rank", "support_plot_rank",
+            "resistance_score_rank", "support_score_rank", "resistance_touch_count_rank", "support_touch_count_rank",
+            "resistance_confirmed_rank", "support_confirmed_rank", "resistance_slope_pct_rank", "support_slope_pct_rank",
+            "resistance_age_rank", "support_age_rank", "resistance_span_rank", "support_span_rank",
+        ):
+            src = f"{prefix}_{alias}{rank}_{strength}"
+            if src in cols:
+                out[f"{prefix}_{alias}{rank}"] = cols[src]
     for h in horizons:
         for alias in (
             "resistance_proj", "support_proj", "resistance_proj_plot", "support_proj_plot", "channel_mid_proj",
@@ -571,6 +939,8 @@ def _validate_config(cfg: TrendlineProjectionConfig) -> None:
         raise ValueError("zone settings must be non-negative")
     if cfg.max_line_slope_pct_per_bar <= 0.0:
         raise ValueError("max_line_slope_pct_per_bar must be positive")
+    if cfg.max_active_line_distance_pct <= 0.0:
+        raise ValueError("max_active_line_distance_pct must be positive")
     if cfg.compression_window < 2:
         raise ValueError("compression_window must be at least 2")
     if cfg.compression_min_periods < 1 or cfg.compression_min_periods > cfg.compression_window:
@@ -581,6 +951,14 @@ def _validate_config(cfg: TrendlineProjectionConfig) -> None:
         raise ValueError("min_touch_count must be at least 1")
     if not 0.0 <= cfg.min_respect_ratio <= 1.0:
         raise ValueError("min_respect_ratio must be between 0.0 and 1.0")
+    if cfg.candidate_pivot_count < 3:
+        raise ValueError("candidate_pivot_count must be at least 3")
+    if cfg.ranked_line_count < 1:
+        raise ValueError("ranked_line_count must be at least 1")
+    if cfg.fit_touch_tolerance_pct <= 0.0:
+        raise ValueError("fit_touch_tolerance_pct must be positive")
+    if cfg.min_fit_touch_count < 2:
+        raise ValueError("min_fit_touch_count must be at least 2")
 
 
 def _validate_dataframe(dataframe: DataFrame) -> None:
