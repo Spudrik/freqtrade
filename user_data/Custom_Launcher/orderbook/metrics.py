@@ -3,34 +3,11 @@ from __future__ import annotations
 import statistics
 from typing import Any
 
+from .markets import pair_to_symbol, MARKET_PROFILES, normalize_whitelist_pairs
+
 
 def normalize_freqtrade_pair_to_binance_symbol(pair: str) -> str | None:
-    raw = str(pair or "").strip().upper()
-    if not raw or "/" not in raw:
-        return None
-    base, quote_part = raw.split("/", 1)
-    base = base.strip()
-    quote = quote_part.split(":", 1)[0].strip()
-    if not base or not quote:
-        return None
-    if not base.isalnum() or not quote.isalnum():
-        return None
-    return f"{base}{quote}"
-
-
-def normalize_whitelist_pairs(raw_pairs: list[str], max_symbols: int) -> list[dict[str, str]]:
-    seen: set[str] = set()
-    normalized: list[dict[str, str]] = []
-    for pair in raw_pairs:
-        pair_text = str(pair or "").strip()
-        symbol = normalize_freqtrade_pair_to_binance_symbol(pair_text)
-        if not symbol or symbol in seen:
-            continue
-        seen.add(symbol)
-        normalized.append({"pair": pair_text, "symbol": symbol})
-        if len(normalized) >= max(1, int(max_symbols)):
-            break
-    return normalized
+    return pair_to_symbol(pair, MARKET_PROFILES["binance_usdm_futures"])
 
 
 def parse_book_side(levels: Any, *, reverse: bool = False) -> list[tuple[float, float]]:

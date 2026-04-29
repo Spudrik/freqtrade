@@ -10,6 +10,14 @@ import sqlite3
 import subprocess
 import sys
 
+from orderbook.markets import (
+    MARKET_PROFILES,
+    market_profile_options,
+    normalize_market_profile_keys,
+    normalize_pairs_for_profiles,
+    pair_to_symbol,
+    resolve_profile_depth,
+)
 from orderbook.metrics import estimate_storage_usage, normalize_freqtrade_pair_to_binance_symbol, normalize_whitelist_pairs
 
 from .collector_service import is_process_running, open_path, utc_now, utf8_subprocess_env
@@ -60,25 +68,34 @@ class OrderBookService:
         }
 
     def build_runtime_config(self, state: dict[str, Any]) -> dict[str, Any]:
+        market_profiles = normalize_market_profile_keys(state.get("market_profiles"))
+        if not market_profiles:
+            raise ValueError("Select at least one supported market profile.")
+        valid_depths = {depth for profile in MARKET_PROFILES.values() for depth in profile.supported_depths}
+        valid_updates = {update for profile in MARKET_PROFILES.values() for update in profile.supported_update_ms}
         depth = int(str(state.get("depth_levels") or "20"))
-        if depth not in {5, 10, 20}:
-            raise ValueError("Depth must be one of: 5, 10, 20.")
+        if depth not in valid_depths:
+            raise ValueError(f"Depth must be one of: {', '.join(str(value) for value in sorted(valid_depths))}.")
         update_ms = int(str(state.get("stream_update_ms") or "500"))
-        if update_ms not in {100, 250, 500}:
-            raise ValueError("Stream update ms must be one of: 100, 250, 500.")
+        if update_ms not in valid_updates:
+            raise ValueError(f"Stream update ms must be one of: {', '.join(str(value) for value in sorted(valid_updates))}.")
         metric_interval = max(1, int(str(state.get("metric_interval_seconds") or "1")))
         snapshot_interval = max(1, int(str(state.get("snapshot_interval_seconds") or "60")))
+        context_poll_seconds = max(30, int(str(state.get("context_poll_seconds") or "300")))
         max_symbols = max(1, int(str(state.get("max_symbols") or "12")))
         warning_mb = max(1, int(str(state.get("capacity_warning_mb") or "500")))
         critical_mb = max(1, int(str(state.get("capacity_critical_mb") or "2000")))
         return {
             "version": 1,
-            "exchange": "binance_usdm_futures",
-            "market_type": "futures",
+            "exchange": "multi_market",
+            "market_type": "multi",
+            "market_profiles": market_profiles,
             "stream_mode": "partial_depth",
             "depth_levels": depth,
             "stream_update_ms": update_ms,
             "metric_interval_seconds": metric_interval,
+            "context_poll_seconds": context_poll_seconds,
+            "context_period": str(state.get("context_period") or "5m"),
             "snapshot_interval_seconds": snapshot_interval,
             "store_snapshots": bool(state.get("store_snapshots", True)),
             "max_symbols": max_symbols,
@@ -103,29 +120,58 @@ class OrderBookService:
 
     def normalized_pairs(self, pairs: list[str], state: dict[str, Any]) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
         max_symbols = max(1, int(str(state.get("max_symbols") or "12")))
-        valid = normalize_whitelist_pairs(pairs, max_symbols=max_symbols)
-        seen = {item["symbol"] for item in valid}
+        profile_keys = normalize_market_profile_keys(state.get("market_profiles"))
+        valid = normalize_pairs_for_profiles(
+            pairs,
+            profile_keys,
+            max_symbols=max_symbols,
+            depth_levels=max(1, int(str(state.get("depth_levels") or "20"))),
+            stream_update_ms=max(1, int(str(state.get("stream_update_ms") or "500"))),
+        )
+        seen = {item["canonical_pair"] for item in normalize_whitelist_pairs(pairs, max_symbols=max_symbols)}
         preview: list[dict[str, str]] = []
-        added: set[str] = set()
         for pair in pairs:
-            symbol = normalize_freqtrade_pair_to_binance_symbol(pair)
-            if not symbol:
-                preview.append({"pair": pair, "symbol": "-", "status": "invalid"})
-            elif symbol in added:
-                preview.append({"pair": pair, "symbol": symbol, "status": "duplicate"})
-            elif symbol not in seen:
-                preview.append({"pair": pair, "symbol": symbol, "status": "max_symbols_limit"})
-            else:
-                preview.append({"pair": pair, "symbol": symbol, "status": "ok"})
-                added.add(symbol)
+            canonical = str(pair or "").strip().upper()
+            if "/" not in canonical:
+                preview.append({"pair": pair, "market": "-", "symbol": "-", "status": "invalid"})
+                continue
+            canonical_pair = canonical.split(":", 1)[0]
+            if canonical_pair not in seen:
+                preview.append({"pair": pair, "market": "-", "symbol": "-", "status": "max_symbols_limit"})
+                continue
+            for profile_key in profile_keys:
+                profile = MARKET_PROFILES[profile_key]
+                symbol = pair_to_symbol(pair, profile)
+                preview.append(
+                    {
+                        "pair": pair,
+                        "market": profile.market_key,
+                        "symbol": symbol or "-",
+                        "status": "ok" if symbol else "unsupported_quote",
+                    }
+                )
         return valid, preview
 
     def estimate(self, pair_count: int, state: dict[str, Any]) -> dict[str, float]:
+        requested_depth = max(1, int(str(state.get("depth_levels") or "20")))
+        profile_keys = normalize_market_profile_keys(state.get("market_profiles"))
+        if not profile_keys:
+            return estimate_storage_usage(
+                pair_count=0,
+                metric_interval_seconds=max(1, int(str(state.get("metric_interval_seconds") or "1"))),
+                snapshot_interval_seconds=max(1, int(str(state.get("snapshot_interval_seconds") or "60"))),
+                depth_levels=requested_depth,
+                store_snapshots=bool(state.get("store_snapshots", True)),
+            )
+        retained_depth = max(
+            min(requested_depth, resolve_profile_depth(MARKET_PROFILES[key], requested_depth))
+            for key in profile_keys
+        )
         return estimate_storage_usage(
             pair_count=pair_count,
             metric_interval_seconds=max(1, int(str(state.get("metric_interval_seconds") or "1"))),
             snapshot_interval_seconds=max(1, int(str(state.get("snapshot_interval_seconds") or "60"))),
-            depth_levels=max(1, int(str(state.get("depth_levels") or "20"))),
+            depth_levels=retained_depth,
             store_snapshots=bool(state.get("store_snapshots", True)),
         )
 
@@ -136,6 +182,14 @@ class OrderBookService:
         valid, _ = self.normalized_pairs(pairs, state)
         if not valid:
             raise ValueError("No usable whitelist pairs found. Add pairs on the Pairs tab first.")
+        pair_args: list[str] = []
+        seen_pairs: set[str] = set()
+        for item in valid:
+            canonical = str(item.get("canonical_pair") or item.get("pair") or "")
+            if canonical in seen_pairs:
+                continue
+            seen_pairs.add(canonical)
+            pair_args.append(str(item["pair"]))
         return [
             self.python_exe,
             "-u",
@@ -156,7 +210,7 @@ class OrderBookService:
             "--log-file",
             str(paths["log"]),
             "--pairs",
-            ",".join(item["pair"] for item in valid),
+            ",".join(pair_args),
         ]
 
     def start_detached(self, state: dict[str, Any], pairs: list[str]) -> int:
@@ -226,11 +280,11 @@ class OrderBookService:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 """
-                SELECT pair, symbol, status, best_bid, best_ask, spread_bps, imbalance_top20,
+                SELECT market_key, canonical_pair, pair, symbol, status, best_bid, best_ask, spread_bps, imbalance_top20,
                        bid_pressure_ratio_60s, ask_pressure_ratio_60s,
                        nearest_bid_wall_distance_bps, nearest_ask_wall_distance_bps, last_metric_at
                 FROM stream_status
-                ORDER BY pair
+                ORDER BY canonical_pair, market_key
                 """
             ).fetchall()
         return [tuple(row[key] for key in row.keys()) for row in rows]
@@ -241,7 +295,7 @@ class OrderBookService:
         export_dir = paths["data_dir"] / "exports"
         export_dir.mkdir(parents=True, exist_ok=True)
         output = export_dir / f"orderbook_latest_metrics_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-        headers = ["pair", "symbol", "status", "best_bid", "best_ask", "spread_bps", "imbalance_top20", "bid_pressure_ratio_60s", "ask_pressure_ratio_60s", "nearest_bid_wall_distance_bps", "nearest_ask_wall_distance_bps", "last_metric_at"]
+        headers = ["market_key", "canonical_pair", "pair", "symbol", "status", "best_bid", "best_ask", "spread_bps", "imbalance_top20", "bid_pressure_ratio_60s", "ask_pressure_ratio_60s", "nearest_bid_wall_distance_bps", "nearest_ask_wall_distance_bps", "last_metric_at"]
         with open(output, "w", encoding="utf-8", newline="") as handle:
             writer = csv.writer(handle)
             writer.writerow(headers)
@@ -258,6 +312,103 @@ class OrderBookService:
         paths["log"].parent.mkdir(parents=True, exist_ok=True)
         paths["log"].touch(exist_ok=True)
         open_path(paths["log"])
+
+    def market_profile_options(self) -> list[tuple[str, str]]:
+        return market_profile_options()
+
+    def comparison_rows(self, state: dict[str, Any]) -> list[tuple[Any, ...]]:
+        paths = self.paths(state)
+        if not paths["db"].exists():
+            return []
+        with sqlite3.connect(str(paths["db"]), timeout=5.0) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT t.*
+                FROM orderbook_metric_ticks t
+                JOIN (
+                    SELECT stream_id, MAX(id) AS latest_id
+                    FROM orderbook_metric_ticks
+                    GROUP BY stream_id
+                ) latest ON latest.latest_id = t.id
+                ORDER BY t.canonical_pair, t.market_key
+                """
+            ).fetchall()
+        by_pair: dict[str, list[sqlite3.Row]] = {}
+        for row in rows:
+            by_pair.setdefault(str(row["canonical_pair"]), []).append(row)
+        output: list[tuple[Any, ...]] = []
+        for canonical_pair, pair_rows in sorted(by_pair.items()):
+            spot_rows = [row for row in pair_rows if row["market_type"] == "spot"]
+            future_rows = [row for row in pair_rows if row["market_type"] == "futures"]
+            for spot in spot_rows:
+                for future in future_rows:
+                    spot_mid = _float_or_none(spot["mid_price"])
+                    future_mid = _float_or_none(future["mid_price"])
+                    basis = ((future_mid - spot_mid) / spot_mid * 10000.0) if spot_mid and future_mid else None
+                    spot_depth = _float_or_none(spot["bid_notional_top20"]) or 0.0
+                    spot_depth += _float_or_none(spot["ask_notional_top20"]) or 0.0
+                    future_depth = _float_or_none(future["bid_notional_top20"]) or 0.0
+                    future_depth += _float_or_none(future["ask_notional_top20"]) or 0.0
+                    depth_ratio = (future_depth / spot_depth) if spot_depth > 0 else None
+                    spread_delta = _delta(future["spread_bps"], spot["spread_bps"])
+                    imbalance_delta = _delta(future["imbalance_top20"], spot["imbalance_top20"])
+                    pressure_delta = _delta(future["strong_bid_pressure"], spot["strong_bid_pressure"])
+                    pressure_lead_lag = _pressure_lead_lag(spot, future)
+                    wall_delta = _delta(future["nearest_bid_wall_distance_bps"], spot["nearest_bid_wall_distance_bps"])
+                    output.append(
+                        (
+                            canonical_pair,
+                            spot["market_key"],
+                            future["market_key"],
+                            _fmt(spot_mid),
+                            _fmt(future_mid),
+                            _fmt(basis),
+                            _fmt(spread_delta),
+                            _fmt(depth_ratio),
+                            _fmt(imbalance_delta),
+                            _fmt(pressure_delta),
+                            pressure_lead_lag,
+                            _fmt(wall_delta),
+                            future["ts"],
+                        )
+                    )
+        return output
+
+    def latest_context_rows(self, state: dict[str, Any]) -> list[tuple[Any, ...]]:
+        paths = self.paths(state)
+        if not paths["db"].exists():
+            return []
+        with sqlite3.connect(str(paths["db"]), timeout=5.0) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT c.*
+                FROM market_context_ticks c
+                JOIN (
+                    SELECT market_key, canonical_pair, MAX(id) AS latest_id
+                    FROM market_context_ticks
+                    GROUP BY market_key, canonical_pair
+                ) latest ON latest.latest_id = c.id
+                ORDER BY c.canonical_pair, c.market_key
+                """
+            ).fetchall()
+        return [
+            (
+                row["market_key"],
+                row["canonical_pair"],
+                _fmt(row["funding_rate"]),
+                _fmt(row["open_interest"]),
+                _fmt(row["long_ratio"]),
+                _fmt(row["short_ratio"]),
+                _fmt(row["long_short_ratio"]),
+                _fmt(row["taker_buy_volume"]),
+                _fmt(row["taker_sell_volume"]),
+                _fmt(row["taker_buy_sell_ratio"]),
+                row["source_ts"] or row["ts"],
+            )
+            for row in rows
+        ]
 
     def history_datadir(self, state: dict[str, Any], fallback_datadir: str = "") -> Path:
         raw = str(state.get("history_datadir") or "").strip()
@@ -401,3 +552,51 @@ class OrderBookService:
         for ch in ["/", " ", ".", "@", "$", "+", ":"]:
             value = value.replace(ch, "_")
         return value
+
+
+def _float_or_none(value: Any) -> float | None:
+    try:
+        return float(value)
+    except Exception:
+        return None
+
+
+def _delta(left: Any, right: Any) -> float | None:
+    left_value = _float_or_none(left)
+    right_value = _float_or_none(right)
+    if left_value is None or right_value is None:
+        return None
+    return left_value - right_value
+
+
+def _fmt(value: Any) -> str:
+    number = _float_or_none(value)
+    if number is None:
+        return "-"
+    return f"{number:.6g}"
+
+
+def _pressure_lead_lag(spot: sqlite3.Row, future: sqlite3.Row) -> str:
+    spot_score = _pressure_score(spot)
+    future_score = _pressure_score(future)
+    if spot_score == future_score:
+        if spot_score > 0:
+            return "aligned_bid"
+        if spot_score < 0:
+            return "aligned_ask"
+        return "neutral"
+    if future_score > 0 and spot_score <= 0:
+        return "futures_bid_leads"
+    if future_score < 0 and spot_score >= 0:
+        return "futures_ask_leads"
+    if spot_score > 0 and future_score <= 0:
+        return "spot_bid_leads"
+    if spot_score < 0 and future_score >= 0:
+        return "spot_ask_leads"
+    return "divergent"
+
+
+def _pressure_score(row: sqlite3.Row) -> int:
+    bid = int(_float_or_none(row["strong_bid_pressure"]) or 0)
+    ask = int(_float_or_none(row["strong_ask_pressure"]) or 0)
+    return bid - ask
