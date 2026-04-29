@@ -89,3 +89,26 @@ VP tuning levers that strategies may expose to hyperopt:
 - Node quality/proximity: `hvn_threshold`, `lvn_threshold`, `node_near_pct`, `node_hvn_strength_min`, `node_lvn_thinness_min`, `node_hold_near_mult`.
 - Pressure/participation: `pressure_delta_min`, `volume_percentile_min`, `fast_traverse_atr_mult`.
 - Context/trigger scoring: `poc_migration_window`, `score_window`, `entry_score_margin`, `context_full_min`, `context_full_margin`, `context_soft_min`, `context_soft_margin`, `context_balance_min`.
+
+## Pivot Structure Strategy Outputs
+
+Pivot Structure should separate tactical local swings from larger structural market memory.
+
+Strategy-facing pivot concepts:
+- Local pivots: `pa_pivot_high_*` / `pa_pivot_low_*` are confirmed local swing points for each configured strength. They are useful for tactical pullback, local break, and local trendline logic, but they can be noisy.
+- Structural pivots: `pa_structural_pivot_high` / `pa_structural_pivot_low` use stricter confirmation, prominence, spacing, and distance filters. They should be treated as higher-importance market structure.
+- Structural zones: `pa_structural_resistance`, `pa_structural_support`, and their zone upper/lower columns are horizontal support/resistance memory from structural pivots. Strategies should prefer these over the local projected support/resistance lines for broad market structure.
+- Structural events: `pa_structural_resistance_break`, `pa_structural_support_break`, `pa_structural_resistance_reject`, and `pa_structural_support_reclaim` are de-duplicated evidence flags around structural zones. They are triggers/guards, not final trade decisions.
+- Local projected lines: `pa_resistance_line` / `pa_support_line` remain available but are less authoritative. They are based on recent local pivots and should be treated as tactical geometry, not durable structure.
+- Channel compression: `pa_channel_width_ratio` is current channel width divided by recent median width. `pa_channel_compression` is a bounded `0..1` score, where higher means the local pivot channel is unusually tight versus its own recent history.
+- Structural state: `pa_structural_state` is `1` for confirmed higher-high/higher-low structural bias, `-1` for lower-high/lower-low structural bias, and `0` when mixed or undefined.
+- Pivot market context: `pa_market_context` uses the shared directional context convention: `+2` bull, `+1` bullish chop, `0` undefined, `-1` bearish chop, and `-2` bear. Full `+2/-2` states should require stronger structural evidence than `+1/-1`; the lower-intensity states mean directional bias exists but conditions are still messy.
+- Entry diagnostics: `pa_entry_*_long` and `pa_entry_*_short` columns are separated by plain-English reasons, such as structural breakouts, support reclaims, continuation breaks, reversal breaks, compression breaks, and range support/resistance reactions. They are diagnostic triggers for testing, not final strategy entries.
+- Compatibility aliases: older `*_bos_*` and `*_choch_*` columns may exist for backwards compatibility only. Prefer `*_continuation_break_*` and `*_reversal_break_*` in new code and plots.
+
+Pivot tuning levers that strategies may expose to hyperopt:
+- Local pivot sensitivity: `strength`, `strengths`, `min_prominence_atr`, `min_prominence_pct`, `min_pivot_spacing_bars`, `min_pivot_distance_atr`, `min_pivot_distance_pct`.
+- Local zones/channels: `zone_atr_mult`, `zone_pct`, `min_channel_width_pct`, `max_pivot_age_bars`.
+- Structural pivot sensitivity: `structural_strength`, `structural_min_prominence_atr`, `structural_min_prominence_pct`, `structural_min_pivot_spacing_bars`, `structural_min_pivot_distance_atr`, `structural_min_pivot_distance_pct`.
+- Structural zones: `structural_max_age_bars`, `structural_zone_atr_mult`, `structural_zone_pct`.
+- Compression: `compression_window`, `compression_min_periods`, `compression_full_at_ratio`, `compression_none_at_ratio`.
