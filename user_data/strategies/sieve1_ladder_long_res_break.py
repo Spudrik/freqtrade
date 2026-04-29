@@ -7,7 +7,9 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from pandas import DataFrame, Series
+from freqtrade.exchange import timeframe_to_minutes
 from freqtrade.strategy import CategoricalParameter, DecimalParameter, IntParameter, IStrategy
+from user_data.Indicators.complex_volume_profile import add_volume_profile
 
 
 LEVEL_LOOKBACK_CHOICES = [48, 96, 168, 336, 720]
@@ -17,6 +19,16 @@ D1_LEVEL_LOOKBACK_CHOICES = [20, 50, 100, 200]
 D1_VOLUME_WINDOW_CHOICES = [14, 28, 56]
 ENABLE_CHOICES = ["off", "on"]
 D1_STRUCTURE_MODE_CHOICES = ["off", "near", "aligned"]
+GUARD_MODE_CHOICES = ["direction", "score", "context", "score_or_context", "balance"]
+PRICE_SOURCE_CHOICES = ["close", "hl2", "hlc3", "ohlc4"]
+VP_COLUMNS = [
+    "score_long",
+    "score_short",
+    "context_score_bull",
+    "context_score_bear",
+    "context_score_balance",
+    "market_context",
+]
 
 
 def _pct_env(name: str, default_ratio: float) -> float:
@@ -76,6 +88,23 @@ class Sieve1LadderLongResBreak(IStrategy):
     d1_rvol_min = _tag(DecimalParameter(0.7, 2.2, decimals=1, default=1.0, space="buy", optimize=True, load=True), MODE)
     d1_pressure_min = _tag(DecimalParameter(0.0, 1.2, decimals=1, default=0.2, space="buy", optimize=True, load=True), MODE)
 
+    use_vp_4h_guard = _tag(CategoricalParameter(ENABLE_CHOICES, default="off", space="buy", optimize=True, load=True), MODE)
+    vp_4h_guard_mode = _tag(CategoricalParameter(GUARD_MODE_CHOICES, default="score_or_context", space="buy", optimize=True, load=True), MODE)
+    vp_4h_window = _tag(CategoricalParameter([12, 24, 48, 72, 96], default=48, space="buy", optimize=True, load=True), MODE)
+    vp_4h_bins = _tag(CategoricalParameter([16, 24, 36, 48, 64], default=36, space="buy", optimize=True, load=True), MODE)
+    vp_4h_score_min = _tag(DecimalParameter(0.00, 1.00, decimals=2, default=0.25, space="buy", optimize=True, load=True), MODE)
+    vp_4h_context_min = _tag(DecimalParameter(0.00, 1.00, decimals=2, default=0.28, space="buy", optimize=True, load=True), MODE)
+    use_vp_1d_guard = _tag(CategoricalParameter(ENABLE_CHOICES, default="off", space="buy", optimize=True, load=True), MODE)
+    vp_1d_guard_mode = _tag(CategoricalParameter(GUARD_MODE_CHOICES, default="context", space="buy", optimize=True, load=True), MODE)
+    vp_1d_window = _tag(CategoricalParameter([10, 20, 30, 45, 60, 84], default=30, space="buy", optimize=True, load=True), MODE)
+    vp_1d_bins = _tag(CategoricalParameter([16, 24, 36, 48, 64], default=36, space="buy", optimize=True, load=True), MODE)
+    vp_1d_score_min = _tag(DecimalParameter(0.00, 1.00, decimals=2, default=0.25, space="buy", optimize=True, load=True), MODE)
+    vp_1d_context_min = _tag(DecimalParameter(0.00, 1.00, decimals=2, default=0.28, space="buy", optimize=True, load=True), MODE)
+    vp_guard_value_area_pct = _tag(DecimalParameter(0.55, 0.85, decimals=2, default=0.70, space="buy", optimize=True, load=True), MODE)
+    vp_guard_price_source = _tag(CategoricalParameter(PRICE_SOURCE_CHOICES, default="hlc3", space="buy", optimize=True, load=True), MODE)
+    vp_guard_node_near_pct = _tag(DecimalParameter(0.002, 0.030, decimals=3, default=0.010, space="buy", optimize=True, load=True), MODE)
+    vp_guard_pressure_delta_min = _tag(DecimalParameter(0.00, 0.35, decimals=2, default=0.05, space="buy", optimize=True, load=True), MODE)
+
     def leverage(self, pair: str, current_time: datetime, current_rate: float, proposed_leverage: float, max_leverage: float, entry_tag: str | None, side: str, **kwargs: Any) -> float:
         _ = pair, current_time, current_rate, proposed_leverage, max_leverage, entry_tag, side, kwargs
         return 1.0
@@ -84,11 +113,11 @@ class Sieve1LadderLongResBreak(IStrategy):
         if not self.dp:
             return []
         try:
-            return [(pair, "1d") for pair in self.dp.current_whitelist()]
+            whitelist = self.dp.current_whitelist()
+            return [(pair, "1d") for pair in whitelist] + [(pair, "4h") for pair in whitelist]
         except Exception:
             return []
 
-    @staticmethod
     def _num(value: Series) -> Series:
         return pd.to_numeric(value, errors="coerce")
 
@@ -193,7 +222,10 @@ class Sieve1LadderLongResBreak(IStrategy):
         dataframe["sieve_ema_slow"] = close.ewm(span=96, adjust=False, min_periods=48).mean()
         dataframe["sieve_trend_up"] = dataframe["sieve_ema_fast"] > dataframe["sieve_ema_slow"]
         dataframe["sieve_trend_down"] = dataframe["sieve_ema_fast"] < dataframe["sieve_ema_slow"]
-        return self._merge_daily_context(dataframe, metadata)
+        dataframe = self._merge_daily_context(dataframe, metadata)
+        dataframe = self._merge_informative_vp(dataframe, metadata, "4h", "vp4h", int(self.vp_4h_window.value), int(self.vp_4h_bins.value))
+        dataframe = self._merge_informative_vp(dataframe, metadata, "1d", "vp1d", int(self.vp_1d_window.value), int(self.vp_1d_bins.value))
+        return dataframe
 
     def _side_volume_guard(self, dataframe: DataFrame, side: str, local: int, d1_window: int) -> Series:
         index = dataframe.index
@@ -345,6 +377,76 @@ class Sieve1LadderLongResBreak(IStrategy):
             return (short_pressure & retest_reject & trend_down & d1_down).fillna(False)
         return (long_pressure if side == "long" else short_pressure).fillna(False)
 
+
+    def _merge_informative_vp(self, dataframe: DataFrame, metadata: dict, timeframe: str, prefix: str, window: int, bins: int) -> DataFrame:
+        if "date" not in dataframe.columns or not getattr(self, "dp", None):
+            return dataframe
+        pair = str(metadata.get("pair") or "")
+        if not pair:
+            return dataframe
+        informative = self.dp.get_pair_dataframe(pair=pair, timeframe=timeframe)
+        if informative is None or informative.empty or "date" not in informative.columns:
+            return dataframe
+        informative = add_volume_profile(
+            informative.copy(),
+            window=window,
+            bins=bins,
+            value_area_pct=float(self.vp_guard_value_area_pct.value),
+            price_source=str(self.vp_guard_price_source.value),
+            pressure_delta_min=float(self.vp_guard_pressure_delta_min.value),
+            node_near_pct=float(self.vp_guard_node_near_pct.value),
+            prefix=prefix,
+        )
+        merge_columns = [f"{prefix}_{name}" for name in VP_COLUMNS if f"{prefix}_{name}" in informative.columns]
+        if not merge_columns:
+            return dataframe
+        minutes = timeframe_to_minutes(timeframe)
+        inf = informative[["date", *merge_columns]].copy().sort_values("date")
+        inf["date_merge"] = inf["date"] + pd.to_timedelta(minutes, unit="m")
+        base = dataframe.reset_index().rename(columns={"index": "__row_index"}).sort_values("date")
+        merged = pd.merge_asof(
+            base,
+            inf[["date_merge", *merge_columns]].sort_values("date_merge"),
+            left_on="date",
+            right_on="date_merge",
+            direction="backward",
+        ).sort_values("__row_index")
+        for column in merge_columns:
+            dataframe[column] = merged[column].to_numpy()
+        return dataframe
+
+    def _score_guard(self, dataframe: DataFrame, prefix: str, side: str, score_min: float) -> Series:
+        score = self._num(dataframe.get(f"{prefix}_score_{side}", pd.Series(index=dataframe.index, dtype="float64")))
+        opposite_side = "short" if side == "long" else "long"
+        opposite = self._num(dataframe.get(f"{prefix}_score_{opposite_side}", pd.Series(index=dataframe.index, dtype="float64")))
+        return score.ge(score_min) & score.ge(opposite)
+
+    def _context_guard(self, dataframe: DataFrame, prefix: str, side: str, context_min: float) -> Series:
+        if side == "long":
+            context = self._num(dataframe.get(f"{prefix}_context_score_bull", pd.Series(index=dataframe.index, dtype="float64")))
+            opposite = self._num(dataframe.get(f"{prefix}_context_score_bear", pd.Series(index=dataframe.index, dtype="float64")))
+            market_ok = self._num(dataframe.get(f"{prefix}_market_context", pd.Series(index=dataframe.index, dtype="float64"))).ge(0)
+        else:
+            context = self._num(dataframe.get(f"{prefix}_context_score_bear", pd.Series(index=dataframe.index, dtype="float64")))
+            opposite = self._num(dataframe.get(f"{prefix}_context_score_bull", pd.Series(index=dataframe.index, dtype="float64")))
+            market_ok = self._num(dataframe.get(f"{prefix}_market_context", pd.Series(index=dataframe.index, dtype="float64"))).le(0)
+        return context.ge(context_min) & context.ge(opposite) & market_ok
+
+    def _vp_guard(self, dataframe: DataFrame, prefix: str, side: str, mode: str, score_min: float, context_min: float) -> Series:
+        score_ok = self._score_guard(dataframe, prefix, side, score_min)
+        context_ok = self._context_guard(dataframe, prefix, side, context_min)
+        balance = self._num(dataframe.get(f"{prefix}_context_score_balance", pd.Series(index=dataframe.index, dtype="float64")))
+        if mode == "score":
+            return score_ok
+        if mode == "context":
+            return context_ok
+        if mode == "score_or_context":
+            return score_ok | context_ok
+        if mode == "balance":
+            return balance.ge(context_min)
+        market = self._num(dataframe.get(f"{prefix}_market_context", pd.Series(index=dataframe.index, dtype="float64")))
+        return market.ge(0) if side == "long" else market.le(0)
+
     def _entry_mask(self, dataframe: DataFrame) -> Series:
         level = int(self.level_lookback.value)
         local = int(self.local_lookback.value)
@@ -404,6 +506,10 @@ class Sieve1LadderLongResBreak(IStrategy):
             side = self.ENTRY_SIDE
         confirmation = self._adaptive_confirmation_guard(dataframe, side, local, level, zone, trigger)
         mask = structure & confirmation & self._side_volume_guard(dataframe, side, local, d1_window) & self._daily_structure_guard(dataframe, side, d1_level, zone, trigger)
+        if self._enabled(self.use_vp_4h_guard.value):
+            mask &= self._vp_guard(dataframe, "vp4h", side, str(self.vp_4h_guard_mode.value), float(self.vp_4h_score_min.value), float(self.vp_4h_context_min.value))
+        if self._enabled(self.use_vp_1d_guard.value):
+            mask &= self._vp_guard(dataframe, "vp1d", side, str(self.vp_1d_guard_mode.value), float(self.vp_1d_score_min.value), float(self.vp_1d_context_min.value))
         return self._bool(mask, dataframe.index)
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:

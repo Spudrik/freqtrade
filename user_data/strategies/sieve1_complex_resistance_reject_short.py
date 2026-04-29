@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 from pandas import DataFrame, Series
 
+from freqtrade.exchange import timeframe_to_minutes
 from freqtrade.strategy import BooleanParameter, CategoricalParameter, DecimalParameter, IntParameter, IStrategy
 
 from user_data.Indicators.complex_pattern_structure import add_pattern_structure
@@ -65,6 +66,17 @@ ENTRY_MODE = "entry_complex_resistance_reject_short"
 ENTRY_TAG = "complex_res_reject_short"
 SIDE = "short"
 CORE_BEHAVIOR = "resistance rejection after stop-run"
+GUARD_MODE_CHOICES = ["direction", "score", "context", "score_or_context", "balance"]
+PRICE_SOURCE_CHOICES = ["close", "hl2", "hlc3", "ohlc4"]
+VP_COLUMNS = [
+    "score_long",
+    "score_short",
+    "context_score_bull",
+    "context_score_bear",
+    "context_score_balance",
+    "market_context",
+]
+
 
 
 def tagged_parameter(param: Any) -> Any:
@@ -130,11 +142,45 @@ class Sieve1ComplexResistanceRejectShort(IStrategy):
     use_volume_score = tagged_parameter(BooleanParameter(default=True, space="buy", optimize=True, load=True))
     use_profile_score = tagged_parameter(BooleanParameter(default=True, space="buy", optimize=True, load=True))
 
+    profile_value_area_pct = tagged_parameter(DecimalParameter(0.55, 0.85, decimals=2, default=0.70, space="buy", optimize=True, load=True))
+    profile_price_source = tagged_parameter(CategoricalParameter(PRICE_SOURCE_CHOICES, default="hlc3", space="buy", optimize=True, load=True))
+    profile_smooth_bins = tagged_parameter(IntParameter(1, 6, default=3, space="buy", optimize=True, load=True))
+    profile_hvn_threshold = tagged_parameter(DecimalParameter(0.50, 0.90, decimals=2, default=0.70, space="buy", optimize=True, load=True))
+    profile_lvn_threshold = tagged_parameter(DecimalParameter(0.10, 0.55, decimals=2, default=0.35, space="buy", optimize=True, load=True))
+    profile_node_near_pct = tagged_parameter(DecimalParameter(0.002, 0.030, decimals=3, default=0.010, space="buy", optimize=True, load=True))
+    profile_node_hvn_strength_min = tagged_parameter(DecimalParameter(0.40, 0.95, decimals=2, default=0.70, space="buy", optimize=True, load=True))
+    profile_node_lvn_thinness_min = tagged_parameter(DecimalParameter(0.25, 0.95, decimals=2, default=0.55, space="buy", optimize=True, load=True))
+    profile_volume_percentile_min = tagged_parameter(DecimalParameter(0.00, 0.90, decimals=2, default=0.55, space="buy", optimize=True, load=True))
+    profile_poc_migration_window = tagged_parameter(IntParameter(4, 36, default=12, space="buy", optimize=True, load=True))
+    profile_score_window = tagged_parameter(IntParameter(12, 120, default=48, space="buy", optimize=True, load=True))
+    profile_fast_traverse_atr_mult = tagged_parameter(DecimalParameter(0.50, 2.80, decimals=2, default=1.20, space="buy", optimize=True, load=True))
+    profile_entry_score_margin = tagged_parameter(DecimalParameter(0.00, 0.20, decimals=2, default=0.02, space="buy", optimize=True, load=True))
+    use_vp_4h_guard = tagged_parameter(BooleanParameter(default=False, space="buy", optimize=True, load=True))
+    vp_4h_guard_mode = tagged_parameter(CategoricalParameter(GUARD_MODE_CHOICES, default="score_or_context", space="buy", optimize=True, load=True))
+    vp_4h_window = tagged_parameter(IntParameter(12, 96, default=48, space="buy", optimize=True, load=True))
+    vp_4h_bins = tagged_parameter(IntParameter(16, 64, default=36, space="buy", optimize=True, load=True))
+    vp_4h_score_min = tagged_parameter(DecimalParameter(0.00, 1.00, decimals=2, default=0.25, space="buy", optimize=True, load=True))
+    vp_4h_context_min = tagged_parameter(DecimalParameter(0.00, 1.00, decimals=2, default=0.28, space="buy", optimize=True, load=True))
+    use_vp_1d_guard = tagged_parameter(BooleanParameter(default=False, space="buy", optimize=True, load=True))
+    vp_1d_guard_mode = tagged_parameter(CategoricalParameter(GUARD_MODE_CHOICES, default="context", space="buy", optimize=True, load=True))
+    vp_1d_window = tagged_parameter(IntParameter(10, 84, default=30, space="buy", optimize=True, load=True))
+    vp_1d_bins = tagged_parameter(IntParameter(16, 64, default=36, space="buy", optimize=True, load=True))
+    vp_1d_score_min = tagged_parameter(DecimalParameter(0.00, 1.00, decimals=2, default=0.25, space="buy", optimize=True, load=True))
+    vp_1d_context_min = tagged_parameter(DecimalParameter(0.00, 1.00, decimals=2, default=0.28, space="buy", optimize=True, load=True))
+
     def informative_pairs(self) -> list[tuple[str, str]]:
         quote = str(self.config.get("stake_currency") or "USDT")
         trading_mode = str(self.config.get("trading_mode") or "")
         suffix = f":{quote}" if trading_mode == "futures" else ""
-        return [(f"BTC/{quote}{suffix}", self.timeframe)]
+        pairs = [(f"BTC/{quote}{suffix}", self.timeframe)]
+        if getattr(self, "dp", None):
+            try:
+                whitelist = self.dp.current_whitelist()
+                pairs.extend((pair, "4h") for pair in whitelist)
+                pairs.extend((pair, "1d") for pair in whitelist)
+            except Exception:
+                pass
+        return pairs
 
     def _benchmark_dataframe(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         benchmark = pd.DataFrame({"benchmark_close": dataframe["close"]}, index=dataframe.index)
@@ -205,8 +251,20 @@ class Sieve1ComplexResistanceRejectShort(IStrategy):
             dataframe,
             window=int(self.profile_window.value),
             bins=int(self.profile_bins.value),
-            pressure_delta_min=max(0.01, float(self.volume_pressure_min.value) / 10.0),
-            volume_percentile_min=0.50,
+            value_area_pct=float(self.profile_value_area_pct.value),
+            price_source=str(self.profile_price_source.value),
+            smooth_bins=int(self.profile_smooth_bins.value),
+            hvn_threshold=float(self.profile_hvn_threshold.value),
+            lvn_threshold=float(self.profile_lvn_threshold.value),
+            pressure_delta_min=max(0.01, float(self.volume_pressure_min.value) / 10.0, float(self.profile_node_near_pct.value) / 5.0),
+            node_near_pct=float(self.profile_node_near_pct.value),
+            node_hvn_strength_min=float(self.profile_node_hvn_strength_min.value),
+            node_lvn_thinness_min=float(self.profile_node_lvn_thinness_min.value),
+            volume_percentile_min=float(self.profile_volume_percentile_min.value),
+            poc_migration_window=int(self.profile_poc_migration_window.value),
+            score_window=int(self.profile_score_window.value),
+            fast_traverse_atr_mult=float(self.profile_fast_traverse_atr_mult.value),
+            entry_score_margin=float(self.profile_entry_score_margin.value),
             prefix="vp",
         )
         dataframe = add_relative_strength(
@@ -216,6 +274,8 @@ class Sieve1ComplexResistanceRejectShort(IStrategy):
             min_outperformance=0.0,
             prefix="rs",
         )
+        dataframe = self._merge_informative_vp(dataframe, metadata, "4h", "vp4h", int(self.vp_4h_window.value), int(self.vp_4h_bins.value))
+        dataframe = self._merge_informative_vp(dataframe, metadata, "1d", "vp1d", int(self.vp_1d_window.value), int(self.vp_1d_bins.value))
 
         window = int(self.recent_window.value)
         dataframe["recent_high"] = dataframe["high"].rolling(window, min_periods=max(12, window // 3)).max().shift(1)
@@ -254,10 +314,97 @@ class Sieve1ComplexResistanceRejectShort(IStrategy):
             rs_score = _num(dataframe, "rs_score_long" if SIDE == "long" else "rs_score_short")
             condition &= rs_score >= float(self.rs_score_min.value)
 
+        if bool(self.use_vp_4h_guard.value):
+            condition &= self._vp_guard(dataframe, "vp4h", SIDE, str(self.vp_4h_guard_mode.value), float(self.vp_4h_score_min.value), float(self.vp_4h_context_min.value))
+        if bool(self.use_vp_1d_guard.value):
+            condition &= self._vp_guard(dataframe, "vp1d", SIDE, str(self.vp_1d_guard_mode.value), float(self.vp_1d_score_min.value), float(self.vp_1d_context_min.value))
+
         valid = condition.fillna(False) & dataframe["volume"].gt(0.0) & dataframe["close"].notna()
         dataframe.loc[valid, "enter_short"] = 1
         dataframe.loc[valid, "enter_tag"] = ENTRY_TAG
         return dataframe
+
+
+    def _merge_informative_vp(self, dataframe: DataFrame, metadata: dict, timeframe: str, prefix: str, window: int, bins: int) -> DataFrame:
+        if "date" not in dataframe.columns or not getattr(self, "dp", None):
+            return dataframe
+        pair = str(metadata.get("pair") or "")
+        if not pair:
+            return dataframe
+        informative = self.dp.get_pair_dataframe(pair=pair, timeframe=timeframe)
+        if informative is None or informative.empty or "date" not in informative.columns:
+            return dataframe
+        informative = add_volume_profile(
+            informative.copy(),
+            window=window,
+            bins=bins,
+            value_area_pct=float(self.profile_value_area_pct.value),
+            price_source=str(self.profile_price_source.value),
+            smooth_bins=int(self.profile_smooth_bins.value),
+            hvn_threshold=float(self.profile_hvn_threshold.value),
+            lvn_threshold=float(self.profile_lvn_threshold.value),
+            pressure_delta_min=max(0.01, float(self.volume_pressure_min.value) / 10.0, float(self.profile_node_near_pct.value) / 5.0),
+            node_near_pct=float(self.profile_node_near_pct.value),
+            node_hvn_strength_min=float(self.profile_node_hvn_strength_min.value),
+            node_lvn_thinness_min=float(self.profile_node_lvn_thinness_min.value),
+            volume_percentile_min=float(self.profile_volume_percentile_min.value),
+            poc_migration_window=int(self.profile_poc_migration_window.value),
+            score_window=int(self.profile_score_window.value),
+            fast_traverse_atr_mult=float(self.profile_fast_traverse_atr_mult.value),
+            entry_score_margin=float(self.profile_entry_score_margin.value),
+            prefix=prefix,
+        )
+        merge_columns = [f"{prefix}_{name}" for name in VP_COLUMNS if f"{prefix}_{name}" in informative.columns]
+        if not merge_columns:
+            return dataframe
+        minutes = timeframe_to_minutes(timeframe)
+        inf = informative[["date", *merge_columns]].copy().sort_values("date")
+        inf["date_merge"] = inf["date"] + pd.to_timedelta(minutes, unit="m")
+        base = dataframe.reset_index().rename(columns={"index": "__row_index"}).sort_values("date")
+        merged = pd.merge_asof(
+            base,
+            inf[["date_merge", *merge_columns]].sort_values("date_merge"),
+            left_on="date",
+            right_on="date_merge",
+            direction="backward",
+        ).sort_values("__row_index")
+        for column in merge_columns:
+            dataframe[column] = merged[column].to_numpy()
+        return dataframe
+
+    @staticmethod
+    def _score_guard(dataframe: DataFrame, prefix: str, side: str, score_min: float) -> Series:
+        score = _num(dataframe, f"{prefix}_score_{side}")
+        opposite = _num(dataframe, f"{prefix}_score_{'short' if side == 'long' else 'long'}")
+        return score.ge(score_min) & score.ge(opposite)
+
+    @staticmethod
+    def _context_guard(dataframe: DataFrame, prefix: str, side: str, context_min: float) -> Series:
+        if side == "long":
+            context = _num(dataframe, f"{prefix}_context_score_bull")
+            opposite = _num(dataframe, f"{prefix}_context_score_bear")
+            market_ok = _num(dataframe, f"{prefix}_market_context").ge(0)
+        else:
+            context = _num(dataframe, f"{prefix}_context_score_bear")
+            opposite = _num(dataframe, f"{prefix}_context_score_bull")
+            market_ok = _num(dataframe, f"{prefix}_market_context").le(0)
+        return context.ge(context_min) & context.ge(opposite) & market_ok
+
+    def _vp_guard(self, dataframe: DataFrame, prefix: str, side: str, mode: str, score_min: float, context_min: float) -> Series:
+        score_ok = self._score_guard(dataframe, prefix, side, score_min)
+        context_ok = self._context_guard(dataframe, prefix, side, context_min)
+        balance_ok = _num(dataframe, f"{prefix}_context_score_balance").ge(context_min)
+        if mode == "score":
+            return score_ok
+        if mode == "context":
+            return context_ok
+        if mode == "score_or_context":
+            return score_ok | context_ok
+        if mode == "balance":
+            return balance_ok
+        if side == "long":
+            return _num(dataframe, f"{prefix}_market_context").ge(0)
+        return _num(dataframe, f"{prefix}_market_context").le(0)
 
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         _ = metadata
