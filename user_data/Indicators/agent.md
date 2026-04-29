@@ -189,6 +189,37 @@ Regime tuning levers that strategies may expose to hyperopt:
 - Windows: `regime_atr_period`, `regime_atr_ema_window`, `regime_adx_period`, `regime_ema_fast`, `regime_ema_slow`, `regime_ema_long`, `regime_volume_window`, `regime_range_window`, `regime_slope_window`, `regime_drawdown_window`, `regime_confirm_bars`, `regime_confirm_choices`, and `regime_event_cooldown_bars`.
 - Trend/risk thresholds: `regime_adx_trend_min`, `regime_slope_scale`, `regime_volume_confirm_min`, `regime_bear_atr_spike`, `regime_early_bear_min`, `regime_early_crash_min`, and `regime_bull_recovery_min`.
 
+## Simple Confluence Strategy Outputs
+
+Simple Confluence (`sci`) should combine common TA evidence into an audit-friendly support layer. It is intentionally broad, but strategy-facing scores must be family-weighted so one noisy indicator group cannot dominate.
+
+Expected behaviour:
+- Raw flags can be dense because the module tracks many textbook signals.
+- Strategy-facing confluence should require agreement across multiple families, not just many variants of the same indicator type.
+- Entry diagnostics should be sparse fresh confluence events, while `sci_confluence_long/short` can remain broader state flags for guards.
+
+Confluence families:
+- Oscillator: RSI, stochastic, CCI, MFI, CMO, Williams %R, and Ultimate Oscillator.
+- Momentum: MACD, PPO, ROC, momentum, TRIX, Awesome Oscillator, and KST.
+- Trend: EMA/SMA/TEMA/DEMA/WMA/HMA, Aroon, Ichimoku, ADX/DMI, and MA cluster/slope.
+- Volatility: Bollinger, Keltner, Donchian, z-score, and ATR expansion.
+- Volume: volume breakout/climax, VWAP, OBV, CMF, ADL, and EFI.
+- Candle: candlestick and short price-action patterns.
+
+Strategy-facing SCI concepts:
+- Raw audit flags: `sci_*_long` and `sci_*_short` columns expose individual TA rules. These are for analysis and should not be blindly summed in strategies.
+- Raw counts: `sci_signal_count_long/short`, `sci_recent_signal_count_long/short`, and raw score columns show ungrouped signal density.
+- Family counts: `sci_family_count_long/short`, `sci_recent_family_count_long/short`, `sci_family_delta`, and `sci_family_score_*` are the preferred confluence basis.
+- Directional context: `sci_market_context` uses `+2`, `+1`, `0`, `-1`, `-2`; it is supporting confluence context, not market regime.
+- Entry diagnostics: `sci_entry_confluence_long` and `sci_entry_confluence_short` are sparse de-duplicated family-confluence triggers.
+- Composite triggers: `sci_suggested_entry_long/short` mirror the confluence entry diagnostics for plotting and broad tests.
+- Position evidence: `sci_hold_long`, `sci_hold_short`, `sci_exit_long`, and `sci_exit_short` expose whether simple TA confluence supports or warns against a direction.
+
+SCI tuning levers that strategies may expose to hyperopt:
+- Indicator thresholds/windows: all standard TA windows and thresholds in `SimpleConfluenceConfig`.
+- Scoring: `score_signal_cap`, `recent_score_weight`, `signal_memory_window`, `min_confluence_signals`, `min_confluence_families`, and `family_score_cap`.
+- Context/events: `context_window`, `entry_cooldown_bars`, `context_full_min`, `context_full_margin`, `context_soft_min`, and `context_soft_margin`.
+
 ## Pivot Structure Strategy Outputs
 
 Pivot Structure should separate tactical local swings from larger structural market memory.
