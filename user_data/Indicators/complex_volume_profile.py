@@ -96,6 +96,8 @@ def add_volume_profile(
       pressure, and node proximity against the prior completed profile.
     - ``*_score_long/short/abs`` and ``*_state`` for normalized strategy-facing
       validation.
+    - ``*_context_score_bull/bear/chop`` plus ``*_bull_flag``,
+      ``*_bear_flag``, and ``*_chop_flag`` for profile regime review.
     """
 
     cfg = _resolve_config(
@@ -519,6 +521,8 @@ def _add_interaction_columns(frame: DataFrame, cfg: VolumeProfileConfig) -> Data
     hvn_below = _numeric_series(frame, f"{p}_hvn_below")
     lvn_above = _numeric_series(frame, f"{p}_lvn_above")
     lvn_below = _numeric_series(frame, f"{p}_lvn_below")
+    prior_lvn_above = lvn_above.shift(1)
+    prior_lvn_below = lvn_below.shift(1)
 
     bull_pressure = delta >= cfg.pressure_delta_min
     bear_pressure = delta <= -cfg.pressure_delta_min
@@ -543,52 +547,105 @@ def _add_interaction_columns(frame: DataFrame, cfg: VolumeProfileConfig) -> Data
         high.ge(prior_val) | prev_close.ge(prior_val)
     )
 
+    atr_pct = _pct_series(atr, close).abs().replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    base_near_pct = pd.Series(float(cfg.node_near_pct), index=frame.index)
+    level_tolerance_pct = pd.concat([base_near_pct, atr_pct * 0.75], axis=1).max(axis=1).clip(0.002, 0.035)
+    node_tolerance_pct = pd.concat([base_near_pct, atr_pct * 0.60], axis=1).max(axis=1).clip(0.002, 0.025)
+    entry_extension_pct = (level_tolerance_pct * 1.75).clip(0.004, 0.045)
+    close_above_vah_pct = _pct_series(close - prior_vah, close)
+    close_below_val_pct = _pct_series(prior_val - close, close)
+    close_above_lvn_pct = _pct_series(close - prior_lvn_above, close)
+    close_below_lvn_pct = _pct_series(prior_lvn_below - close, close)
+    near_prior_poc = valid_prior & (_pct_series(close - prior_poc, close).abs() <= level_tolerance_pct)
+    not_far_above_vah = valid_prior & close_above_vah_pct.le(entry_extension_pct)
+    not_far_below_val = valid_prior & close_below_val_pct.le(entry_extension_pct)
+    not_far_above_lvn = prior_lvn_above.notna() & close_above_lvn_pct.le(entry_extension_pct)
+    not_far_below_lvn = prior_lvn_below.notna() & close_below_lvn_pct.le(entry_extension_pct)
+
     near_hvn_below = (
         hvn_below.notna()
         & close.notna()
-        & (_pct_series(close - hvn_below, close).abs() <= cfg.node_near_pct)
+        & (_pct_series(close - hvn_below, close).abs() <= node_tolerance_pct)
     )
     near_hvn_above = (
         hvn_above.notna()
         & close.notna()
-        & (_pct_series(hvn_above - close, close).abs() <= cfg.node_near_pct)
+        & (_pct_series(hvn_above - close, close).abs() <= node_tolerance_pct)
     )
 
-    vah_breakout_with_pressure = vah_breakout & bull_pressure & (poc_bull | volume_ok)
-    val_breakdown_with_pressure = val_breakdown & bear_pressure & (poc_bear | volume_ok)
+    vah_breakout_with_pressure = vah_breakout & bull_pressure & (poc_bull | volume_ok) & not_far_above_vah
+    val_breakdown_with_pressure = val_breakdown & bear_pressure & (poc_bear | volume_ok) & not_far_below_val
     lower_rejection_with_pressure = lower_rejection & bull_pressure
     upper_rejection_with_pressure = upper_rejection & bear_pressure
     hvn_below_reclaim = (
         near_hvn_below
         & low.le(hvn_below)
-        & prev_low.gt(hvn_below)
         & close.gt(hvn_below)
+        & (prev_close.le(hvn_below) | prev_low.le(hvn_below) | near_hvn_below.shift(1, fill_value=False).astype("bool"))
         & bull_pressure
     )
     hvn_above_reject = (
         near_hvn_above
         & high.ge(hvn_above)
-        & prev_high.lt(hvn_above)
         & close.lt(hvn_above)
+        & (prev_close.ge(hvn_above) | prev_high.ge(hvn_above) | near_hvn_above.shift(1, fill_value=False).astype("bool"))
         & bear_pressure
     )
     near_lvn_below = (
         lvn_below.notna()
         & close.notna()
-        & (_pct_series(close - lvn_below, close).abs() <= cfg.node_near_pct)
+        & (_pct_series(close - lvn_below, close).abs() <= node_tolerance_pct)
     )
     near_lvn_above = (
         lvn_above.notna()
         & close.notna()
-        & (_pct_series(lvn_above - close, close).abs() <= cfg.node_near_pct)
+        & (_pct_series(lvn_above - close, close).abs() <= node_tolerance_pct)
     )
-    lvn_below_reject_long = near_lvn_below & low.le(lvn_below) & close.gt(lvn_below) & bull_pressure
-    lvn_above_reject_short = near_lvn_above & high.ge(lvn_above) & close.lt(lvn_above) & bear_pressure
-    lvn_accept_long = lvn_above.notna() & close.gt(lvn_above) & prev_close.le(lvn_above) & bull_pressure
-    lvn_accept_short = lvn_below.notna() & close.lt(lvn_below) & prev_close.ge(lvn_below) & bear_pressure
+    lvn_below_reject_long = (
+        near_lvn_below
+        & low.le(lvn_below)
+        & close.gt(lvn_below)
+        & (prev_close.le(lvn_below) | prev_low.le(lvn_below) | near_lvn_below.shift(1, fill_value=False).astype("bool"))
+        & bull_pressure
+    )
+    lvn_above_reject_short = (
+        near_lvn_above
+        & high.ge(lvn_above)
+        & close.lt(lvn_above)
+        & (prev_close.ge(lvn_above) | prev_high.ge(lvn_above) | near_lvn_above.shift(1, fill_value=False).astype("bool"))
+        & bear_pressure
+    )
+    lvn_accept_long = (
+        prior_lvn_above.notna()
+        & close.gt(prior_lvn_above)
+        & prev_close.le(prior_lvn_above)
+        & bull_pressure
+        & not_far_above_lvn
+    )
+    lvn_accept_short = (
+        prior_lvn_below.notna()
+        & close.lt(prior_lvn_below)
+        & prev_close.ge(prior_lvn_below)
+        & bear_pressure
+        & not_far_below_lvn
+    )
     wide_range = _pct_series((high - low).abs(), atr).abs() >= float(cfg.fast_traverse_atr_mult)
-    lvn_fast_traverse_long = lvn_above.notna() & low.lt(lvn_above) & close.gt(lvn_above) & wide_range & bull_pressure
-    lvn_fast_traverse_short = lvn_below.notna() & high.gt(lvn_below) & close.lt(lvn_below) & wide_range & bear_pressure
+    lvn_fast_traverse_long = (
+        prior_lvn_above.notna()
+        & low.lt(prior_lvn_above)
+        & close.gt(prior_lvn_above)
+        & wide_range
+        & bull_pressure
+        & not_far_above_lvn
+    )
+    lvn_fast_traverse_short = (
+        prior_lvn_below.notna()
+        & high.gt(prior_lvn_below)
+        & close.lt(prior_lvn_below)
+        & wide_range
+        & bear_pressure
+        & not_far_below_lvn
+    )
 
     poc_migration_pct = _pct_series(poc - poc.shift(int(cfg.poc_migration_window)), close)
     poc_migration_long = _clip01(poc_migration_pct / max(cfg.node_near_pct * 4.0, 1e-9))
@@ -616,6 +673,90 @@ def _add_interaction_columns(frame: DataFrame, cfg: VolumeProfileConfig) -> Data
         np.select([score_long.gt(score_short), score_short.gt(score_long)], [1.0, -1.0], default=0.0),
         index=frame.index,
     )
+    raw_suggested_entry_long = (
+        vah_breakout_with_pressure
+        | lower_rejection_with_pressure
+        | hvn_below_reclaim
+        | lvn_below_reject_long
+        | lvn_accept_long
+        | lvn_fast_traverse_long
+    ) & score_long.gt(score_short + 0.02)
+    raw_suggested_entry_short = (
+        val_breakdown_with_pressure
+        | upper_rejection_with_pressure
+        | hvn_above_reject
+        | lvn_above_reject_short
+        | lvn_accept_short
+        | lvn_fast_traverse_short
+    ) & score_short.gt(score_long + 0.02)
+    cooldown_bars = max(3, min(int(cfg.score_window) // 6, 10))
+    suggested_entry_long = _dedupe_events(raw_suggested_entry_long, cooldown_bars)
+    suggested_entry_short = _dedupe_events(raw_suggested_entry_short, cooldown_bars)
+
+    context_window = max(6, min(int(cfg.score_window) // 2, 18))
+    long_event_density = _clip01(
+        raw_suggested_entry_long.astype("float64").rolling(context_window, min_periods=1).sum() / 3.0
+    )
+    short_event_density = _clip01(
+        raw_suggested_entry_short.astype("float64").rolling(context_window, min_periods=1).sum() / 3.0
+    )
+    inside_value_ratio = in_value_area.astype("float64").rolling(context_window, min_periods=1).mean()
+    pressure_abs = delta.abs().clip(0.0, 1.0)
+    pressure_bull_score = _clip01(delta / max(float(cfg.pressure_delta_min) * 3.0, 1e-9))
+    pressure_bear_score = _clip01(-delta / max(float(cfg.pressure_delta_min) * 3.0, 1e-9))
+    poc_stability = _clip01(1.0 - (poc_migration_pct.abs() / max(float(cfg.node_near_pct) * 3.0, 1e-9)))
+    bull_location = (
+        above_value_area
+        | (in_value_area & close.ge(prior_poc))
+        | near_prior_poc
+        | lower_rejection_with_pressure
+    ).astype("float64")
+    bear_location = (
+        below_value_area
+        | (in_value_area & close.le(prior_poc))
+        | near_prior_poc
+        | upper_rejection_with_pressure
+    ).astype("float64")
+    bull_context_raw = _clip01(
+        0.30 * score_long
+        + 0.22 * poc_migration_long
+        + 0.18 * long_event_density
+        + 0.15 * pressure_bull_score
+        + 0.15 * bull_location
+    )
+    bear_context_raw = _clip01(
+        0.30 * score_short
+        + 0.22 * poc_migration_short
+        + 0.18 * short_event_density
+        + 0.15 * pressure_bear_score
+        + 0.15 * bear_location
+    )
+    chop_context_raw = _clip01(
+        0.35 * inside_value_ratio
+        + 0.25 * poc_stability
+        + 0.20 * (1.0 - score_abs)
+        + 0.20 * (1.0 - pressure_abs)
+    )
+    context_smooth = max(3, min(int(cfg.score_window) // 4, 10))
+    bull_context_score = _clip01(bull_context_raw.rolling(context_smooth, min_periods=1).mean())
+    bear_context_score = _clip01(bear_context_raw.rolling(context_smooth, min_periods=1).mean())
+    chop_context_score = _clip01(chop_context_raw.rolling(context_smooth, min_periods=1).mean())
+    min_duration = max(2, min(context_smooth // 2, 4))
+    bull_candidate = (
+        valid_prior
+        & bull_context_score.ge(0.46)
+        & bull_context_score.gt(bear_context_score + 0.08)
+        & bull_context_score.gt(chop_context_score + 0.02)
+    )
+    bear_candidate = (
+        valid_prior
+        & bear_context_score.ge(0.46)
+        & bear_context_score.gt(bull_context_score + 0.08)
+        & bear_context_score.gt(chop_context_score + 0.02)
+    )
+    bull_flag = bull_candidate.astype("float64").rolling(min_duration, min_periods=min_duration).mean().ge(0.66)
+    bear_flag = bear_candidate.astype("float64").rolling(min_duration, min_periods=min_duration).mean().ge(0.66) & ~bull_flag
+    chop_flag = valid_prior & ~(bull_flag | bear_flag)
 
     frame[f"{p}_prior_poc"] = prior_poc
     frame[f"{p}_prior_vah"] = prior_vah
@@ -651,6 +792,14 @@ def _add_interaction_columns(frame: DataFrame, cfg: VolumeProfileConfig) -> Data
     frame[f"{p}_val_breakdown_with_pressure"] = val_breakdown_with_pressure
     frame[f"{p}_lower_rejection_with_pressure"] = lower_rejection_with_pressure
     frame[f"{p}_upper_rejection_with_pressure"] = upper_rejection_with_pressure
+    frame[f"{p}_suggested_entry_long"] = suggested_entry_long
+    frame[f"{p}_suggested_entry_short"] = suggested_entry_short
+    frame[f"{p}_bull_flag"] = bull_flag.astype("int8")
+    frame[f"{p}_bear_flag"] = bear_flag.astype("int8")
+    frame[f"{p}_chop_flag"] = chop_flag.astype("int8")
+    frame[f"{p}_context_score_bull"] = bull_context_score
+    frame[f"{p}_context_score_bear"] = bear_context_score
+    frame[f"{p}_context_score_chop"] = chop_context_score
     frame[f"{p}_score_long"] = score_long
     frame[f"{p}_score_short"] = score_short
     frame[f"{p}_score_abs"] = score_abs
@@ -699,6 +848,14 @@ def _profile_scores(
     long_score = _clip01(0.45 * long_recent + 0.35 * poc_migration_long + 0.20 * participation)
     short_score = _clip01(0.45 * short_recent + 0.35 * poc_migration_short + 0.20 * participation)
     return long_score, short_score
+
+
+def _dedupe_events(events: pd.Series, cooldown_bars: int) -> pd.Series:
+    flags = events.fillna(False).astype("bool")
+    if cooldown_bars <= 0:
+        return flags
+    recent = flags.shift(1, fill_value=False).rolling(int(cooldown_bars), min_periods=1).max()
+    return flags & ~recent.fillna(0.0).astype("bool")
 
 
 def _atr(frame: DataFrame, period: int) -> pd.Series:
