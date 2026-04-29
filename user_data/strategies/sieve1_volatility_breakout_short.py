@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import os
 from typing import Any
 
 import numpy as np
@@ -8,7 +9,50 @@ from pandas import DataFrame, Series
 
 from freqtrade.strategy import DecimalParameter, IntParameter, IStrategy
 
-from entry_sieve_tools import apply_explicit_hyperopt_surface, entry_sieve_minimal_roi, entry_sieve_stoploss
+
+HYPEROPT_PARAM_ENV = "HYBRID_RECOVERY_HYPEROPT_PARAMS"
+ENTRY_SIEVE_TAKE_PROFIT_ENV = "ENTRY_SIEVE_TAKE_PROFIT_PCT"
+ENTRY_SIEVE_STOPLOSS_ENV = "ENTRY_SIEVE_STOPLOSS_PCT"
+
+
+def split_hyperopt_tokens(value: str | None) -> set[str]:
+    if not value:
+        return set()
+    normalized = value.replace(";", ",").replace("|", ",").replace(" ", ",")
+    return {token.strip() for token in normalized.split(",") if token.strip()}
+
+
+def is_parameter_object(value: Any) -> bool:
+    return bool(value is not None and value.__class__.__name__.endswith("Parameter"))
+
+
+def apply_explicit_hyperopt_surface(strategy_cls: type) -> None:
+    selected = split_hyperopt_tokens(os.environ.get(HYPEROPT_PARAM_ENV))
+    if not selected:
+        return
+    for name in dir(strategy_cls):
+        value = getattr(strategy_cls, name, None)
+        if is_parameter_object(value):
+            value.optimize = str(name) in selected
+
+
+def _pct_env(name: str, default_ratio: float) -> float:
+    raw = str(os.environ.get(name) or "").strip()
+    if not raw:
+        return float(default_ratio)
+    try:
+        return max(0.0, float(raw)) / 100.0
+    except ValueError:
+        return float(default_ratio)
+
+
+def entry_sieve_minimal_roi(default: float = 0.02) -> dict[str, float]:
+    return {"0": _pct_env(ENTRY_SIEVE_TAKE_PROFIT_ENV, default)}
+
+
+def entry_sieve_stoploss(default: float = -0.02) -> float:
+    return -_pct_env(ENTRY_SIEVE_STOPLOSS_ENV, abs(default))
+
 
 
 def tagged_parameter(param: Any, *tags: str) -> Any:
@@ -83,7 +127,7 @@ def tagged_parameter(param: Any, *tags: str) -> Any:
     return param
 
 
-class CodexVolatilityBreakout(IStrategy):
+class Sieve1VolatilityBreakoutShort(IStrategy):
     """
     Compression expansion strategy.
 
@@ -112,32 +156,32 @@ class CodexVolatilityBreakout(IStrategy):
     channel_period = tagged_parameter(
         IntParameter(24, 96, default=48, space="buy", optimize=True, load=True),
         "family:entry",
-        "mode:entry_volatility_breakout",
+        "mode:entry_volatility_breakout_short",
     )
     compression_period = tagged_parameter(
         IntParameter(24, 96, default=48, space="buy", optimize=True, load=True),
         "family:entry",
-        "mode:entry_volatility_breakout",
+        "mode:entry_volatility_breakout_short",
     )
     atr_compression_max = tagged_parameter(
         DecimalParameter(0.45, 1.10, decimals=2, default=0.75, space="buy", optimize=True, load=True),
         "family:entry",
-        "mode:entry_volatility_breakout",
+        "mode:entry_volatility_breakout_short",
     )
     breakout_buffer_pct = tagged_parameter(
         DecimalParameter(0.000, 0.006, decimals=3, default=0.002, space="buy", optimize=True, load=True),
         "family:entry",
-        "mode:entry_volatility_breakout",
+        "mode:entry_volatility_breakout_short",
     )
     volume_ratio_min = tagged_parameter(
         DecimalParameter(1.00, 3.00, decimals=2, default=1.35, space="buy", optimize=True, load=True),
         "family:entry",
-        "mode:entry_volatility_breakout",
+        "mode:entry_volatility_breakout_short",
     )
     close_location_min = tagged_parameter(
         DecimalParameter(0.55, 0.90, decimals=2, default=0.68, space="buy", optimize=True, load=True),
         "family:entry",
-        "mode:entry_volatility_breakout",
+        "mode:entry_volatility_breakout_short",
     )
 
     @staticmethod
@@ -157,13 +201,13 @@ class CodexVolatilityBreakout(IStrategy):
         _ = metadata
         channel = int(self.channel_period.value)
         compression = int(self.compression_period.value)
-        dataframe["codex_atr"] = self._atr(dataframe, 14)
-        dataframe["codex_atr_ratio"] = dataframe["codex_atr"] / dataframe["codex_atr"].rolling(compression, min_periods=12).median()
-        dataframe["codex_donchian_high"] = dataframe["high"].rolling(channel, min_periods=channel).max().shift(1)
-        dataframe["codex_donchian_low"] = dataframe["low"].rolling(channel, min_periods=channel).min().shift(1)
+        dataframe["atr"] = self._atr(dataframe, 14)
+        dataframe["atr_ratio"] = dataframe["atr"] / dataframe["atr"].rolling(compression, min_periods=12).median()
+        dataframe["donchian_high"] = dataframe["high"].rolling(channel, min_periods=channel).max().shift(1)
+        dataframe["donchian_low"] = dataframe["low"].rolling(channel, min_periods=channel).min().shift(1)
         candle_range = (dataframe["high"] - dataframe["low"]).replace(0.0, np.nan)
-        dataframe["codex_close_location"] = (dataframe["close"] - dataframe["low"]) / candle_range
-        dataframe["codex_volume_ratio"] = dataframe["volume"] / dataframe["volume"].rolling(48, min_periods=24).mean()
+        dataframe["close_location"] = (dataframe["close"] - dataframe["low"]) / candle_range
+        dataframe["volume_ratio"] = dataframe["volume"] / dataframe["volume"].rolling(48, min_periods=24).mean()
         return dataframe
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
@@ -173,27 +217,25 @@ class CodexVolatilityBreakout(IStrategy):
         dataframe["enter_tag"] = None
 
         buffer = float(self.breakout_buffer_pct.value)
-        compressed = dataframe["codex_atr_ratio"] <= float(self.atr_compression_max.value)
-        volume_ok = dataframe["codex_volume_ratio"] >= float(self.volume_ratio_min.value)
-        close_loc = dataframe["codex_close_location"]
+        compressed = dataframe["atr_ratio"] <= float(self.atr_compression_max.value)
+        volume_ok = dataframe["volume_ratio"] >= float(self.volume_ratio_min.value)
+        close_loc = dataframe["close_location"]
 
         long_breakout = (
             compressed
             & volume_ok
-            & (dataframe["close"] > dataframe["codex_donchian_high"] * (1.0 + buffer))
+            & (dataframe["close"] > dataframe["donchian_high"] * (1.0 + buffer))
             & (close_loc >= float(self.close_location_min.value))
         )
         short_breakout = (
             compressed
             & volume_ok
-            & (dataframe["close"] < dataframe["codex_donchian_low"] * (1.0 - buffer))
+            & (dataframe["close"] < dataframe["donchian_low"] * (1.0 - buffer))
             & (close_loc <= 1.0 - float(self.close_location_min.value))
         )
 
-        dataframe.loc[long_breakout.fillna(False), "enter_long"] = 1
-        dataframe.loc[long_breakout.fillna(False), "enter_tag"] = "codex_vol_breakout_long"
         dataframe.loc[short_breakout.fillna(False), "enter_short"] = 1
-        dataframe.loc[short_breakout.fillna(False), "enter_tag"] = "codex_vol_breakout_short"
+        dataframe.loc[short_breakout.fillna(False), "enter_tag"] = "vol_breakout_short"
         return dataframe
 
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
@@ -204,4 +246,7 @@ class CodexVolatilityBreakout(IStrategy):
         return dataframe
 
 
-apply_explicit_hyperopt_surface(CodexVolatilityBreakout)
+apply_explicit_hyperopt_surface(Sieve1VolatilityBreakoutShort)
+
+
+

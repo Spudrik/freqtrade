@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import datetime
 import os
@@ -34,9 +34,9 @@ def _tag(param: Any, mode: str) -> Any:
     return param
 
 
-class TestLadderShortSupRetestReject(IStrategy):
+class Sieve1LadderLongResRetestHold(IStrategy):
     INTERFACE_VERSION = 3
-    can_short = True
+    can_short = False
     timeframe = "1h"
     startup_candle_count = 1200
     process_only_new_candles = True
@@ -50,11 +50,11 @@ class TestLadderShortSupRetestReject(IStrategy):
     trailing_stop = False
     ignore_roi_if_entry_signal = False
 
-    ENTRY_TAG = "short_sup_retest_reject"
-    ENTRY_SIDE = "short"
-    ENTRY_KIND = "short_sup_retest_reject"
-    MODE = "entry_short_sup_retest_reject"
-    CONFIRMATION_PROFILE = "short_support_retest"
+    ENTRY_TAG = "long_res_retest_hold"
+    ENTRY_SIDE = "long"
+    ENTRY_KIND = "long_res_retest_hold"
+    MODE = "entry_long_res_retest_hold"
+    CONFIRMATION_PROFILE = "long_resistance_retest"
     BREATHING_PROFILE = "none"
 
     level_lookback = _tag(CategoricalParameter(LEVEL_LOOKBACK_CHOICES, default=168, space="buy", optimize=True, load=True), MODE)
@@ -313,8 +313,8 @@ class TestLadderShortSupRetestReject(IStrategy):
         has_d1_down = "d1_trend_down" in dataframe.columns
         d1_up = pd.Series(dataframe.get("d1_trend_up", True), index=dataframe.index).fillna(True).astype(bool)
         d1_down = pd.Series(dataframe.get("d1_trend_down", True), index=dataframe.index).fillna(True).astype(bool)
-        d1_not_up = (d1_not_up) if has_d1_up else pd.Series(True, index=dataframe.index, dtype="bool")
-        d1_not_down = (d1_not_down) if has_d1_down else pd.Series(True, index=dataframe.index, dtype="bool")
+        d1_not_up = (~d1_up) if has_d1_up else pd.Series(True, index=dataframe.index, dtype="bool")
+        d1_not_down = (~d1_down) if has_d1_down else pd.Series(True, index=dataframe.index, dtype="bool")
 
         min_rvol = max(float(self.h1_rvol_min.value), 1.20)
         min_pressure = max(float(self.h1_pressure_min.value), 0.30)
@@ -413,10 +413,7 @@ class TestLadderShortSupRetestReject(IStrategy):
         dataframe["enter_tag"] = ""
         mask = self._entry_mask(dataframe)
         dataframe[f"plot_{self.ENTRY_TAG}"] = mask.astype(float)
-        if self.ENTRY_SIDE == "short":
-            dataframe.loc[mask, "enter_short"] = 1
-        else:
-            dataframe.loc[mask, "enter_long"] = 1
+        dataframe.loc[mask, "enter_long"] = 1
         dataframe.loc[mask, "enter_tag"] = self.ENTRY_TAG
         return dataframe
 
@@ -426,3 +423,5 @@ class TestLadderShortSupRetestReject(IStrategy):
         dataframe["exit_short"] = 0
         dataframe["exit_tag"] = ""
         return dataframe
+
+

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import datetime
 import os
@@ -34,7 +34,7 @@ def _tag(param: Any, mode: str) -> Any:
     return param
 
 
-class TestLadderLongSupHold(IStrategy):
+class Sieve1LadderLongSupReclaim(IStrategy):
     INTERFACE_VERSION = 3
     can_short = False
     timeframe = "1h"
@@ -50,12 +50,12 @@ class TestLadderLongSupHold(IStrategy):
     trailing_stop = False
     ignore_roi_if_entry_signal = False
 
-    ENTRY_TAG = "long_sup_hold"
+    ENTRY_TAG = "long_sup_reclaim"
     ENTRY_SIDE = "long"
-    ENTRY_KIND = "long_sup_hold"
-    MODE = "entry_long_sup_hold"
-    CONFIRMATION_PROFILE = "long_support_hold"
-    BREATHING_PROFILE = "none"
+    ENTRY_KIND = "long_sup_reclaim"
+    MODE = "entry_long_sup_reclaim"
+    CONFIRMATION_PROFILE = "none"
+    BREATHING_PROFILE = "loose_support_reclaim"
 
     level_lookback = _tag(CategoricalParameter(LEVEL_LOOKBACK_CHOICES, default=168, space="buy", optimize=True, load=True), MODE)
     local_lookback = _tag(CategoricalParameter(LOCAL_LOOKBACK_CHOICES, default=24, space="buy", optimize=True, load=True), MODE)
@@ -313,8 +313,8 @@ class TestLadderLongSupHold(IStrategy):
         has_d1_down = "d1_trend_down" in dataframe.columns
         d1_up = pd.Series(dataframe.get("d1_trend_up", True), index=dataframe.index).fillna(True).astype(bool)
         d1_down = pd.Series(dataframe.get("d1_trend_down", True), index=dataframe.index).fillna(True).astype(bool)
-        d1_not_up = (d1_not_up) if has_d1_up else pd.Series(True, index=dataframe.index, dtype="bool")
-        d1_not_down = (d1_not_down) if has_d1_down else pd.Series(True, index=dataframe.index, dtype="bool")
+        d1_not_up = (~d1_up) if has_d1_up else pd.Series(True, index=dataframe.index, dtype="bool")
+        d1_not_down = (~d1_down) if has_d1_down else pd.Series(True, index=dataframe.index, dtype="bool")
 
         min_rvol = max(float(self.h1_rvol_min.value), 1.20)
         min_pressure = max(float(self.h1_pressure_min.value), 0.30)
@@ -413,10 +413,7 @@ class TestLadderLongSupHold(IStrategy):
         dataframe["enter_tag"] = ""
         mask = self._entry_mask(dataframe)
         dataframe[f"plot_{self.ENTRY_TAG}"] = mask.astype(float)
-        if self.ENTRY_SIDE == "short":
-            dataframe.loc[mask, "enter_short"] = 1
-        else:
-            dataframe.loc[mask, "enter_long"] = 1
+        dataframe.loc[mask, "enter_long"] = 1
         dataframe.loc[mask, "enter_tag"] = self.ENTRY_TAG
         return dataframe
 
@@ -426,3 +423,5 @@ class TestLadderLongSupHold(IStrategy):
         dataframe["exit_short"] = 0
         dataframe["exit_tag"] = ""
         return dataframe
+
+

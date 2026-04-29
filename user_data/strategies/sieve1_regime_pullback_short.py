@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import os
 from typing import Any
 
 import numpy as np
@@ -8,7 +9,50 @@ from pandas import DataFrame, Series
 
 from freqtrade.strategy import DecimalParameter, IntParameter, IStrategy
 
-from entry_sieve_tools import apply_explicit_hyperopt_surface, entry_sieve_minimal_roi, entry_sieve_stoploss
+
+HYPEROPT_PARAM_ENV = "HYBRID_RECOVERY_HYPEROPT_PARAMS"
+ENTRY_SIEVE_TAKE_PROFIT_ENV = "ENTRY_SIEVE_TAKE_PROFIT_PCT"
+ENTRY_SIEVE_STOPLOSS_ENV = "ENTRY_SIEVE_STOPLOSS_PCT"
+
+
+def split_hyperopt_tokens(value: str | None) -> set[str]:
+    if not value:
+        return set()
+    normalized = value.replace(";", ",").replace("|", ",").replace(" ", ",")
+    return {token.strip() for token in normalized.split(",") if token.strip()}
+
+
+def is_parameter_object(value: Any) -> bool:
+    return bool(value is not None and value.__class__.__name__.endswith("Parameter"))
+
+
+def apply_explicit_hyperopt_surface(strategy_cls: type) -> None:
+    selected = split_hyperopt_tokens(os.environ.get(HYPEROPT_PARAM_ENV))
+    if not selected:
+        return
+    for name in dir(strategy_cls):
+        value = getattr(strategy_cls, name, None)
+        if is_parameter_object(value):
+            value.optimize = str(name) in selected
+
+
+def _pct_env(name: str, default_ratio: float) -> float:
+    raw = str(os.environ.get(name) or "").strip()
+    if not raw:
+        return float(default_ratio)
+    try:
+        return max(0.0, float(raw)) / 100.0
+    except ValueError:
+        return float(default_ratio)
+
+
+def entry_sieve_minimal_roi(default: float = 0.02) -> dict[str, float]:
+    return {"0": _pct_env(ENTRY_SIEVE_TAKE_PROFIT_ENV, default)}
+
+
+def entry_sieve_stoploss(default: float = -0.02) -> float:
+    return -_pct_env(ENTRY_SIEVE_STOPLOSS_ENV, abs(default))
+
 
 
 def tagged_parameter(param: Any, *tags: str) -> Any:
@@ -83,7 +127,7 @@ def tagged_parameter(param: Any, *tags: str) -> Any:
     return param
 
 
-class CodexRegimePullback(IStrategy):
+class Sieve1RegimePullbackShort(IStrategy):
     """
     Trend-regime pullback strategy.
 
@@ -112,32 +156,27 @@ class CodexRegimePullback(IStrategy):
     ema_fast_period = tagged_parameter(
         IntParameter(18, 36, default=24, space="buy", optimize=True, load=True),
         "family:entry",
-        "mode:entry_regime_pullback",
+        "mode:entry_regime_pullback_short",
     )
     ema_slow_period = tagged_parameter(
         IntParameter(72, 144, default=96, space="buy", optimize=True, load=True),
         "family:entry",
-        "mode:entry_regime_pullback",
-    )
-    rsi_pullback_low = tagged_parameter(
-        IntParameter(36, 48, default=42, space="buy", optimize=True, load=True),
-        "family:entry",
-        "mode:entry_regime_pullback",
+        "mode:entry_regime_pullback_short",
     )
     rsi_pullback_high = tagged_parameter(
         IntParameter(52, 64, default=58, space="buy", optimize=True, load=True),
         "family:entry",
-        "mode:entry_regime_pullback",
+        "mode:entry_regime_pullback_short",
     )
     pullback_atr_max = tagged_parameter(
         DecimalParameter(0.10, 1.20, decimals=2, default=0.55, space="buy", optimize=True, load=True),
         "family:entry",
-        "mode:entry_regime_pullback",
+        "mode:entry_regime_pullback_short",
     )
     volume_ratio_min = tagged_parameter(
         DecimalParameter(0.60, 1.60, decimals=2, default=0.85, space="buy", optimize=True, load=True),
         "family:entry",
-        "mode:entry_regime_pullback",
+        "mode:entry_regime_pullback_short",
     )
 
     @staticmethod
@@ -165,13 +204,13 @@ class CodexRegimePullback(IStrategy):
         _ = metadata
         fast = int(self.ema_fast_period.value)
         slow = int(self.ema_slow_period.value)
-        dataframe["codex_ema_fast"] = dataframe["close"].ewm(span=fast, adjust=False, min_periods=fast).mean()
-        dataframe["codex_ema_slow"] = dataframe["close"].ewm(span=slow, adjust=False, min_periods=slow).mean()
-        dataframe["codex_rsi"] = self._rsi(dataframe["close"], 14)
-        dataframe["codex_atr"] = self._atr(dataframe, 14)
-        dataframe["codex_volume_ratio"] = dataframe["volume"] / dataframe["volume"].rolling(48, min_periods=24).mean()
-        dataframe["codex_pullback_dist_atr"] = (
-            (dataframe["close"] - dataframe["codex_ema_fast"]).abs() / dataframe["codex_atr"].replace(0.0, np.nan)
+        dataframe["ema_fast"] = dataframe["close"].ewm(span=fast, adjust=False, min_periods=fast).mean()
+        dataframe["ema_slow"] = dataframe["close"].ewm(span=slow, adjust=False, min_periods=slow).mean()
+        dataframe["rsi"] = self._rsi(dataframe["close"], 14)
+        dataframe["atr"] = self._atr(dataframe, 14)
+        dataframe["volume_ratio"] = dataframe["volume"] / dataframe["volume"].rolling(48, min_periods=24).mean()
+        dataframe["pullback_dist_atr"] = (
+            (dataframe["close"] - dataframe["ema_fast"]).abs() / dataframe["atr"].replace(0.0, np.nan)
         )
         return dataframe
 
@@ -181,32 +220,21 @@ class CodexRegimePullback(IStrategy):
         dataframe["enter_short"] = 0
         dataframe["enter_tag"] = None
 
-        long_regime = dataframe["codex_ema_fast"] > dataframe["codex_ema_slow"]
-        short_regime = dataframe["codex_ema_fast"] < dataframe["codex_ema_slow"]
-        volume_ok = dataframe["codex_volume_ratio"] >= float(self.volume_ratio_min.value)
-        near_mean = dataframe["codex_pullback_dist_atr"] <= float(self.pullback_atr_max.value)
+        short_regime = dataframe["ema_fast"] < dataframe["ema_slow"]
+        volume_ok = dataframe["volume_ratio"] >= float(self.volume_ratio_min.value)
+        near_mean = dataframe["pullback_dist_atr"] <= float(self.pullback_atr_max.value)
 
-        long_trigger = (
-            long_regime
-            & near_mean
-            & volume_ok
-            & dataframe["codex_rsi"].between(float(self.rsi_pullback_low.value), 55.0)
-            & (dataframe["close"] > dataframe["open"])
-            & (dataframe["close"] > dataframe["codex_ema_fast"])
-        )
         short_trigger = (
             short_regime
             & near_mean
             & volume_ok
-            & dataframe["codex_rsi"].between(45.0, float(self.rsi_pullback_high.value))
+            & dataframe["rsi"].between(45.0, float(self.rsi_pullback_high.value))
             & (dataframe["close"] < dataframe["open"])
-            & (dataframe["close"] < dataframe["codex_ema_fast"])
+            & (dataframe["close"] < dataframe["ema_fast"])
         )
 
-        dataframe.loc[long_trigger.fillna(False), "enter_long"] = 1
-        dataframe.loc[long_trigger.fillna(False), "enter_tag"] = "codex_regime_pullback_long"
         dataframe.loc[short_trigger.fillna(False), "enter_short"] = 1
-        dataframe.loc[short_trigger.fillna(False), "enter_tag"] = "codex_regime_pullback_short"
+        dataframe.loc[short_trigger.fillna(False), "enter_tag"] = "regime_pullback_short"
         return dataframe
 
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
@@ -217,4 +245,7 @@ class CodexRegimePullback(IStrategy):
         return dataframe
 
 
-apply_explicit_hyperopt_surface(CodexRegimePullback)
+apply_explicit_hyperopt_surface(Sieve1RegimePullbackShort)
+
+
+

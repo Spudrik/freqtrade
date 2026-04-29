@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import datetime
 import os
@@ -34,9 +34,9 @@ def _tag(param: Any, mode: str) -> Any:
     return param
 
 
-class TestPivotShortTrendPullback(IStrategy):
+class Sieve1PivotLongResistanceBreakout(IStrategy):
     INTERFACE_VERSION = 3
-    can_short = True
+    can_short = False
     timeframe = "1h"
     startup_candle_count = 1200
     process_only_new_candles = True
@@ -50,10 +50,12 @@ class TestPivotShortTrendPullback(IStrategy):
     trailing_stop = False
     ignore_roi_if_entry_signal = False
 
-    ENTRY_TAG = "short_trend_pullback"
-    ENTRY_SIDE = "short"
-    ENTRY_KIND = "short_trend_pullback"
-    MODE = "entry_short_trend_pullback"
+    ENTRY_TAG = "long_resistance_breakout"
+    ENTRY_SIDE = "long"
+    ENTRY_KIND = "long_res_break"
+    MODE = "entry_long_resistance_breakout"
+    CONFIRMATION_PROFILE = "long_resistance_break"
+    BREATHING_PROFILE = "none"
 
     level_lookback = _tag(CategoricalParameter(LEVEL_LOOKBACK_CHOICES, default=168, space="buy", optimize=True, load=True), MODE)
     local_lookback = _tag(CategoricalParameter(LOCAL_LOOKBACK_CHOICES, default=24, space="buy", optimize=True, load=True), MODE)
@@ -269,14 +271,88 @@ class TestPivotShortTrendPullback(IStrategy):
             aligned = close.lt(d1_support * (1.0 - trigger))
         return (aligned if mode == "aligned" else near).fillna(False)
 
+    def _effective_zone(self, zone: float) -> float:
+        if str(getattr(self, "BREATHING_PROFILE", "none")) == "loose_support_reclaim":
+            return min(zone * 1.50, 0.060)
+        return zone
+
+    def _effective_trigger(self, trigger: float) -> float:
+        if str(getattr(self, "BREATHING_PROFILE", "none")) == "loose_support_reclaim":
+            return max(trigger * 0.60, 0.0)
+        if str(getattr(self, "CONFIRMATION_PROFILE", "none")) != "none":
+            return min(trigger * 1.25, 0.030)
+        return trigger
+
+    def _effective_confirm(self, confirm: int) -> int:
+        if str(getattr(self, "BREATHING_PROFILE", "none")) == "loose_support_reclaim":
+            return min(max(1, int(confirm * 1.50)), 72)
+        if str(getattr(self, "CONFIRMATION_PROFILE", "none")) != "none":
+            return min(max(1, int(confirm)), 12)
+        return confirm
+
+    def _adaptive_confirmation_guard(self, dataframe: DataFrame, side: str, local: int, level: int, zone: float, trigger: float) -> Series:
+        profile = str(getattr(self, "CONFIRMATION_PROFILE", "none"))
+        if profile == "none":
+            return pd.Series(True, index=dataframe.index, dtype="bool")
+
+        close = self._num(dataframe["close"])
+        high = self._num(dataframe["high"])
+        low = self._num(dataframe["low"])
+        resistance = self._num(dataframe[f"sieve_resistance_{level}"])
+        support = self._num(dataframe[f"sieve_support_{level}"])
+        local_high = self._num(dataframe[f"sieve_local_high_{local}"])
+        local_low = self._num(dataframe[f"sieve_local_low_{local}"])
+        ema_fast = self._num(dataframe["sieve_ema_fast"])
+        close_loc = self._num(dataframe["h1_close_location"])
+        h1_rvol = self._num(dataframe[f"h1_rvol_{int(self.volume_window.value)}"])
+        h1_delta = self._num(dataframe["h1_delta_zscore"])
+        h1_cvd = self._num(dataframe["h1_cvd_trend"])
+        trend_up = pd.Series(dataframe["sieve_trend_up"], index=dataframe.index).fillna(False).astype(bool)
+        trend_down = pd.Series(dataframe["sieve_trend_down"], index=dataframe.index).fillna(False).astype(bool)
+        has_d1_up = "d1_trend_up" in dataframe.columns
+        has_d1_down = "d1_trend_down" in dataframe.columns
+        d1_up = pd.Series(dataframe.get("d1_trend_up", True), index=dataframe.index).fillna(True).astype(bool)
+        d1_down = pd.Series(dataframe.get("d1_trend_down", True), index=dataframe.index).fillna(True).astype(bool)
+        d1_not_up = (~d1_up) if has_d1_up else pd.Series(True, index=dataframe.index, dtype="bool")
+        d1_not_down = (~d1_down) if has_d1_down else pd.Series(True, index=dataframe.index, dtype="bool")
+
+        min_rvol = max(float(self.h1_rvol_min.value), 1.20)
+        min_pressure = max(float(self.h1_pressure_min.value), 0.30)
+        long_pressure = h1_rvol.ge(min_rvol) & h1_delta.ge(min_pressure) & h1_cvd.ge(0.0) & close_loc.ge(0.25)
+        short_pressure = h1_rvol.ge(min_rvol) & h1_delta.le(-min_pressure) & h1_cvd.le(0.0) & close_loc.le(-0.25)
+
+        long_breakout = close.gt(local_high * (1.0 + trigger)) & close.gt(resistance * (1.0 + trigger)) & close_loc.ge(0.35)
+        short_breakdown = close.lt(local_low * (1.0 - trigger)) & close.lt(support * (1.0 - trigger)) & close_loc.le(-0.35)
+        long_support_response = low.le(support * (1.0 + zone)) & close.gt(support * (1.0 + trigger)) & close_loc.ge(0.25)
+        short_resistance_response = high.ge(resistance * (1.0 - zone)) & close.lt(resistance * (1.0 - trigger)) & close_loc.le(-0.25)
+
+        if profile == "long_resistance_break":
+            return (long_pressure & long_breakout & trend_up & d1_up).fillna(False)
+        if profile == "long_resistance_retest":
+            retest_hold = low.le(resistance * (1.0 + zone)) & close.gt(resistance * (1.0 + trigger * 0.50)) & close_loc.ge(0.25)
+            return (long_pressure & retest_hold & trend_up & d1_up).fillna(False)
+        if profile == "long_support_hold":
+            return (long_pressure & long_support_response & ~trend_down & d1_not_down).fillna(False)
+        if profile == "long_trend_pullback":
+            trend_reclaim = close.gt(ema_fast * (1.0 + trigger * 0.50)) & close_loc.ge(0.25)
+            return (long_pressure & trend_reclaim & trend_up & d1_not_down).fillna(False)
+        if profile == "short_resistance_fail":
+            return (short_pressure & short_resistance_response & ~trend_up & d1_not_up).fillna(False)
+        if profile == "short_support_break":
+            return (short_pressure & short_breakdown & trend_down & d1_down).fillna(False)
+        if profile == "short_support_retest":
+            retest_reject = high.ge(support * (1.0 - zone)) & close.lt(support * (1.0 - trigger * 0.50)) & close_loc.le(-0.25)
+            return (short_pressure & retest_reject & trend_down & d1_down).fillna(False)
+        return (long_pressure if side == "long" else short_pressure).fillna(False)
+
     def _entry_mask(self, dataframe: DataFrame) -> Series:
         level = int(self.level_lookback.value)
         local = int(self.local_lookback.value)
         d1_level = int(self.d1_level_lookback.value)
         d1_window = int(self.d1_volume_window.value)
-        zone = float(self.zone_pct.value)
-        trigger = float(self.trigger_buffer_pct.value)
-        confirm = int(self.confirm_bars.value)
+        zone = self._effective_zone(float(self.zone_pct.value))
+        trigger = self._effective_trigger(float(self.trigger_buffer_pct.value))
+        confirm = self._effective_confirm(int(self.confirm_bars.value))
         close = self._num(dataframe["close"])
         high = self._num(dataframe["high"])
         low = self._num(dataframe["low"])
@@ -326,7 +402,8 @@ class TestPivotShortTrendPullback(IStrategy):
         else:
             structure = pd.Series(False, index=dataframe.index)
             side = self.ENTRY_SIDE
-        mask = structure & self._side_volume_guard(dataframe, side, local, d1_window) & self._daily_structure_guard(dataframe, side, d1_level, zone, trigger)
+        confirmation = self._adaptive_confirmation_guard(dataframe, side, local, level, zone, trigger)
+        mask = structure & confirmation & self._side_volume_guard(dataframe, side, local, d1_window) & self._daily_structure_guard(dataframe, side, d1_level, zone, trigger)
         return self._bool(mask, dataframe.index)
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
@@ -336,10 +413,7 @@ class TestPivotShortTrendPullback(IStrategy):
         dataframe["enter_tag"] = ""
         mask = self._entry_mask(dataframe)
         dataframe[f"plot_{self.ENTRY_TAG}"] = mask.astype(float)
-        if self.ENTRY_SIDE == "short":
-            dataframe.loc[mask, "enter_short"] = 1
-        else:
-            dataframe.loc[mask, "enter_long"] = 1
+        dataframe.loc[mask, "enter_long"] = 1
         dataframe.loc[mask, "enter_tag"] = self.ENTRY_TAG
         return dataframe
 
@@ -349,3 +423,5 @@ class TestPivotShortTrendPullback(IStrategy):
         dataframe["exit_short"] = 0
         dataframe["exit_tag"] = ""
         return dataframe
+
+

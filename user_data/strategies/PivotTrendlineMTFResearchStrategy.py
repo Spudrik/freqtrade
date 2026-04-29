@@ -117,7 +117,14 @@ class PivotTrendlineMTFResearchStrategy(IStrategy):
     PIVOT_STRENGTH_CHOICES = [3, 5, 8, 13]
     PROJECTION_HORIZON_CHOICES = [1, 3, 6, 12]
     EVENT_WINDOW_CHOICES = [12, 24, 48, 96]
-    ENTRY_MODE_CHOICES = ["support_reclaim", "resistance_reject", "resistance_breakout", "support_breakdown", "trend_pullback", "all"]
+    ENTRY_FAMILY_CHOICES = [
+        "long_support_reclaim",
+        "long_resistance_breakout",
+        "long_trend_pullback",
+        "short_resistance_reject",
+        "short_support_breakdown",
+        "short_trend_pullback",
+    ]
     ENTRY_PARAM_SPECS = {
         "daily_level_source": (["trendline", "pivot", "active_swing", "nearest"], "nearest", "daily_structure"),
         "daily_context_mode": (["level_required", "trend_or_level", "trend_required"], "trend_or_level", "daily_structure"),
@@ -127,28 +134,16 @@ class PivotTrendlineMTFResearchStrategy(IStrategy):
         "event_window": (EVENT_WINDOW_CHOICES, 48, "line_quality"),
         "entry_zone_pct": ([0.003, 0.006, 0.010, 0.020, 0.040], 0.010, "entry_structure"),
         "breakout_buffer_pct": ([0.000, 0.001, 0.002, 0.004, 0.008], 0.002, "entry_structure"),
-        "min_daily_context_score": ([0, 1, 2, 3, 4], 2, "daily_structure"),
-        "min_hourly_execution_score": ([1, 2, 3, 4, 5], 3, "hourly_execution"),
-        "min_volume_score": ([0, 1, 2, 3, 4], 2, "volume_pressure"),
-        "min_line_respect_ratio": ([0.0, 0.25, 0.50, 0.67, 0.80], 0.50, "line_quality"),
+        "min_daily_context_score": ([0, 1, 2, 3, 4, 5, 6, 7], 2, "daily_structure"),
+        "min_hourly_execution_score": ([0, 1, 2, 3, 4, 5, 6], 3, "hourly_execution"),
+        "min_volume_score": ([0, 1, 2, 3, 4, 5, 6], 2, "volume_pressure"),
+        "min_line_respect_ratio": ([0.0, 0.25, 0.50, 0.67, 0.80, 1.0], 0.50, "line_quality"),
         "max_line_violation_count": ([0, 1, 2, 3, 999], 2, "line_quality"),
-        "min_target_distance_pct": ([0.000, 0.004, 0.008, 0.015, 0.030], 0.008, "target_space"),
+        "min_target_distance_pct": ([0.000, 0.004, 0.008, 0.015, 0.030, 0.060, 0.120], 0.008, "target_space"),
         "level_confluence_max_pct": ([0.005, 0.010, 0.020, 0.040, 999.0], 0.020, "daily_structure"),
         "volume_rvol_min": ([0.0, 0.8, 1.0, 1.25, 1.5, 2.0], 1.0, "volume_pressure"),
         "volume_delta_abs_min": ([0.0, 0.15, 0.25, 0.50, 0.75], 0.25, "volume_pressure"),
     }
-
-    entry_mode = tagged_parameter(
-        CategoricalParameter(
-            ENTRY_MODE_CHOICES,
-            default="all",
-            space="buy",
-            optimize=True,
-            load=True,
-        ),
-        "family:entry_structure",
-        "mode:pivot_trendline_active_entry_mode",
-    )
 
     exit_mode = tagged_parameter(
         CategoricalParameter(["opposite_daily_level", "daily_invalidation", "both"], default="both", space="sell", optimize=True, load=True),
@@ -216,88 +211,60 @@ class PivotTrendlineMTFResearchStrategy(IStrategy):
         dataframe["enter_short"] = 0
         dataframe["enter_tag"] = ""
 
-        entry_params = self._active_entry_params()
-        s1d = int(entry_params["daily_pivot_strength"])
-        s1h = int(entry_params["hourly_pivot_strength"])
-        h = int(entry_params["projection_horizon"])
-        w = int(entry_params["event_window"])
-        zone_pct = float(entry_params["entry_zone_pct"])
-        breakout_buffer = float(entry_params["breakout_buffer_pct"])
+        long_support_reclaim_evidence = self._entry_evidence(dataframe, "long_support_reclaim")
+        long_resistance_breakout_evidence = self._entry_evidence(dataframe, "long_resistance_breakout")
+        long_trend_pullback_evidence = self._entry_evidence(dataframe, "long_trend_pullback")
+        short_resistance_reject_evidence = self._entry_evidence(dataframe, "short_resistance_reject")
+        short_support_breakdown_evidence = self._entry_evidence(dataframe, "short_support_breakdown")
+        short_trend_pullback_evidence = self._entry_evidence(dataframe, "short_trend_pullback")
 
         close = self._num(dataframe, "close")
-        high = self._num(dataframe, "high")
-        low = self._num(dataframe, "low")
-        volume_present = self._num(dataframe, "volume").gt(0.0)
 
-        d1_support, d1_resistance = self._daily_levels(dataframe, s1d, h, entry_params)
-        d1_support_plot = self._series(dataframe, self._d1(f"d1tl_support_proj_plot_{h}_{s1d}"))
-        d1_resistance_plot = self._series(dataframe, self._d1(f"d1tl_resistance_proj_plot_{h}_{s1d}"))
-        d1_trend_bias = self._series(dataframe, self._d1(f"d1tl_trend_bias_{s1d}"), 0.0)
-        d1_support_respect = self._series(dataframe, self._d1(f"d1tl_support_respect_ratio_{w}_{s1d}"), 0.0)
-        d1_resistance_respect = self._series(dataframe, self._d1(f"d1tl_resistance_respect_ratio_{w}_{s1d}"), 0.0)
-        d1_support_violations = self._series(dataframe, self._d1(f"d1tl_support_violation_count_{w}_{s1d}"), 0.0)
-        d1_resistance_violations = self._series(dataframe, self._d1(f"d1tl_resistance_violation_count_{w}_{s1d}"), 0.0)
-        d1_long_target = self._series(dataframe, self._d1(f"d1tl_long_target_distance_pct_{h}_{s1d}"), 0.0)
-        d1_short_target = self._series(dataframe, self._d1(f"d1tl_short_target_distance_pct_{h}_{s1d}"), 0.0)
-
-        near_support = self._touch_level(high, low, d1_support, zone_pct)
-        near_resistance = self._touch_level(high, low, d1_resistance, zone_pct)
-        long_breaks_resistance = close.gt(d1_resistance * (1.0 + breakout_buffer))
-        short_breaks_support = close.lt(d1_support * (1.0 - breakout_buffer))
-
-        support_confluence = self._support_confluence(dataframe, d1_support, s1d, h, entry_params)
-        resistance_confluence = self._resistance_confluence(dataframe, d1_resistance, s1d, h, entry_params)
-        daily_long_score = self._score_sum(
-            d1_support.notna(),
-            near_support | long_breaks_resistance,
-            d1_trend_bias.ge(0.0),
-            d1_support_respect.ge(float(entry_params["min_line_respect_ratio"])),
-            d1_support_violations.le(float(entry_params["max_line_violation_count"])),
-            d1_long_target.ge(float(entry_params["min_target_distance_pct"])),
-            support_confluence,
+        e = long_support_reclaim_evidence
+        long_support_reclaim = (
+            e["long_evidence_ok"]
+            & e["near_support"]
+            & self._bool(dataframe, f"h1tl_support_reclaim_{e['s1h']}")
+            & close.gt(e["d1_support"])
         )
-        daily_short_score = self._score_sum(
-            d1_resistance.notna(),
-            near_resistance | short_breaks_support,
-            d1_trend_bias.le(0.0),
-            d1_resistance_respect.ge(float(entry_params["min_line_respect_ratio"])),
-            d1_resistance_violations.le(float(entry_params["max_line_violation_count"])),
-            d1_short_target.ge(float(entry_params["min_target_distance_pct"])),
-            resistance_confluence,
+
+        e = long_resistance_breakout_evidence
+        long_resistance_breakout = (
+            e["long_evidence_ok"]
+            & e["long_breaks_resistance"]
+            & (self._bool(dataframe, f"h1tl_resistance_breakout_{e['h']}_{e['s1h']}") | self._bool(dataframe, f"h1pa_ms_bullish_break_{e['s1h']}"))
         )
-        daily_long_ok, daily_short_ok = self._daily_context_ok(daily_long_score, daily_short_score, d1_trend_bias, entry_params)
 
-        h1_long_score, h1_short_score = self._hourly_execution_scores(
-            dataframe,
-            s1h,
-            h,
-            w,
-            d1_support,
-            d1_resistance,
-            zone_pct,
-            breakout_buffer,
-            entry_params,
+        e = long_trend_pullback_evidence
+        long_trend_pullback = (
+            e["long_evidence_ok"]
+            & e["near_support"]
+            & self._bool(dataframe, f"h1pa_ms_higher_low_{e['s1h']}")
+            & self._series(dataframe, f"h1tl_trend_bias_{e['s1h']}", 0.0).ge(0.0)
         )
-        vol_long_score, vol_short_score = self._volume_scores(dataframe, entry_params)
 
-        min_hourly = int(entry_params["min_hourly_execution_score"])
-        min_volume = int(entry_params["min_volume_score"])
-        long_evidence_ok = daily_long_ok & h1_long_score.ge(min_hourly) & vol_long_score.ge(min_volume) & volume_present
-        short_evidence_ok = daily_short_ok & h1_short_score.ge(min_hourly) & vol_short_score.ge(min_volume) & volume_present
+        e = short_resistance_reject_evidence
+        short_resistance_reject = (
+            e["short_evidence_ok"]
+            & e["near_resistance"]
+            & self._bool(dataframe, f"h1tl_resistance_reject_{e['s1h']}")
+            & close.lt(e["d1_resistance"])
+        )
 
-        h1_support_reclaim = self._bool(dataframe, f"h1tl_support_reclaim_{s1h}")
-        h1_resistance_reject = self._bool(dataframe, f"h1tl_resistance_reject_{s1h}")
-        h1_resistance_breakout = self._bool(dataframe, f"h1tl_resistance_breakout_{h}_{s1h}") | self._bool(dataframe, f"h1pa_ms_bullish_break_{s1h}")
-        h1_support_breakdown = self._bool(dataframe, f"h1tl_support_breakdown_{h}_{s1h}") | self._bool(dataframe, f"h1pa_ms_bearish_break_{s1h}")
-        h1_bull_pullback = near_support & self._bool(dataframe, f"h1pa_ms_higher_low_{s1h}") & self._series(dataframe, f"h1tl_trend_bias_{s1h}", 0.0).ge(0.0)
-        h1_bear_pullback = near_resistance & self._bool(dataframe, f"h1pa_ms_lower_high_{s1h}") & self._series(dataframe, f"h1tl_trend_bias_{s1h}", 0.0).le(0.0)
+        e = short_support_breakdown_evidence
+        short_support_breakdown = (
+            e["short_evidence_ok"]
+            & e["short_breaks_support"]
+            & (self._bool(dataframe, f"h1tl_support_breakdown_{e['h']}_{e['s1h']}") | self._bool(dataframe, f"h1pa_ms_bearish_break_{e['s1h']}"))
+        )
 
-        long_support_reclaim = long_evidence_ok & near_support & h1_support_reclaim & close.gt(d1_support)
-        short_resistance_reject = short_evidence_ok & near_resistance & h1_resistance_reject & close.lt(d1_resistance)
-        long_resistance_breakout = long_evidence_ok & long_breaks_resistance & h1_resistance_breakout
-        short_support_breakdown = short_evidence_ok & short_breaks_support & h1_support_breakdown
-        long_trend_pullback = long_evidence_ok & h1_bull_pullback
-        short_trend_pullback = short_evidence_ok & h1_bear_pullback
+        e = short_trend_pullback_evidence
+        short_trend_pullback = (
+            e["short_evidence_ok"]
+            & e["near_resistance"]
+            & self._bool(dataframe, f"h1pa_ms_lower_high_{e['s1h']}")
+            & self._series(dataframe, f"h1tl_trend_bias_{e['s1h']}", 0.0).le(0.0)
+        )
 
         long_condition = long_support_reclaim | long_resistance_breakout | long_trend_pullback
         short_condition = short_resistance_reject | short_support_breakdown | short_trend_pullback
@@ -305,27 +272,27 @@ class PivotTrendlineMTFResearchStrategy(IStrategy):
 
         self._write_debug_columns(
             dataframe,
-            d1_support=d1_support,
-            d1_resistance=d1_resistance,
-            d1_support_plot=d1_support_plot,
-            d1_resistance_plot=d1_resistance_plot,
-            d1_trend_bias=d1_trend_bias,
-            d1_support_respect=d1_support_respect,
-            d1_resistance_respect=d1_resistance_respect,
-            daily_long_score=daily_long_score,
-            daily_short_score=daily_short_score,
-            h1_long_score=h1_long_score,
-            h1_short_score=h1_short_score,
-            vol_long_score=vol_long_score,
-            vol_short_score=vol_short_score,
+            d1_support=long_support_reclaim_evidence["d1_support"],
+            d1_resistance=long_support_reclaim_evidence["d1_resistance"],
+            d1_support_plot=long_support_reclaim_evidence["d1_support_plot"],
+            d1_resistance_plot=long_support_reclaim_evidence["d1_resistance_plot"],
+            d1_trend_bias=long_support_reclaim_evidence["d1_trend_bias"],
+            d1_support_respect=long_support_reclaim_evidence["d1_support_respect"],
+            d1_resistance_respect=long_support_reclaim_evidence["d1_resistance_respect"],
+            daily_long_score=long_support_reclaim_evidence["daily_long_score"],
+            daily_short_score=short_resistance_reject_evidence["daily_short_score"],
+            h1_long_score=long_support_reclaim_evidence["h1_long_score"],
+            h1_short_score=short_resistance_reject_evidence["h1_short_score"],
+            vol_long_score=long_support_reclaim_evidence["vol_long_score"],
+            vol_short_score=short_resistance_reject_evidence["vol_short_score"],
             long_support_reclaim=long_support_reclaim,
             short_resistance_reject=short_resistance_reject,
             long_resistance_breakout=long_resistance_breakout,
             short_support_breakdown=short_support_breakdown,
             long_trend_pullback=long_trend_pullback,
             short_trend_pullback=short_trend_pullback,
-            s1h=s1h,
-            h=h,
+            s1h=long_support_reclaim_evidence["s1h"],
+            h=long_support_reclaim_evidence["h"],
         )
 
         dataframe.loc[long_condition.fillna(False), "enter_long"] = 1
@@ -348,7 +315,7 @@ class PivotTrendlineMTFResearchStrategy(IStrategy):
         dataframe["exit_short"] = 0
         dataframe["exit_tag"] = ""
 
-        entry_params = self._active_entry_params()
+        entry_params = self._default_entry_params("exit_defaults")
         s = int(entry_params["daily_pivot_strength"])
         h = int(entry_params["projection_horizon"])
         support, resistance = self._daily_levels(dataframe, s, h, entry_params)
@@ -457,11 +424,114 @@ class PivotTrendlineMTFResearchStrategy(IStrategy):
             ComplexVolumeConfig(short_window=12, medium_window=48, long_window=96, divergence_window=48, sweep_window=24, vwap_window=48, prefix="vol"),
         )
 
-    def _active_entry_params(self) -> dict[str, Any]:
-        params: dict[str, Any] = {"mode": "all"}
+    def _entry_params(self, entry_family: str) -> dict[str, Any]:
+        params: dict[str, Any] = {"mode": entry_family}
         for name in self.ENTRY_PARAM_SPECS:
-            params[name] = getattr(self, f"all_{name}").value
+            params[name] = getattr(self, f"{entry_family}_{name}").value
         return params
+
+    def _default_entry_params(self, mode: str) -> dict[str, Any]:
+        params: dict[str, Any] = {"mode": mode}
+        for name, (_, default, _) in self.ENTRY_PARAM_SPECS.items():
+            params[name] = default
+        return params
+
+    def _entry_evidence(self, dataframe: DataFrame, entry_family: str) -> dict[str, Any]:
+        entry_params = self._entry_params(entry_family)
+        s1d = int(entry_params["daily_pivot_strength"])
+        s1h = int(entry_params["hourly_pivot_strength"])
+        h = int(entry_params["projection_horizon"])
+        w = int(entry_params["event_window"])
+        zone_pct = float(entry_params["entry_zone_pct"])
+        breakout_buffer = float(entry_params["breakout_buffer_pct"])
+
+        close = self._num(dataframe, "close")
+        high = self._num(dataframe, "high")
+        low = self._num(dataframe, "low")
+        volume_present = self._num(dataframe, "volume").gt(0.0)
+
+        d1_support, d1_resistance = self._daily_levels(dataframe, s1d, h, entry_params)
+        d1_support_plot = self._series(dataframe, self._d1(f"d1tl_support_proj_plot_{h}_{s1d}"))
+        d1_resistance_plot = self._series(dataframe, self._d1(f"d1tl_resistance_proj_plot_{h}_{s1d}"))
+        d1_trend_bias = self._series(dataframe, self._d1(f"d1tl_trend_bias_{s1d}"), 0.0)
+        d1_support_respect = self._series(dataframe, self._d1(f"d1tl_support_respect_ratio_{w}_{s1d}"), 0.0)
+        d1_resistance_respect = self._series(dataframe, self._d1(f"d1tl_resistance_respect_ratio_{w}_{s1d}"), 0.0)
+        d1_support_violations = self._series(dataframe, self._d1(f"d1tl_support_violation_count_{w}_{s1d}"), 0.0)
+        d1_resistance_violations = self._series(dataframe, self._d1(f"d1tl_resistance_violation_count_{w}_{s1d}"), 0.0)
+        d1_long_target = self._series(dataframe, self._d1(f"d1tl_long_target_distance_pct_{h}_{s1d}"), 0.0)
+        d1_short_target = self._series(dataframe, self._d1(f"d1tl_short_target_distance_pct_{h}_{s1d}"), 0.0)
+
+        near_support = self._touch_level(high, low, d1_support, zone_pct)
+        near_resistance = self._touch_level(high, low, d1_resistance, zone_pct)
+        long_breaks_resistance = close.gt(d1_resistance * (1.0 + breakout_buffer))
+        short_breaks_support = close.lt(d1_support * (1.0 - breakout_buffer))
+
+        support_confluence = self._support_confluence(dataframe, d1_support, s1d, h, entry_params)
+        resistance_confluence = self._resistance_confluence(dataframe, d1_resistance, s1d, h, entry_params)
+        daily_long_score = self._score_sum(
+            d1_support.notna(),
+            near_support | long_breaks_resistance,
+            d1_trend_bias.ge(0.0),
+            d1_support_respect.ge(float(entry_params["min_line_respect_ratio"])),
+            d1_support_violations.le(float(entry_params["max_line_violation_count"])),
+            d1_long_target.ge(float(entry_params["min_target_distance_pct"])),
+            support_confluence,
+        )
+        daily_short_score = self._score_sum(
+            d1_resistance.notna(),
+            near_resistance | short_breaks_support,
+            d1_trend_bias.le(0.0),
+            d1_resistance_respect.ge(float(entry_params["min_line_respect_ratio"])),
+            d1_resistance_violations.le(float(entry_params["max_line_violation_count"])),
+            d1_short_target.ge(float(entry_params["min_target_distance_pct"])),
+            resistance_confluence,
+        )
+        daily_long_ok, daily_short_ok = self._daily_context_ok(daily_long_score, daily_short_score, d1_trend_bias, entry_params)
+
+        h1_long_score, h1_short_score = self._hourly_execution_scores(
+            dataframe,
+            s1h,
+            h,
+            w,
+            d1_support,
+            d1_resistance,
+            zone_pct,
+            breakout_buffer,
+            entry_params,
+        )
+        vol_long_score, vol_short_score = self._volume_scores(dataframe, entry_params)
+
+        min_hourly = int(entry_params["min_hourly_execution_score"])
+        min_volume = int(entry_params["min_volume_score"])
+        long_evidence_ok = daily_long_ok & h1_long_score.ge(min_hourly) & vol_long_score.ge(min_volume) & volume_present
+        short_evidence_ok = daily_short_ok & h1_short_score.ge(min_hourly) & vol_short_score.ge(min_volume) & volume_present
+
+        return {
+            "params": entry_params,
+            "s1d": s1d,
+            "s1h": s1h,
+            "h": h,
+            "w": w,
+            "d1_support": d1_support,
+            "d1_resistance": d1_resistance,
+            "d1_support_plot": d1_support_plot,
+            "d1_resistance_plot": d1_resistance_plot,
+            "d1_trend_bias": d1_trend_bias,
+            "d1_support_respect": d1_support_respect,
+            "d1_resistance_respect": d1_resistance_respect,
+            "daily_long_score": daily_long_score,
+            "daily_short_score": daily_short_score,
+            "h1_long_score": h1_long_score,
+            "h1_short_score": h1_short_score,
+            "vol_long_score": vol_long_score,
+            "vol_short_score": vol_short_score,
+            "near_support": near_support,
+            "near_resistance": near_resistance,
+            "long_breaks_resistance": long_breaks_resistance,
+            "short_breaks_support": short_breaks_support,
+            "long_evidence_ok": long_evidence_ok,
+            "short_evidence_ok": short_evidence_ok,
+        }
 
     def _daily_levels(self, dataframe: DataFrame, strength: int, horizon: int, entry_params: dict[str, Any]) -> tuple[Series, Series]:
         close = self._num(dataframe, "close")
@@ -706,16 +776,18 @@ class PivotTrendlineMTFResearchStrategy(IStrategy):
         return frame
 
 
-for _entry_mode in PivotTrendlineMTFResearchStrategy.ENTRY_MODE_CHOICES:
+for _entry_mode in PivotTrendlineMTFResearchStrategy.ENTRY_FAMILY_CHOICES:
     for _param_name, (_choices, _default, _family) in PivotTrendlineMTFResearchStrategy.ENTRY_PARAM_SPECS.items():
+        _param = tagged_parameter(
+            CategoricalParameter(_choices, default=_default, space="buy", optimize=True, load=True),
+            f"family:{_family}",
+            f"mode:pivot_trendline_{_entry_mode}",
+        )
+        _param.batch_tags = (*getattr(_param, "batch_tags", ()), "mode:pivot_trendline_all")
         setattr(
             PivotTrendlineMTFResearchStrategy,
             f"{_entry_mode}_{_param_name}",
-            tagged_parameter(
-                CategoricalParameter(_choices, default=_default, space="buy", optimize=True, load=True),
-                f"family:{_family}",
-                f"mode:pivot_trendline_{_entry_mode}",
-            ),
+            _param,
         )
 
-del _entry_mode, _param_name, _choices, _default, _family
+del _entry_mode, _param_name, _choices, _default, _family, _param

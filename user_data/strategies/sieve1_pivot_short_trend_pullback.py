@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import datetime
 import os
@@ -34,9 +34,9 @@ def _tag(param: Any, mode: str) -> Any:
     return param
 
 
-class TestPivotLongSupportReclaim(IStrategy):
+class Sieve1PivotShortTrendPullback(IStrategy):
     INTERFACE_VERSION = 3
-    can_short = False
+    can_short = True
     timeframe = "1h"
     startup_candle_count = 1200
     process_only_new_candles = True
@@ -50,10 +50,10 @@ class TestPivotLongSupportReclaim(IStrategy):
     trailing_stop = False
     ignore_roi_if_entry_signal = False
 
-    ENTRY_TAG = "long_support_reclaim"
-    ENTRY_SIDE = "long"
-    ENTRY_KIND = "long_sup_reclaim"
-    MODE = "entry_long_support_reclaim"
+    ENTRY_TAG = "short_trend_pullback"
+    ENTRY_SIDE = "short"
+    ENTRY_KIND = "short_trend_pullback"
+    MODE = "entry_short_trend_pullback"
 
     level_lookback = _tag(CategoricalParameter(LEVEL_LOOKBACK_CHOICES, default=168, space="buy", optimize=True, load=True), MODE)
     local_lookback = _tag(CategoricalParameter(LOCAL_LOOKBACK_CHOICES, default=24, space="buy", optimize=True, load=True), MODE)
@@ -336,10 +336,7 @@ class TestPivotLongSupportReclaim(IStrategy):
         dataframe["enter_tag"] = ""
         mask = self._entry_mask(dataframe)
         dataframe[f"plot_{self.ENTRY_TAG}"] = mask.astype(float)
-        if self.ENTRY_SIDE == "short":
-            dataframe.loc[mask, "enter_short"] = 1
-        else:
-            dataframe.loc[mask, "enter_long"] = 1
+        dataframe.loc[mask, "enter_short"] = 1
         dataframe.loc[mask, "enter_tag"] = self.ENTRY_TAG
         return dataframe
 
@@ -349,3 +346,5 @@ class TestPivotLongSupportReclaim(IStrategy):
         dataframe["exit_short"] = 0
         dataframe["exit_tag"] = ""
         return dataframe
+
+

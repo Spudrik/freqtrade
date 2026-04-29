@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import os
 from typing import Any
 
 import numpy as np
@@ -8,7 +9,50 @@ from pandas import DataFrame, Series
 
 from freqtrade.strategy import DecimalParameter, IntParameter, IStrategy
 
-from entry_sieve_tools import apply_explicit_hyperopt_surface, entry_sieve_minimal_roi, entry_sieve_stoploss
+
+HYPEROPT_PARAM_ENV = "HYBRID_RECOVERY_HYPEROPT_PARAMS"
+ENTRY_SIEVE_TAKE_PROFIT_ENV = "ENTRY_SIEVE_TAKE_PROFIT_PCT"
+ENTRY_SIEVE_STOPLOSS_ENV = "ENTRY_SIEVE_STOPLOSS_PCT"
+
+
+def split_hyperopt_tokens(value: str | None) -> set[str]:
+    if not value:
+        return set()
+    normalized = value.replace(";", ",").replace("|", ",").replace(" ", ",")
+    return {token.strip() for token in normalized.split(",") if token.strip()}
+
+
+def is_parameter_object(value: Any) -> bool:
+    return bool(value is not None and value.__class__.__name__.endswith("Parameter"))
+
+
+def apply_explicit_hyperopt_surface(strategy_cls: type) -> None:
+    selected = split_hyperopt_tokens(os.environ.get(HYPEROPT_PARAM_ENV))
+    if not selected:
+        return
+    for name in dir(strategy_cls):
+        value = getattr(strategy_cls, name, None)
+        if is_parameter_object(value):
+            value.optimize = str(name) in selected
+
+
+def _pct_env(name: str, default_ratio: float) -> float:
+    raw = str(os.environ.get(name) or "").strip()
+    if not raw:
+        return float(default_ratio)
+    try:
+        return max(0.0, float(raw)) / 100.0
+    except ValueError:
+        return float(default_ratio)
+
+
+def entry_sieve_minimal_roi(default: float = 0.02) -> dict[str, float]:
+    return {"0": _pct_env(ENTRY_SIEVE_TAKE_PROFIT_ENV, default)}
+
+
+def entry_sieve_stoploss(default: float = -0.02) -> float:
+    return -_pct_env(ENTRY_SIEVE_STOPLOSS_ENV, abs(default))
+
 
 
 def tagged_parameter(param: Any, *tags: str) -> Any:
@@ -83,7 +127,7 @@ def tagged_parameter(param: Any, *tags: str) -> Any:
     return param
 
 
-class CodexCapitulationReclaim(IStrategy):
+class Sieve1CapitulationReclaimShort(IStrategy):
     """
     Overshoot reclaim strategy.
 
@@ -112,27 +156,27 @@ class CodexCapitulationReclaim(IStrategy):
     mean_period = tagged_parameter(
         IntParameter(96, 240, default=144, space="buy", optimize=True, load=True),
         "family:entry",
-        "mode:entry_capitulation_reclaim",
+        "mode:entry_capitulation_reclaim_short",
     )
     overshoot_atr_min = tagged_parameter(
         DecimalParameter(1.20, 4.00, decimals=2, default=2.10, space="buy", optimize=True, load=True),
         "family:entry",
-        "mode:entry_capitulation_reclaim",
+        "mode:entry_capitulation_reclaim_short",
     )
     reclaim_lookback = tagged_parameter(
         IntParameter(3, 12, default=6, space="buy", optimize=True, load=True),
         "family:entry",
-        "mode:entry_capitulation_reclaim",
+        "mode:entry_capitulation_reclaim_short",
     )
     volume_ratio_min = tagged_parameter(
         DecimalParameter(1.00, 4.00, decimals=2, default=1.60, space="buy", optimize=True, load=True),
         "family:entry",
-        "mode:entry_capitulation_reclaim",
+        "mode:entry_capitulation_reclaim_short",
     )
     wick_fraction_min = tagged_parameter(
         DecimalParameter(0.20, 0.70, decimals=2, default=0.35, space="buy", optimize=True, load=True),
         "family:entry",
-        "mode:entry_capitulation_reclaim",
+        "mode:entry_capitulation_reclaim_short",
     )
 
     @staticmethod
@@ -151,13 +195,13 @@ class CodexCapitulationReclaim(IStrategy):
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         _ = metadata
         mean_period = int(self.mean_period.value)
-        dataframe["codex_mean"] = dataframe["close"].ewm(span=mean_period, adjust=False, min_periods=mean_period).mean()
-        dataframe["codex_atr"] = self._atr(dataframe, 14)
-        dataframe["codex_dist_atr"] = (dataframe["close"] - dataframe["codex_mean"]) / dataframe["codex_atr"].replace(0.0, np.nan)
-        dataframe["codex_volume_ratio"] = dataframe["volume"] / dataframe["volume"].rolling(72, min_periods=24).mean()
+        dataframe["mean"] = dataframe["close"].ewm(span=mean_period, adjust=False, min_periods=mean_period).mean()
+        dataframe["atr"] = self._atr(dataframe, 14)
+        dataframe["dist_atr"] = (dataframe["close"] - dataframe["mean"]) / dataframe["atr"].replace(0.0, np.nan)
+        dataframe["volume_ratio"] = dataframe["volume"] / dataframe["volume"].rolling(72, min_periods=24).mean()
         candle_range = (dataframe["high"] - dataframe["low"]).replace(0.0, np.nan)
-        dataframe["codex_lower_wick_fraction"] = (dataframe[["open", "close"]].min(axis=1) - dataframe["low"]) / candle_range
-        dataframe["codex_upper_wick_fraction"] = (dataframe["high"] - dataframe[["open", "close"]].max(axis=1)) / candle_range
+        dataframe["lower_wick_fraction"] = (dataframe[["open", "close"]].min(axis=1) - dataframe["low"]) / candle_range
+        dataframe["upper_wick_fraction"] = (dataframe["high"] - dataframe[["open", "close"]].max(axis=1)) / candle_range
         return dataframe
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
@@ -168,17 +212,17 @@ class CodexCapitulationReclaim(IStrategy):
 
         lookback = int(self.reclaim_lookback.value)
         overshoot = float(self.overshoot_atr_min.value)
-        volume_ok = dataframe["codex_volume_ratio"] >= float(self.volume_ratio_min.value)
+        volume_ok = dataframe["volume_ratio"] >= float(self.volume_ratio_min.value)
 
         long_capitulation = (
-            (dataframe["codex_dist_atr"] <= -overshoot)
+            (dataframe["dist_atr"] <= -overshoot)
             & volume_ok
-            & (dataframe["codex_lower_wick_fraction"] >= float(self.wick_fraction_min.value))
+            & (dataframe["lower_wick_fraction"] >= float(self.wick_fraction_min.value))
         )
         short_capitulation = (
-            (dataframe["codex_dist_atr"] >= overshoot)
+            (dataframe["dist_atr"] >= overshoot)
             & volume_ok
-            & (dataframe["codex_upper_wick_fraction"] >= float(self.wick_fraction_min.value))
+            & (dataframe["upper_wick_fraction"] >= float(self.wick_fraction_min.value))
         )
         recent_long_capitulation = long_capitulation.rolling(lookback, min_periods=1).max().shift(1).fillna(False).astype(bool)
         recent_short_capitulation = short_capitulation.rolling(lookback, min_periods=1).max().shift(1).fillna(False).astype(bool)
@@ -187,19 +231,17 @@ class CodexCapitulationReclaim(IStrategy):
             recent_long_capitulation
             & (dataframe["close"] > dataframe["open"])
             & (dataframe["close"] > dataframe["high"].shift(1))
-            & (dataframe["codex_dist_atr"] > dataframe["codex_dist_atr"].shift(1))
+            & (dataframe["dist_atr"] > dataframe["dist_atr"].shift(1))
         )
         short_reclaim = (
             recent_short_capitulation
             & (dataframe["close"] < dataframe["open"])
             & (dataframe["close"] < dataframe["low"].shift(1))
-            & (dataframe["codex_dist_atr"] < dataframe["codex_dist_atr"].shift(1))
+            & (dataframe["dist_atr"] < dataframe["dist_atr"].shift(1))
         )
 
-        dataframe.loc[long_reclaim.fillna(False), "enter_long"] = 1
-        dataframe.loc[long_reclaim.fillna(False), "enter_tag"] = "codex_capitulation_reclaim_long"
         dataframe.loc[short_reclaim.fillna(False), "enter_short"] = 1
-        dataframe.loc[short_reclaim.fillna(False), "enter_tag"] = "codex_capitulation_reclaim_short"
+        dataframe.loc[short_reclaim.fillna(False), "enter_tag"] = "capitulation_reclaim_short"
         return dataframe
 
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
@@ -210,4 +252,7 @@ class CodexCapitulationReclaim(IStrategy):
         return dataframe
 
 
-apply_explicit_hyperopt_surface(CodexCapitulationReclaim)
+apply_explicit_hyperopt_surface(Sieve1CapitulationReclaimShort)
+
+
+

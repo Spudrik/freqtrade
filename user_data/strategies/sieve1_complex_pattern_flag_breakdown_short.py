@@ -1,5 +1,6 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
+import os
 from typing import Any
 
 import numpy as np
@@ -8,7 +9,6 @@ from pandas import DataFrame, Series
 
 from freqtrade.strategy import BooleanParameter, CategoricalParameter, DecimalParameter, IntParameter, IStrategy
 
-from entry_sieve_tools import apply_explicit_hyperopt_surface, entry_sieve_minimal_roi, entry_sieve_stoploss
 from user_data.Indicators.complex_pattern_structure import add_pattern_structure
 from user_data.Indicators.complex_pivot_structure import add_pivot_structure
 from user_data.Indicators.complex_relative_strength import add_relative_strength
@@ -17,11 +17,54 @@ from user_data.Indicators.complex_volatility_cycles import add_volatility_cycles
 from user_data.Indicators.complex_volume_indicators import add_complex_volume_indicators
 from user_data.Indicators.complex_volume_profile import add_volume_profile
 
+HYPEROPT_PARAM_ENV = "HYBRID_RECOVERY_HYPEROPT_PARAMS"
+ENTRY_SIEVE_TAKE_PROFIT_ENV = "ENTRY_SIEVE_TAKE_PROFIT_PCT"
+ENTRY_SIEVE_STOPLOSS_ENV = "ENTRY_SIEVE_STOPLOSS_PCT"
 
-ENTRY_MODE = "entry_complex_support_breakdown_short"
-ENTRY_TAG = "codex_complex_sup_break_short"
+
+def split_hyperopt_tokens(value: str | None) -> set[str]:
+    if not value:
+        return set()
+    normalized = value.replace(";", ",").replace("|", ",").replace(" ", ",")
+    return {token.strip() for token in normalized.split(",") if token.strip()}
+
+
+def is_parameter_object(value: Any) -> bool:
+    return bool(value is not None and value.__class__.__name__.endswith("Parameter"))
+
+
+def apply_explicit_hyperopt_surface(strategy_cls: type) -> None:
+    selected = split_hyperopt_tokens(os.environ.get(HYPEROPT_PARAM_ENV))
+    if not selected:
+        return
+    for name in dir(strategy_cls):
+        value = getattr(strategy_cls, name, None)
+        if is_parameter_object(value):
+            value.optimize = str(name) in selected
+
+
+def _pct_env(name: str, default_ratio: float) -> float:
+    raw = str(os.environ.get(name) or "").strip()
+    if not raw:
+        return float(default_ratio)
+    try:
+        return max(0.0, float(raw)) / 100.0
+    except ValueError:
+        return float(default_ratio)
+
+
+def entry_sieve_minimal_roi(default: float = 0.02) -> dict[str, float]:
+    return {"0": _pct_env(ENTRY_SIEVE_TAKE_PROFIT_ENV, default)}
+
+
+def entry_sieve_stoploss(default: float = -0.02) -> float:
+    return -_pct_env(ENTRY_SIEVE_STOPLOSS_ENV, abs(default))
+
+
+ENTRY_MODE = "entry_complex_pattern_flag_breakdown_short"
+ENTRY_TAG = "complex_pattern_break_short"
 SIDE = "short"
-CORE_BEHAVIOR = "support breakdown acceptance"
+CORE_BEHAVIOR = "pattern continuation breakdown"
 
 
 def tagged_parameter(param: Any) -> Any:
@@ -43,12 +86,12 @@ def _bool(frame: DataFrame, column: str) -> Series:
     return pd.Series(frame[column], index=frame.index).astype("boolean").fillna(False).astype(bool)
 
 
-class CodexComplexSupportBreakdownShort(IStrategy):
+class Sieve1ComplexPatternFlagBreakdownShort(IStrategy):
     """
-    Break below recent/pivot support with volatility expansion and volume/profile acceptance.
+    Bearish impulse/consolidation pattern that breaks downward with fresh participation.
 
     Single-entry Entry Sieve research strategy.
-    Objective: test whether support breakdown acceptance has standalone edge under fixed +2%/-2% exits.
+    Objective: test whether pattern continuation breakdown has standalone edge under fixed +2%/-2% exits.
     """
 
     INTERFACE_VERSION = 3
@@ -74,7 +117,7 @@ class CodexComplexSupportBreakdownShort(IStrategy):
     volatility_score_min = tagged_parameter(DecimalParameter(0.05, 0.75, decimals=2, default=0.25, space="buy", optimize=True, load=True))
     compression_score_min = tagged_parameter(DecimalParameter(0.05, 0.80, decimals=2, default=0.35, space="buy", optimize=True, load=True))
     volume_score_min = tagged_parameter(DecimalParameter(0.05, 0.80, decimals=2, default=0.25, space="buy", optimize=True, load=True))
-    volume_rvol_min = tagged_parameter(DecimalParameter(0.80, 3.00, decimals=2, default=1.20, space="buy", optimize=True, load=True))
+    volume_rvol_min = tagged_parameter(DecimalParameter(0.80, 1.95, decimals=2, default=1.20, space="buy", optimize=True, load=True))
     volume_pressure_min = tagged_parameter(DecimalParameter(0.00, 1.50, decimals=2, default=0.25, space="buy", optimize=True, load=True))
     profile_score_min = tagged_parameter(DecimalParameter(0.05, 0.80, decimals=2, default=0.25, space="buy", optimize=True, load=True))
     rs_score_min = tagged_parameter(DecimalParameter(0.05, 0.80, decimals=2, default=0.25, space="buy", optimize=True, load=True))
@@ -175,12 +218,12 @@ class CodexComplexSupportBreakdownShort(IStrategy):
         )
 
         window = int(self.recent_window.value)
-        dataframe["codex_recent_high"] = dataframe["high"].rolling(window, min_periods=max(12, window // 3)).max().shift(1)
-        dataframe["codex_recent_low"] = dataframe["low"].rolling(window, min_periods=max(12, window // 3)).min().shift(1)
-        resistance_parts = pd.concat([_num(dataframe, "pa_resistance_line"), _num(dataframe, "tl_resistance_line"), dataframe["codex_recent_high"]], axis=1)
-        support_parts = pd.concat([_num(dataframe, "pa_support_line"), _num(dataframe, "tl_support_line"), dataframe["codex_recent_low"]], axis=1)
-        dataframe["codex_resistance_ref"] = resistance_parts.max(axis=1)
-        dataframe["codex_support_ref"] = support_parts.min(axis=1)
+        dataframe["recent_high"] = dataframe["high"].rolling(window, min_periods=max(12, window // 3)).max().shift(1)
+        dataframe["recent_low"] = dataframe["low"].rolling(window, min_periods=max(12, window // 3)).min().shift(1)
+        resistance_parts = pd.concat([_num(dataframe, "pa_resistance_line"), _num(dataframe, "tl_resistance_line"), dataframe["recent_high"]], axis=1)
+        support_parts = pd.concat([_num(dataframe, "pa_support_line"), _num(dataframe, "tl_support_line"), dataframe["recent_low"]], axis=1)
+        dataframe["resistance_ref"] = resistance_parts.max(axis=1)
+        dataframe["support_ref"] = support_parts.min(axis=1)
         return dataframe
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
@@ -191,12 +234,13 @@ class CodexComplexSupportBreakdownShort(IStrategy):
         buffer = float(self.breakout_buffer_pct.value)
 
 
+        pattern_ready = _num(dataframe, "pat_score_short") >= float(self.pattern_score_min.value)
         condition = (
-            (dataframe["close"] < dataframe["codex_support_ref"] * (1.0 - buffer))
-            & (_num(dataframe, "pa_score_short") >= float(self.pivot_score_min.value))
+            pattern_ready
+            & (dataframe["close"] < dataframe["recent_low"] * (1.0 - buffer))
             & (_num(dataframe, "tl_score_short") >= float(self.trendline_score_min.value))
-            & (_num(dataframe, "vc_expansion_score") >= float(self.volatility_score_min.value))
-            & (_bool(dataframe, "vol_vol_breakout_confirm_short") | _bool(dataframe, "vp_val_breakdown_with_pressure"))
+            & (_num(dataframe, "vc_compression_score") >= float(self.compression_score_min.value))
+            & (_bool(dataframe, "vol_vol_breakout_confirm_short") | (_num(dataframe, "vol_rvol") >= float(self.volume_rvol_min.value)))
         )
 
         if bool(self.use_volume_score.value):
@@ -210,10 +254,7 @@ class CodexComplexSupportBreakdownShort(IStrategy):
             condition &= rs_score >= float(self.rs_score_min.value)
 
         valid = condition.fillna(False) & dataframe["volume"].gt(0.0) & dataframe["close"].notna()
-        if SIDE == "long":
-            dataframe.loc[valid, "enter_long"] = 1
-        else:
-            dataframe.loc[valid, "enter_short"] = 1
+        dataframe.loc[valid, "enter_short"] = 1
         dataframe.loc[valid, "enter_tag"] = ENTRY_TAG
         return dataframe
 
@@ -225,4 +266,6 @@ class CodexComplexSupportBreakdownShort(IStrategy):
         return dataframe
 
 
-apply_explicit_hyperopt_surface(CodexComplexSupportBreakdownShort)
+apply_explicit_hyperopt_surface(Sieve1ComplexPatternFlagBreakdownShort)
+
+
