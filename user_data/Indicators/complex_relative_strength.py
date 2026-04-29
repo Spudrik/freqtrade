@@ -36,6 +36,13 @@ class RelativeStrengthConfig:
     min_outperformance: float = 0.0
     slope_scale: float = 0.03
     percentile_window: int = 240
+    context_window: int = 24
+    entry_cooldown_bars: int = 8
+    entry_score_min: float = 0.45
+    context_full_min: float = 0.55
+    context_full_margin: float = 0.12
+    context_soft_min: float = 0.35
+    context_soft_margin: float = 0.06
     benchmark_close: str = "close"
     prefix: str = "rs"
 
@@ -51,6 +58,13 @@ def add_relative_strength(
     min_outperformance: float | None = None,
     slope_scale: float | None = None,
     percentile_window: int | None = None,
+    context_window: int | None = None,
+    entry_cooldown_bars: int | None = None,
+    entry_score_min: float | None = None,
+    context_full_min: float | None = None,
+    context_full_margin: float | None = None,
+    context_soft_min: float | None = None,
+    context_soft_margin: float | None = None,
     benchmark_close: str | None = None,
     prefix: str | None = None,
 ) -> DataFrame:
@@ -64,6 +78,13 @@ def add_relative_strength(
         min_outperformance=min_outperformance,
         slope_scale=slope_scale,
         percentile_window=percentile_window,
+        context_window=context_window,
+        entry_cooldown_bars=entry_cooldown_bars,
+        entry_score_min=entry_score_min,
+        context_full_min=context_full_min,
+        context_full_margin=context_full_margin,
+        context_soft_min=context_soft_min,
+        context_soft_margin=context_soft_margin,
         benchmark_close=benchmark_close,
         prefix=prefix,
     )
@@ -104,9 +125,70 @@ def add_relative_strength(
         + 0.15 * (1.0 - rs_percentile)
     )
     abs_score = pd.concat([long_score, short_score], axis=1).max(axis=1)
+    score_margin = long_score - short_score
     score_state = pd.Series(
         np.select([long_score.gt(short_score), short_score.gt(long_score)], [1.0, -1.0], default=0.0),
         index=frame.index,
+    )
+    context_long = long_score.ewm(span=cfg.context_window, min_periods=1, adjust=False).mean()
+    context_short = short_score.ewm(span=cfg.context_window, min_periods=1, adjust=False).mean()
+    context_margin = context_long - context_short
+    full_bull = context_long.ge(cfg.context_full_min) & context_margin.ge(cfg.context_full_margin)
+    full_bear = context_short.ge(cfg.context_full_min) & context_margin.le(-cfg.context_full_margin)
+    bullish_chop = ~full_bull & ~full_bear & context_long.ge(cfg.context_soft_min) & context_margin.ge(cfg.context_soft_margin)
+    bearish_chop = ~full_bull & ~full_bear & context_short.ge(cfg.context_soft_min) & context_margin.le(-cfg.context_soft_margin)
+    market_context = pd.Series(
+        np.select(
+            [full_bull, bullish_chop, full_bear, bearish_chop],
+            [2.0, 1.0, -2.0, -1.0],
+            default=0.0,
+        ),
+        index=frame.index,
+        dtype="float64",
+    )
+
+    cross_outperforming = outperforming & ~outperforming.shift(1, fill_value=False).astype(bool)
+    cross_underperforming = underperforming & ~underperforming.shift(1, fill_value=False).astype(bool)
+    improving_slope = rs_slope.gt(0.0) & rs_slope.gt(rs_slope.shift(1).fillna(0.0))
+    weakening_slope = rs_slope.lt(0.0) & rs_slope.lt(rs_slope.shift(1).fillna(0.0))
+    high_relative_range = rs_percentile.ge(0.65)
+    low_relative_range = rs_percentile.le(0.35)
+
+    entry_rotation_long = _dedupe_events(
+        cross_outperforming & long_score.ge(cfg.entry_score_min * 0.75) & improving_slope,
+        cfg.entry_cooldown_bars,
+    )
+    entry_persistent_strength_long = _dedupe_events(
+        rel_short.gt(cfg.min_outperformance)
+        & rel_medium.gt(cfg.min_outperformance)
+        & high_relative_range
+        & long_score.ge(cfg.entry_score_min)
+        & score_margin.ge(0.05),
+        cfg.entry_cooldown_bars,
+    )
+    entry_rotation_short = _dedupe_events(
+        cross_underperforming & short_score.ge(cfg.entry_score_min * 0.75) & weakening_slope,
+        cfg.entry_cooldown_bars,
+    )
+    entry_persistent_weakness_short = _dedupe_events(
+        rel_short.lt(-cfg.min_outperformance)
+        & rel_medium.lt(-cfg.min_outperformance)
+        & low_relative_range
+        & short_score.ge(cfg.entry_score_min)
+        & score_margin.le(-0.05),
+        cfg.entry_cooldown_bars,
+    )
+    suggested_entry_long = entry_rotation_long | entry_persistent_strength_long
+    suggested_entry_short = entry_rotation_short | entry_persistent_weakness_short
+    hold_long = market_context.gt(0.0) & rs_slope.ge(0.0) & ~cross_underperforming
+    hold_short = market_context.lt(0.0) & rs_slope.le(0.0) & ~cross_outperforming
+    exit_long = _dedupe_events(
+        cross_underperforming | (short_score.gt(long_score + 0.10) & weakening_slope),
+        cfg.entry_cooldown_bars,
+    )
+    exit_short = _dedupe_events(
+        cross_outperforming | (long_score.gt(short_score + 0.10) & improving_slope),
+        cfg.entry_cooldown_bars,
     )
 
     new_cols = {
@@ -119,6 +201,17 @@ def add_relative_strength(
         f"{p}_percentile": rs_percentile,
         f"{p}_outperforming": outperforming,
         f"{p}_underperforming": underperforming,
+        f"{p}_market_context": market_context,
+        f"{p}_entry_rotation_long": entry_rotation_long,
+        f"{p}_entry_persistent_strength_long": entry_persistent_strength_long,
+        f"{p}_entry_rotation_short": entry_rotation_short,
+        f"{p}_entry_persistent_weakness_short": entry_persistent_weakness_short,
+        f"{p}_suggested_entry_long": suggested_entry_long,
+        f"{p}_suggested_entry_short": suggested_entry_short,
+        f"{p}_hold_long": hold_long,
+        f"{p}_hold_short": hold_short,
+        f"{p}_exit_long": exit_long,
+        f"{p}_exit_short": exit_short,
         f"{p}_score_long": long_score,
         f"{p}_score_short": short_score,
         f"{p}_score_abs": abs_score,
@@ -156,12 +249,28 @@ def _resolve_config(config: RelativeStrengthConfig | None, **overrides: object) 
 
 
 def _validate_config(cfg: RelativeStrengthConfig) -> None:
-    if min(cfg.short_window, cfg.medium_window, cfg.long_window, cfg.percentile_window) < 2:
+    if min(
+        cfg.short_window,
+        cfg.medium_window,
+        cfg.long_window,
+        cfg.percentile_window,
+        cfg.context_window,
+        cfg.entry_cooldown_bars,
+    ) < 2:
         raise ValueError("windows must be at least 2")
     if not cfg.short_window < cfg.medium_window < cfg.long_window:
         raise ValueError("expected short_window < medium_window < long_window")
     if cfg.slope_scale <= 0.0:
         raise ValueError("slope_scale must be positive")
+    bounded = [
+        cfg.entry_score_min,
+        cfg.context_full_min,
+        cfg.context_full_margin,
+        cfg.context_soft_min,
+        cfg.context_soft_margin,
+    ]
+    if any(value < 0.0 or value > 1.0 for value in bounded):
+        raise ValueError("score/context thresholds must be between 0.0 and 1.0")
     if not cfg.prefix:
         raise ValueError("prefix must not be empty")
 
@@ -173,6 +282,12 @@ def _validate_dataframe(dataframe: DataFrame) -> None:
 
 def _clip01(series: Series) -> Series:
     return pd.to_numeric(series, errors="coerce").replace([np.inf, -np.inf], np.nan).clip(0.0, 1.0).fillna(0.0)
+
+
+def _dedupe_events(mask: Series, cooldown_bars: int) -> Series:
+    event = pd.Series(mask, index=mask.index).astype("boolean").fillna(False).astype(bool)
+    previous_count = event.astype("float64").shift(1).rolling(int(cooldown_bars), min_periods=1).sum().fillna(0.0)
+    return event & previous_count.eq(0.0)
 
 
 def _num(frame: DataFrame, column: str) -> Series:

@@ -140,6 +140,29 @@ VC tuning levers that strategies may expose to hyperopt:
 - Expansion thresholds: `expansion_atr_ratio` and `expansion_volume_rvol`.
 - Exhaustion thresholds: `exhaustion_range_atr`, `exhaustion_volume_rvol`, and `close_location_extreme`.
 
+## Relative Strength Strategy Outputs
+
+Relative Strength (`rs`) should compare the traded asset against a benchmark such as BTC, ETH, or a market index. It is cross-asset context only; it does not decide trades alone.
+
+Expected behaviour:
+- Strong bullish RS should persist while the asset is outperforming the benchmark across short/medium/long windows and the RS line is high in its own range.
+- Strong bearish RS should persist while the asset is underperforming the benchmark across those windows and the RS line is low in its own range.
+- Rotation diagnostics should be fresh events around transitions, not every candle in an existing outperformance state.
+
+Strategy-facing RS concepts:
+- Core relative evidence: `rs_line`, `rs_slope`, `rs_ret_short`, `rs_ret_medium`, `rs_ret_long`, `rs_percentile`, and `rs_benchmark_close`.
+- Ongoing state: `rs_outperforming` and `rs_underperforming` are raw ongoing benchmark-relative states. They are guards/context, not entry triggers.
+- Directional context: `rs_market_context` uses `+2`, `+1`, `0`, `-1`, `-2`; full states require stronger smoothed score and margin separation.
+- Entry diagnostics: `rs_entry_rotation_long`, `rs_entry_persistent_strength_long`, `rs_entry_rotation_short`, and `rs_entry_persistent_weakness_short` are sparse benchmark-relative trigger evidence.
+- Composite triggers: `rs_suggested_entry_long/short` combine the reason-specific diagnostics for plotting and broad tests.
+- Position evidence: `rs_hold_long`, `rs_hold_short`, `rs_exit_long`, and `rs_exit_short` expose whether benchmark-relative behaviour supports holding or warns that the edge has flipped.
+
+RS tuning levers that strategies may expose to hyperopt:
+- Windows: `short_window`, `medium_window`, `long_window`, `percentile_window`, `context_window`, and `entry_cooldown_bars`.
+- Score scaling: `min_outperformance`, `slope_scale`, and `entry_score_min`.
+- Context thresholds: `context_full_min`, `context_full_margin`, `context_soft_min`, and `context_soft_margin`.
+- Benchmark selection: `benchmark_close` and the informative benchmark dataframe/series supplied by the strategy.
+
 ## Pivot Structure Strategy Outputs
 
 Pivot Structure should separate tactical local swings from larger structural market memory.
