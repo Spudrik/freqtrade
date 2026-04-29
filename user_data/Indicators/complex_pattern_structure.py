@@ -100,16 +100,19 @@ def add_pattern_structure(
 
     impulse_low = low.rolling(cfg.impulse_window, min_periods=2).min().shift(cfg.consolidation_window)
     impulse_high = high.rolling(cfg.impulse_window, min_periods=2).max().shift(cfg.consolidation_window)
-    impulse_up_move = close - impulse_low
-    impulse_down_move = impulse_high - close
+    impulse_end_close = close.shift(cfg.consolidation_window)
+    impulse_up_move = impulse_end_close - impulse_low
+    impulse_down_move = impulse_high - impulse_end_close
+    impulse_up_valid = impulse_up_move.gt(0.0)
+    impulse_down_valid = impulse_down_move.gt(0.0)
     impulse_up_score = _clip01(
         0.5 * _safe_div(impulse_up_move, atr * cfg.impulse_atr_min)
         + 0.5 * _safe_div(impulse_up_move, close * cfg.impulse_pct_min)
-    )
+    ).where(impulse_up_valid, 0.0)
     impulse_down_score = _clip01(
         0.5 * _safe_div(impulse_down_move, atr * cfg.impulse_atr_min)
         + 0.5 * _safe_div(impulse_down_move, close * cfg.impulse_pct_min)
-    )
+    ).where(impulse_down_valid, 0.0)
 
     cons_high = high.rolling(cfg.consolidation_window, min_periods=2).max()
     cons_low = low.rolling(cfg.consolidation_window, min_periods=2).min()
@@ -118,8 +121,8 @@ def add_pattern_structure(
     range_contraction = _clip01(1.0 - _safe_div(cons_range, prior_range))
     contraction_ok = range_contraction >= cfg.min_range_contraction
 
-    retrace_long = _safe_div(cons_high - close, impulse_up_move.abs())
-    retrace_short = _safe_div(close - cons_low, impulse_down_move.abs())
+    retrace_long = _safe_div(impulse_end_close - cons_low, impulse_up_move.abs())
+    retrace_short = _safe_div(cons_high - impulse_end_close, impulse_down_move.abs())
     controlled_long = retrace_long.between(0.0, cfg.max_retrace_pct)
     controlled_short = retrace_short.between(0.0, cfg.max_retrace_pct)
 
@@ -132,12 +135,16 @@ def add_pattern_structure(
     pa_up_sequence = _num(frame, f"{cfg.pivot_prefix}_ms_up_sequence_score").fillna(0.0)
     pa_down_sequence = _num(frame, f"{cfg.pivot_prefix}_ms_down_sequence_score").fillna(0.0)
 
-    breakout_long = close.gt(cons_high.shift(1) * (1.0 + cfg.breakout_buffer_pct)) & close.gt(open_)
-    breakout_short = close.lt(cons_low.shift(1) * (1.0 - cfg.breakout_buffer_pct)) & close.lt(open_)
-    flag_long = impulse_up_score.gt(0.5) & controlled_long & contraction_ok & dry_volume
-    flag_short = impulse_down_score.gt(0.5) & controlled_short & contraction_ok & dry_volume
+    flag_long = impulse_up_valid & impulse_up_score.gt(0.5) & controlled_long & contraction_ok & dry_volume
+    flag_short = impulse_down_valid & impulse_down_score.gt(0.5) & controlled_short & contraction_ok & dry_volume
     pennant_long = flag_long & tl_compression_score.gt(0.35)
     pennant_short = flag_short & tl_compression_score.gt(0.35)
+    raw_breakout_long = close.gt(cons_high.shift(1) * (1.0 + cfg.breakout_buffer_pct)) & close.gt(open_)
+    raw_breakout_short = close.lt(cons_low.shift(1) * (1.0 - cfg.breakout_buffer_pct)) & close.lt(open_)
+    recent_flag_long = _rolling_count(flag_long | pennant_long, cfg.consolidation_window).ge(1.0)
+    recent_flag_short = _rolling_count(flag_short | pennant_short, cfg.consolidation_window).ge(1.0)
+    breakout_long = raw_breakout_long & recent_flag_long
+    breakout_short = raw_breakout_short & recent_flag_short
 
     long_score = _clip01(
         0.30 * impulse_up_score
@@ -160,18 +167,66 @@ def add_pattern_structure(
         np.select([long_score.gt(short_score), short_score.gt(long_score)], [1.0, -1.0], default=0.0),
         index=frame.index,
     )
+    margin = long_score - short_score
+    full_bull = long_score.ge(0.56) & margin.ge(0.08) & (recent_flag_long | breakout_long)
+    full_bear = short_score.ge(0.56) & margin.le(-0.08) & (recent_flag_short | breakout_short)
+    bullish_chop = ~full_bull & ~full_bear & long_score.ge(0.40) & margin.ge(0.04) & recent_flag_long
+    bearish_chop = ~full_bull & ~full_bear & short_score.ge(0.40) & margin.le(-0.04) & recent_flag_short
+    market_context = pd.Series(
+        np.select([full_bull, full_bear, bullish_chop, bearish_chop], [2, -2, 1, -1], default=0),
+        index=frame.index,
+        dtype="int8",
+    )
+
+    cooldown = max(3, int(cfg.consolidation_window) // 3)
+    flag_event_long = _dedupe_events(flag_long & ~flag_long.shift(1, fill_value=False), cooldown)
+    flag_event_short = _dedupe_events(flag_short & ~flag_short.shift(1, fill_value=False), cooldown)
+    pennant_event_long = _dedupe_events(pennant_long & ~pennant_long.shift(1, fill_value=False), cooldown)
+    pennant_event_short = _dedupe_events(pennant_short & ~pennant_short.shift(1, fill_value=False), cooldown)
+    entry_flag_breakout_long = breakout_long & flag_long & long_score.ge(short_score)
+    entry_pennant_breakout_long = breakout_long & pennant_long & long_score.ge(short_score)
+    entry_flag_breakdown_short = breakout_short & flag_short & short_score.ge(long_score)
+    entry_pennant_breakdown_short = breakout_short & pennant_short & short_score.ge(long_score)
+    suggested_entry_long = entry_flag_breakout_long | entry_pennant_breakout_long
+    suggested_entry_short = entry_flag_breakdown_short | entry_pennant_breakdown_short
+    hold_long = recent_flag_long & long_score.ge(short_score - 0.05) & ~breakout_short
+    hold_short = recent_flag_short & short_score.ge(long_score - 0.05) & ~breakout_long
+    exit_long = breakout_short | flag_event_short
+    exit_short = breakout_long | flag_event_long
 
     new_cols = {
         f"{p}_impulse_up_score": impulse_up_score,
         f"{p}_impulse_down_score": impulse_down_score,
+        f"{p}_impulse_end_close": impulse_end_close,
+        f"{p}_impulse_up_move": impulse_up_move.where(impulse_up_valid),
+        f"{p}_impulse_down_move": impulse_down_move.where(impulse_down_valid),
         f"{p}_range_contraction_score": range_contraction,
+        f"{p}_retrace_long": retrace_long.where(impulse_up_valid),
+        f"{p}_retrace_short": retrace_short.where(impulse_down_valid),
         f"{p}_dry_volume": dry_volume,
-        f"{p}_flag_long": flag_long,
-        f"{p}_flag_short": flag_short,
-        f"{p}_pennant_long": pennant_long,
-        f"{p}_pennant_short": pennant_short,
-        f"{p}_breakout_long": breakout_long,
-        f"{p}_breakout_short": breakout_short,
+        f"{p}_flag_state_long": flag_long,
+        f"{p}_flag_state_short": flag_short,
+        f"{p}_pennant_state_long": pennant_long,
+        f"{p}_pennant_state_short": pennant_short,
+        f"{p}_flag_long": flag_event_long,
+        f"{p}_flag_short": flag_event_short,
+        f"{p}_pennant_long": pennant_event_long,
+        f"{p}_pennant_short": pennant_event_short,
+        f"{p}_raw_breakout_long": raw_breakout_long,
+        f"{p}_raw_breakout_short": raw_breakout_short,
+        f"{p}_breakout_long": _dedupe_events(breakout_long, cooldown),
+        f"{p}_breakout_short": _dedupe_events(breakout_short, cooldown),
+        f"{p}_entry_flag_breakout_long": _dedupe_events(entry_flag_breakout_long, cooldown),
+        f"{p}_entry_pennant_breakout_long": _dedupe_events(entry_pennant_breakout_long, cooldown),
+        f"{p}_entry_flag_breakdown_short": _dedupe_events(entry_flag_breakdown_short, cooldown),
+        f"{p}_entry_pennant_breakdown_short": _dedupe_events(entry_pennant_breakdown_short, cooldown),
+        f"{p}_hold_long": hold_long.fillna(False),
+        f"{p}_hold_short": hold_short.fillna(False),
+        f"{p}_exit_long": _dedupe_events(exit_long, cooldown),
+        f"{p}_exit_short": _dedupe_events(exit_short, cooldown),
+        f"{p}_suggested_entry_long": _dedupe_events(suggested_entry_long, cooldown),
+        f"{p}_suggested_entry_short": _dedupe_events(suggested_entry_short, cooldown),
+        f"{p}_market_context": market_context,
         f"{p}_score_long": long_score,
         f"{p}_score_short": short_score,
         f"{p}_score_abs": abs_score,
@@ -225,6 +280,18 @@ def _atr(frame: DataFrame, period: int) -> Series:
 def _safe_div(numerator: Series, denominator: Series) -> Series:
     denominator = denominator.where(denominator.abs() > 0.0, np.nan)
     return numerator / denominator
+
+
+def _rolling_count(mask: Series, window: int) -> Series:
+    clean = pd.Series(mask, index=mask.index).fillna(False).astype("int8")
+    cumulative = clean.cumsum()
+    return (cumulative - cumulative.shift(int(window), fill_value=0)).astype("float64")
+
+
+def _dedupe_events(mask: Series, cooldown_bars: int) -> Series:
+    clean = pd.Series(mask, index=mask.index).fillna(False).astype("bool")
+    prior_recent = _rolling_count(clean.shift(1, fill_value=False), max(int(cooldown_bars), 1))
+    return (clean & prior_recent.eq(0.0)).fillna(False)
 
 
 def _clip01(series: Series) -> Series:

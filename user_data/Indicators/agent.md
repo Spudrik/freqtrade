@@ -147,3 +147,19 @@ TL tuning levers that strategies may expose to hyperopt:
 - Line quality: `candidate_pivot_count`, `ranked_line_count`, `min_anchor_span_bars`, `max_anchor_age_bars`, `min_anchor_prominence_atr`, `min_fit_touch_count`, `min_respect_ratio`.
 - Channel/projection: `near_zone_atr_mult`, `near_zone_pct`, `breakout_buffer_pct`, `max_line_slope_pct_per_bar`, `min_channel_width_pct`, `max_channel_width_pct`, `max_projection_distance_pct`, `max_active_line_distance_pct`.
 - Context/events: `compression_window`, `compression_min_periods`, `score_window`, `event_windows`.
+
+## Pattern Structure Strategy Outputs
+
+Pattern Structure (`pat`) should identify impulse-then-consolidation behaviour such as flags and pennants. Ongoing setup state is separate from fresh trigger events so plots and strategies do not treat every setup candle as a new signal.
+
+Strategy-facing PAT concepts:
+- Setup state: `pat_flag_state_long/short` and `pat_pennant_state_long/short` describe ongoing flag/pennant conditions.
+- Fresh setup events: `pat_flag_long/short` and `pat_pennant_long/short` are de-duplicated setup starts for visual review and trigger testing.
+- Breakout context: `pat_raw_breakout_long/short` is the raw consolidation break; `pat_breakout_long/short` requires a recent flag/pennant setup and is de-duplicated.
+- Directional context: `pat_market_context` uses `+2`, `+1`, `0`, `-1`, `-2` based on score direction plus recent setup/breakout evidence.
+- Entry diagnostics: `pat_entry_flag_breakout_long`, `pat_entry_pennant_breakout_long`, `pat_entry_flag_breakdown_short`, and `pat_entry_pennant_breakdown_short` are reason-specific trigger evidence.
+- Position evidence: `pat_hold_long`, `pat_hold_short`, `pat_exit_long`, and `pat_exit_short` expose whether the pattern still supports holding or has produced opposite-pattern/breakout warning evidence.
+
+PAT tuning levers that strategies may expose to hyperopt:
+- Shape: `impulse_window`, `consolidation_window`, `impulse_atr_min`, `impulse_pct_min`, `max_retrace_pct`, `min_range_contraction`.
+- Participation/compression: `dry_volume_rvol_max`, `breakout_buffer_pct`, `pivot_prefix`, `trendline_prefix`.
