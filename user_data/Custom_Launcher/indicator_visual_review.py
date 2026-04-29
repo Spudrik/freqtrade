@@ -72,6 +72,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--profile-window", type=int, default=96, help="Volume profile rolling window.")
     parser.add_argument("--profile-bins", type=int, default=48, help="Volume profile price bins.")
     parser.add_argument("--profile-chunk-size", type=int, default=512, help="Volume profile chunk size.")
+    parser.add_argument("--vp-view", choices=("all", "market-context", "node-actions"), default="all", help="Volume profile plot set.")
     return parser.parse_args()
 
 
@@ -108,6 +109,7 @@ def main() -> int:
             window=int(args.profile_window),
             bins=int(args.profile_bins),
             chunk_size=int(args.profile_chunk_size),
+            vp_view=str(args.vp_view),
         )
     elif args.indicator == "pat":
         outputs = plot_pattern_structure(frame, context)
@@ -212,17 +214,90 @@ def plot_trendline_projection(frame: DataFrame, context: PlotContext) -> list[Pa
     return [output, plot_score_panel(data, context, "tl", "local trendline scores", ("tl_support_quality", "tl_resistance_quality", "tl_channel_compression"))]
 
 
-def plot_volume_profile(frame: DataFrame, context: PlotContext, *, window: int, bins: int, chunk_size: int) -> list[Path]:
+def plot_volume_profile(
+    frame: DataFrame,
+    context: PlotContext,
+    *,
+    window: int,
+    bins: int,
+    chunk_size: int,
+    vp_view: str = "all",
+) -> list[Path]:
     data = add_volume_profile(
         frame,
         VolumeProfileConfig(window=window, bins=bins, chunk_size=chunk_size),
     )
+    if vp_view == "market-context":
+        return [plot_volume_profile_market_context(data, context, window=window, bins=bins)]
+    if vp_view == "node-actions":
+        return [plot_volume_profile_node_actions(data, context, window=window, bins=bins)]
     return [
         plot_volume_profile_levels(data, context, window=window, bins=bins),
         plot_volume_profile_nodes(data, context, window=window, bins=bins),
         plot_volume_profile_events(data, context, window=window, bins=bins),
         plot_volume_profile_scores(data, context),
     ]
+
+
+def plot_volume_profile_market_context(data: DataFrame, context: PlotContext, *, window: int, bins: int) -> Path:
+    view = data.tail(context.tail).copy()
+    fig, axes = plt.subplots(
+        2,
+        1,
+        figsize=(15, 8),
+        dpi=140,
+        sharex=True,
+        gridspec_kw={"height_ratios": [4.0, 1.15]},
+    )
+    ax = axes[0]
+    context_ax = axes[1]
+    shade_vp_market_context_regions(ax, view)
+    draw_candles(ax, view)
+    draw_vp_market_context(context_ax, view)
+    ax.set_title(
+        f"{context.pair_label} {context.timeframe} VP market context | "
+        f"window {window}, bins {bins}"
+    )
+    finish_panel_axes(fig, axes, view)
+    output = context.output_dir / f"{context.pair_key}_{context.timeframe}_vp_market_context.png"
+    fig.savefig(output)
+    plt.close(fig)
+    return output
+
+
+def plot_volume_profile_node_actions(data: DataFrame, context: PlotContext, *, window: int, bins: int) -> Path:
+    view = data.tail(context.tail).copy()
+    fig, axes = plt.subplots(
+        2,
+        1,
+        figsize=(15, 9),
+        dpi=140,
+        sharex=True,
+        gridspec_kw={"height_ratios": [4.2, 1.15]},
+    )
+    ax = axes[0]
+    lane_ax = axes[1]
+    shade_regions(ax, bool_array(view, "vp_node_hold_long"), "#dcfce7", "hold long")
+    shade_regions(ax, bool_array(view, "vp_node_hold_short"), "#fee2e2", "hold short")
+    draw_candles(ax, view)
+    draw_conditional_line_series(ax, view, "vp_hvn_above", "vp_actionable_hvn_above", "#b45309", "actionable HVN above", 1.0, alpha=0.50)
+    draw_conditional_line_series(ax, view, "vp_hvn_below", "vp_actionable_hvn_below", "#b45309", "actionable HVN below", 1.0, alpha=0.50)
+    draw_conditional_line_series(ax, view, "vp_lvn_above", "vp_actionable_lvn_above", "#7c3aed", "actionable LVN above", 1.0, alpha=0.50)
+    draw_conditional_line_series(ax, view, "vp_lvn_below", "vp_actionable_lvn_below", "#7c3aed", "actionable LVN below", 1.0, alpha=0.50)
+    draw_event_markers(ax, view, "vp_node_entry_long", "low", "#00d5ff", "*", "node entry long", size=95, edgecolor="#003b49")
+    draw_event_markers(ax, view, "vp_node_entry_short", "high", "#ff00d4", "X", "node entry short", size=75, edgecolor="#4a003f")
+    draw_event_markers(ax, view, "vp_node_exit_long", "high", "#f97316", "v", "node exit long", size=55, edgecolor="#7c2d12")
+    draw_event_markers(ax, view, "vp_node_exit_short", "low", "#2563eb", "^", "node exit short", size=55, edgecolor="#1e3a8a")
+    draw_vp_node_action_lanes(lane_ax, view)
+    ax.set_title(
+        f"{context.pair_label} {context.timeframe} VP HVN/LVN node actions | "
+        f"window {window}, bins {bins}"
+    )
+    finish_panel_axes(fig, axes, view)
+    output = context.output_dir / f"{context.pair_key}_{context.timeframe}_vp_node_actions.png"
+    fig.savefig(output)
+    plt.close(fig)
+    return output
 
 
 def plot_volume_profile_levels(data: DataFrame, context: PlotContext, *, window: int, bins: int) -> Path:
@@ -241,7 +316,7 @@ def plot_volume_profile_levels(data: DataFrame, context: PlotContext, *, window:
     draw_line_series(ax, view, "vp_poc", "#111111", "POC", 1.8)
     draw_line_series(ax, view, "vp_vah", "#d97706", "VAH", 1.25)
     draw_line_series(ax, view, "vp_val", "#2563eb", "VAL", 1.25)
-    draw_vp_context_flags(flag_ax, view)
+    draw_vp_market_context(flag_ax, view)
     ax.set_title(
         f"{context.pair_label} {context.timeframe} volume profile levels | "
         f"window {window}, bins {bins}"
@@ -284,8 +359,8 @@ def plot_volume_profile_events(data: DataFrame, context: PlotContext, *, window:
     draw_event_markers(ax, view, "vp_lvn_accept_short", "low", "#be123c", "v", "LVN accept short")
     draw_event_markers(ax, view, "vp_lvn_fast_traverse_long", "high", "#22c55e", "^", "LVN traverse long")
     draw_event_markers(ax, view, "vp_lvn_fast_traverse_short", "low", "#f43f5e", "v", "LVN traverse short")
-    draw_event_markers(ax, view, "vp_suggested_entry_long", "low", "#00d5ff", "*", "suggest long", size=90, edgecolor="#003b49")
-    draw_event_markers(ax, view, "vp_suggested_entry_short", "high", "#ff00d4", "X", "suggest short", size=70, edgecolor="#4a003f")
+    draw_event_markers(ax, view, "vp_entry_trigger_long", "low", "#00d5ff", "*", "entry trigger long", size=90, edgecolor="#003b49")
+    draw_event_markers(ax, view, "vp_entry_trigger_short", "high", "#ff00d4", "X", "entry trigger short", size=70, edgecolor="#4a003f")
     ax.set_title(
         f"{context.pair_label} {context.timeframe} volume profile events | "
         f"window {window}, bins {bins}"
@@ -315,7 +390,7 @@ def plot_volume_profile_scores(data: DataFrame, context: PlotContext) -> Path:
     for column, color, label in (
         ("vp_context_score_bull", "#00a5ff", "bull context"),
         ("vp_context_score_bear", "#ff00b8", "bear context"),
-        ("vp_context_score_chop", "#f59e0b", "chop context"),
+        ("vp_context_score_balance", "#f59e0b", "balance context"),
     ):
         if column in view.columns:
             axes[2].plot(xs, pd.to_numeric(view[column], errors="coerce"), color=color, linewidth=1.0, label=label)
@@ -324,6 +399,7 @@ def plot_volume_profile_scores(data: DataFrame, context: PlotContext) -> Path:
     for column, color, label in (
         ("vp_delta_ratio", "#15803d", "delta ratio"),
         ("vp_poc_delta_ratio", "#7c3aed", "poc delta"),
+        ("vp_value_direction_pct", "#f97316", "value direction"),
     ):
         if column in view.columns:
             axes[3].plot(xs, pd.to_numeric(view[column], errors="coerce"), color=color, linewidth=0.9, label=label)
@@ -619,6 +695,25 @@ def draw_line_series(ax: plt.Axes, view: DataFrame, column: str, color: str, lab
     ax.plot(np.arange(len(view)), values, color=color, linewidth=linewidth, alpha=alpha, label=label)
 
 
+def draw_conditional_line_series(
+    ax: plt.Axes,
+    view: DataFrame,
+    value_column: str,
+    condition_column: str,
+    color: str,
+    label: str,
+    linewidth: float,
+    *,
+    alpha: float = 0.82,
+) -> None:
+    if value_column not in view.columns:
+        return
+    values = pd.to_numeric(view[value_column], errors="coerce").where(bool_array(view, condition_column))
+    if values.notna().sum() < 2:
+        return
+    ax.plot(np.arange(len(view)), values, color=color, linewidth=linewidth, alpha=alpha, label=label)
+
+
 def draw_event_markers(
     ax: plt.Axes,
     view: DataFrame,
@@ -641,32 +736,92 @@ def draw_event_markers(
     ax.scatter(xs, prices, color=color, marker=marker, s=size, label=label, zorder=6, edgecolors=edgecolor)
 
 
-def draw_vp_context_flags(ax: plt.Axes, view: DataFrame) -> None:
+def draw_vp_market_context(ax: plt.Axes, view: DataFrame) -> None:
     xs = np.arange(len(view))
     plotted = False
-    for column, color, label, lane in (
-        ("vp_chop_flag", "#f59e0b", "chop flag", 0.0),
-        ("vp_bear_flag", "#ff00b8", "bear flag", 1.0),
-        ("vp_bull_flag", "#00a5ff", "bull flag", 2.0),
-    ):
-        if column not in view.columns:
-            continue
-        active = pd.to_numeric(view[column], errors="coerce").fillna(0.0).clip(0.0, 1.0).ge(1.0).to_numpy()
+    if "vp_market_context" not in view.columns:
+        return
+    context = pd.to_numeric(view["vp_market_context"], errors="coerce").fillna(0).astype("int8")
+    for value, color, label in vp_market_context_styles():
+        active = context.eq(value).to_numpy()
         if not active.any():
             continue
+        lane = float(value)
         y_values = np.where(active, lane, np.nan)
         ax.fill_between(xs, lane - 0.32, lane + 0.32, where=active, step="post", color=color, alpha=0.20)
         ax.step(xs, y_values, where="post", color=color, linewidth=2.0, label=label)
         plotted = True
-    ax.set_ylim(-0.55, 2.55)
-    ax.set_yticks([0.0, 1.0, 2.0])
-    ax.set_yticklabels(["chop", "bear", "bull"])
-    ax.set_ylabel("VP context")
+    ax.axhline(0.0, color="#111111", linewidth=0.8, alpha=0.35)
+    ax.set_ylim(-2.65, 2.65)
+    ax.set_yticks([-2.0, -1.0, 0.0, 1.0, 2.0])
+    ax.set_yticklabels(["bear", "bearish chop", "undefined", "bullish chop", "bull"])
+    ax.set_ylabel("VP Market context")
+    if plotted:
+        ax.legend(loc="upper left", ncol=4)
+
+
+def draw_vp_node_action_lanes(ax: plt.Axes, view: DataFrame) -> None:
+    xs = np.arange(len(view))
+    plotted = False
+    for column, color, label, lane in (
+        ("vp_node_entry_long", "#00d5ff", "entry long", 2.0),
+        ("vp_node_hold_long", "#16a34a", "hold long", 1.0),
+        ("vp_node_exit_long", "#f97316", "exit long", 0.35),
+        ("vp_node_exit_short", "#2563eb", "exit short", -0.35),
+        ("vp_node_hold_short", "#dc2626", "hold short", -1.0),
+        ("vp_node_entry_short", "#ff00d4", "entry short", -2.0),
+    ):
+        active = bool_array(view, column)
+        if not active.any():
+            continue
+        y_values = np.where(active, lane, np.nan)
+        ax.fill_between(xs, lane - 0.18, lane + 0.18, where=active, step="post", color=color, alpha=0.20)
+        ax.step(xs, y_values, where="post", color=color, linewidth=1.8, label=label)
+        plotted = True
+    ax.axhline(0.0, color="#111111", linewidth=0.8, alpha=0.35)
+    ax.set_ylim(-2.45, 2.45)
+    ax.set_yticks([-2.0, -1.0, -0.35, 0.35, 1.0, 2.0])
+    ax.set_yticklabels(["entry short", "hold short", "exit short", "exit long", "hold long", "entry long"])
+    ax.set_ylabel("VP node action")
     if plotted:
         ax.legend(loc="upper left", ncol=3)
 
 
-def draw_price_markers(ax: plt.Axes, view: DataFrame, column: str, color: str, marker: str, label: str, *, alpha: float = 0.85) -> None:
+def bool_array(view: DataFrame, column: str) -> np.ndarray:
+    if column not in view.columns:
+        return np.zeros(len(view), dtype="bool")
+    return view[column].fillna(False).astype("bool").to_numpy()
+
+
+def shade_vp_market_context_regions(ax: plt.Axes, view: DataFrame) -> None:
+    if "vp_market_context" not in view.columns:
+        return
+    context = pd.to_numeric(view["vp_market_context"], errors="coerce").fillna(0).astype("int8")
+    for value, color, label in vp_market_context_styles():
+        mask = context.eq(value).to_numpy()
+        shade_regions(ax, mask, color, label)
+
+
+def vp_market_context_styles() -> tuple[tuple[int, str, str], ...]:
+    return (
+        (2, "#00a5ff", "bull +2"),
+        (1, "#22c55e", "bullish chop +1"),
+        (-1, "#f59e0b", "bearish chop -1"),
+        (-2, "#ff00b8", "bear -2"),
+    )
+
+
+def draw_price_markers(
+    ax: plt.Axes,
+    view: DataFrame,
+    column: str,
+    color: str,
+    marker: str,
+    label: str,
+    *,
+    alpha: float = 0.85,
+    size: float = 28,
+) -> None:
     if column not in view.columns:
         return
     prices = pd.to_numeric(view[column], errors="coerce")
@@ -674,7 +829,7 @@ def draw_price_markers(ax: plt.Axes, view: DataFrame, column: str, color: str, m
     if not mask.any():
         return
     xs = np.flatnonzero(mask.to_numpy())
-    ax.scatter(xs, prices.loc[mask], color=color, marker=marker, s=28, label=label, alpha=alpha, zorder=5)
+    ax.scatter(xs, prices.loc[mask], color=color, marker=marker, s=size, label=label, alpha=alpha, zorder=5)
 
 
 def normalized_overlay(series: Series, target: Series) -> Series:

@@ -39,6 +39,35 @@ class VolumeProfileConfig:
     rejects sharply or moves through quickly. A high score means the current
     candle is interacting with those profile levels in a way worth testing
     against forward returns.
+
+    Tunable groups:
+    - Profile construction:
+      ``window`` controls how many candles form each rolling profile.
+      ``bins`` controls price-resolution of the volume histogram.
+      ``value_area_pct`` controls how much profile volume is captured between
+      VAL and VAH. ``price_source`` controls which candle price anchors the
+      profile. ``smooth_bins`` reduces noisy one-bin HVN/LVN artifacts.
+    - Node detection:
+      ``hvn_threshold`` defines how strong a bin must be relative to POC to
+      count as an HVN. ``lvn_threshold`` defines how low-volume a bin must be
+      to count as an LVN. ``node_hvn_strength_min`` and
+      ``node_lvn_thinness_min`` filter raw nearby nodes before they become
+      actionable evidence. ``node_near_pct`` is the base distance tolerance
+      around profile levels and nodes. ``node_hold_near_mult`` widens the
+      node-distance tolerance only for hold evidence.
+    - Pressure and participation:
+      ``pressure_delta_min`` controls how much directional candle-volume
+      pressure is required. ``volume_percentile_min`` controls whether the
+      current close-bin has enough participation. ``fast_traverse_atr_mult``
+      controls how large a candle must be, relative to ATR, to qualify as a
+      fast LVN traverse.
+    - Scoring and context:
+      ``poc_migration_window`` controls how far back POC/value direction is
+      compared. ``score_window`` controls recent event memory and de-duplication
+      cooldown. ``entry_score_margin`` requires long/short score separation
+      before a trigger is emitted. ``context_*`` values control when the
+      smoothed profile context becomes full bull/bear or softer directional
+      chop.
     """
 
     window: int = 96
@@ -51,10 +80,19 @@ class VolumeProfileConfig:
     chunk_size: int = 1024
     pressure_delta_min: float = 0.05
     node_near_pct: float = 0.01
+    node_hvn_strength_min: float = 0.70
+    node_lvn_thinness_min: float = 0.55
+    node_hold_near_mult: float = 3.00
     volume_percentile_min: float = 0.55
     poc_migration_window: int = 12
     score_window: int = 48
     fast_traverse_atr_mult: float = 1.20
+    entry_score_margin: float = 0.02
+    context_full_min: float = 0.44
+    context_full_margin: float = 0.06
+    context_soft_min: float = 0.26
+    context_soft_margin: float = 0.035
+    context_balance_min: float = 0.42
     prefix: str = "vp"
 
 
@@ -72,10 +110,19 @@ def add_volume_profile(
     chunk_size: int | None = None,
     pressure_delta_min: float | None = None,
     node_near_pct: float | None = None,
+    node_hvn_strength_min: float | None = None,
+    node_lvn_thinness_min: float | None = None,
+    node_hold_near_mult: float | None = None,
     volume_percentile_min: float | None = None,
     poc_migration_window: int | None = None,
     score_window: int | None = None,
     fast_traverse_atr_mult: float | None = None,
+    entry_score_margin: float | None = None,
+    context_full_min: float | None = None,
+    context_full_margin: float | None = None,
+    context_soft_min: float | None = None,
+    context_soft_margin: float | None = None,
+    context_balance_min: float | None = None,
     prefix: str | None = None,
 ) -> DataFrame:
     """
@@ -86,18 +133,53 @@ def add_volume_profile(
     path is chunked by block instead of looping candle by candle.
 
     Output columns use ``prefix`` and include:
-    - ``*_poc``, ``*_vah``, ``*_val``: point of control and value area.
-    - ``*_hvn_above/below`` and ``*_lvn_above/below``: nearest high/low volume
-      nodes around the current close.
-    - ``*_delta_ratio`` and ``*_poc_delta_ratio``: directional volume pressure.
-    - ``*_entropy``, ``*_concentration``, ``*_skew``, ``*_kurtosis``: profile
-      shape metrics.
-    - boolean evidence columns for value-area acceptance, rejection, breaks,
-      pressure, and node proximity against the prior completed profile.
-    - ``*_score_long/short/abs`` and ``*_state`` for normalized strategy-facing
-      validation.
-    - ``*_context_score_bull/bear/chop`` plus ``*_bull_flag``,
-      ``*_bear_flag``, and ``*_chop_flag`` for profile regime review.
+    - Profile levels:
+      ``*_poc`` is the highest-volume price bin in the rolling profile.
+      ``*_vah`` and ``*_val`` are value-area high/low. ``*_prior_*`` columns
+      are shifted one candle and should be preferred for entry logic to avoid
+      using the current candle's completed profile as its own trigger.
+    - Raw node levels and diagnostics:
+      ``*_hvn_above/below`` and ``*_lvn_above/below`` are nearest high/low
+      volume nodes around the current close. ``*_hvn_*_strength`` and
+      ``*_lvn_*_thinness`` describe node quality. Distance columns describe how
+      far the current close is from those nodes.
+    - Profile shape:
+      ``*_entropy``, ``*_concentration``, ``*_skew``, and ``*_kurtosis`` are
+      diagnostics for whether the profile is balanced, concentrated, or
+      asymmetric. They are useful as guards, not direct entry triggers.
+    - Pressure and value movement:
+      ``*_delta_ratio`` estimates candle directional volume pressure.
+      ``*_poc_delta_ratio`` estimates pressure around the POC bin.
+      ``*_poc_migration_pct`` tracks POC movement over
+      ``poc_migration_window``. ``*_value_direction_pct`` tracks movement of
+      the VAH/VAL midpoint and is named as direction because that is the useful
+      interpretation for strategies.
+    - Event evidence:
+      ``*_vah_breakout_with_pressure`` and ``*_val_breakdown_with_pressure``
+      mark value-area breaks with pressure. ``*_lower_rejection_with_pressure``
+      and ``*_upper_rejection_with_pressure`` mark failed auctions back into
+      value. LVN/HVN accept, reject, reclaim, and fast-traverse columns expose
+      the raw event components used by the trigger score.
+    - Strategy-facing triggers:
+      ``*_entry_trigger_long`` and ``*_entry_trigger_short`` are de-duplicated
+      entry-trigger evidence. They are intentionally not final trade decisions;
+      strategies should still apply their own timeframe, regime, stake, and
+      risk logic.
+    - Node action evidence:
+      ``*_node_entry_long/short`` isolate trigger evidence that specifically
+      comes from HVN/LVN interaction. ``*_node_hold_long/short`` says profile
+      structure still supports an existing position in that direction.
+      ``*_node_exit_long/short`` says opposing node/rejection evidence is strong
+      enough that an existing position should consider exit or reduction. These
+      are evidence flags only, not target or stop instructions.
+    - Context and scores:
+      ``*_score_long``, ``*_score_short``, and ``*_score_abs`` are normalized
+      0..1 evidence scores. ``*_state`` is a simple -1/0/1 score lean.
+      ``*_context_score_bull``, ``*_context_score_bear``, and
+      ``*_context_score_balance`` are smoothed context components.
+      ``*_market_context`` is the strategy-facing directional state:
+      ``2`` bull, ``1`` bullish chop, ``0`` undefined, ``-1`` bearish chop,
+      and ``-2`` bear.
     """
 
     cfg = _resolve_config(
@@ -112,10 +194,19 @@ def add_volume_profile(
         chunk_size=chunk_size,
         pressure_delta_min=pressure_delta_min,
         node_near_pct=node_near_pct,
+        node_hvn_strength_min=node_hvn_strength_min,
+        node_lvn_thinness_min=node_lvn_thinness_min,
+        node_hold_near_mult=node_hold_near_mult,
         volume_percentile_min=volume_percentile_min,
         poc_migration_window=poc_migration_window,
         score_window=score_window,
         fast_traverse_atr_mult=fast_traverse_atr_mult,
+        entry_score_margin=entry_score_margin,
+        context_full_min=context_full_min,
+        context_full_margin=context_full_margin,
+        context_soft_min=context_soft_min,
+        context_soft_margin=context_soft_margin,
+        context_balance_min=context_balance_min,
         prefix=prefix,
     )
     _validate_config(cfg)
@@ -154,6 +245,14 @@ def add_volume_profile(
         "hvn_below",
         "lvn_above",
         "lvn_below",
+        "hvn_above_strength",
+        "hvn_below_strength",
+        "lvn_above_thinness",
+        "lvn_below_thinness",
+        "hvn_above_distance_pct",
+        "hvn_below_distance_pct",
+        "lvn_above_distance_pct",
+        "lvn_below_distance_pct",
         "nearest_hvn_distance_pct",
         "nearest_lvn_distance_pct",
     ]
@@ -371,8 +470,37 @@ def _profile_chunk(
     smooth_profile = _smooth_profile(profile, cfg.smooth_bins)
     hvn_mask = _hvn_mask(smooth_profile, poc_volume, cfg.hvn_threshold)
     lvn_mask = _lvn_mask(smooth_profile, total_volume, cfg.lvn_threshold)
-    hvn_above, hvn_below = _nearest_nodes(bin_centers, current_close, hvn_mask)
-    lvn_above, lvn_below = _nearest_nodes(bin_centers, current_close, lvn_mask)
+    hvn_score = np.divide(
+        smooth_profile,
+        np.where(poc_volume[:, None] > eps, poc_volume[:, None], np.nan),
+    )
+    mean_bin_volume = np.divide(
+        total_volume,
+        float(cfg.bins),
+        out=np.zeros(rows),
+        where=total_volume > eps,
+    )
+    lvn_score = 1.0 - np.divide(
+        smooth_profile,
+        np.where(mean_bin_volume[:, None] > eps, mean_bin_volume[:, None], np.nan),
+    )
+    lvn_score = np.clip(np.nan_to_num(lvn_score, nan=0.0, posinf=0.0, neginf=0.0), 0.0, 1.0)
+    hvn_above, hvn_below, hvn_above_strength, hvn_below_strength = _nearest_nodes(
+        bin_centers,
+        current_close,
+        hvn_mask,
+        hvn_score,
+    )
+    lvn_above, lvn_below, lvn_above_thinness, lvn_below_thinness = _nearest_nodes(
+        bin_centers,
+        current_close,
+        lvn_mask,
+        lvn_score,
+    )
+    hvn_above_distance_pct = np.abs(_pct(hvn_above - current_close, current_close))
+    hvn_below_distance_pct = np.abs(_pct(current_close - hvn_below, current_close))
+    lvn_above_distance_pct = np.abs(_pct(lvn_above - current_close, current_close))
+    lvn_below_distance_pct = np.abs(_pct(current_close - lvn_below, current_close))
     nearest_hvn_distance_pct = _nearest_distance_pct(current_close, hvn_above, hvn_below)
     nearest_lvn_distance_pct = _nearest_distance_pct(current_close, lvn_above, lvn_below)
 
@@ -420,6 +548,14 @@ def _profile_chunk(
         "hvn_below": _nan_invalid(hvn_below, valid_profile),
         "lvn_above": _nan_invalid(lvn_above, valid_profile),
         "lvn_below": _nan_invalid(lvn_below, valid_profile),
+        "hvn_above_strength": _nan_invalid(hvn_above_strength, valid_profile),
+        "hvn_below_strength": _nan_invalid(hvn_below_strength, valid_profile),
+        "lvn_above_thinness": _nan_invalid(lvn_above_thinness, valid_profile),
+        "lvn_below_thinness": _nan_invalid(lvn_below_thinness, valid_profile),
+        "hvn_above_distance_pct": _nan_invalid(hvn_above_distance_pct, valid_profile),
+        "hvn_below_distance_pct": _nan_invalid(hvn_below_distance_pct, valid_profile),
+        "lvn_above_distance_pct": _nan_invalid(lvn_above_distance_pct, valid_profile),
+        "lvn_below_distance_pct": _nan_invalid(lvn_below_distance_pct, valid_profile),
         "nearest_hvn_distance_pct": _nan_invalid(nearest_hvn_distance_pct, valid_profile),
         "nearest_lvn_distance_pct": _nan_invalid(nearest_lvn_distance_pct, valid_profile),
     }
@@ -451,10 +587,19 @@ def _resolve_config(
         "chunk_size": cfg.chunk_size,
         "pressure_delta_min": cfg.pressure_delta_min,
         "node_near_pct": cfg.node_near_pct,
+        "node_hvn_strength_min": cfg.node_hvn_strength_min,
+        "node_lvn_thinness_min": cfg.node_lvn_thinness_min,
+        "node_hold_near_mult": cfg.node_hold_near_mult,
         "volume_percentile_min": cfg.volume_percentile_min,
         "poc_migration_window": cfg.poc_migration_window,
         "score_window": cfg.score_window,
         "fast_traverse_atr_mult": cfg.fast_traverse_atr_mult,
+        "entry_score_margin": cfg.entry_score_margin,
+        "context_full_min": cfg.context_full_min,
+        "context_full_margin": cfg.context_full_margin,
+        "context_soft_min": cfg.context_soft_min,
+        "context_soft_margin": cfg.context_soft_margin,
+        "context_balance_min": cfg.context_balance_min,
         "prefix": cfg.prefix,
     }
     for key, value in overrides.items():
@@ -478,6 +623,12 @@ def _validate_config(cfg: VolumeProfileConfig) -> None:
         raise ValueError("pressure_delta_min must be between 0.0 and 1.0")
     if cfg.node_near_pct < 0.0:
         raise ValueError("node_near_pct must be non-negative")
+    if not 0.0 <= cfg.node_hvn_strength_min <= 1.0:
+        raise ValueError("node_hvn_strength_min must be between 0.0 and 1.0")
+    if not 0.0 <= cfg.node_lvn_thinness_min <= 1.0:
+        raise ValueError("node_lvn_thinness_min must be between 0.0 and 1.0")
+    if cfg.node_hold_near_mult <= 0.0:
+        raise ValueError("node_hold_near_mult must be positive")
     if not 0.0 <= cfg.volume_percentile_min <= 1.0:
         raise ValueError("volume_percentile_min must be between 0.0 and 1.0")
     if cfg.poc_migration_window < 1:
@@ -486,6 +637,18 @@ def _validate_config(cfg: VolumeProfileConfig) -> None:
         raise ValueError("score_window must be at least 2")
     if cfg.fast_traverse_atr_mult <= 0.0:
         raise ValueError("fast_traverse_atr_mult must be positive")
+    if cfg.entry_score_margin < 0.0:
+        raise ValueError("entry_score_margin must be non-negative")
+    if not 0.0 <= cfg.context_full_min <= 1.0:
+        raise ValueError("context_full_min must be between 0.0 and 1.0")
+    if cfg.context_full_margin < 0.0:
+        raise ValueError("context_full_margin must be non-negative")
+    if not 0.0 <= cfg.context_soft_min <= 1.0:
+        raise ValueError("context_soft_min must be between 0.0 and 1.0")
+    if cfg.context_soft_margin < 0.0:
+        raise ValueError("context_soft_margin must be non-negative")
+    if not 0.0 <= cfg.context_balance_min <= 1.0:
+        raise ValueError("context_balance_min must be between 0.0 and 1.0")
     if not cfg.prefix:
         raise ValueError("prefix must not be empty")
 
@@ -509,6 +672,8 @@ def _add_interaction_columns(frame: DataFrame, cfg: VolumeProfileConfig) -> Data
     atr = _atr(frame, max(14, min(int(cfg.window), 96)))
 
     poc = _numeric_series(frame, f"{p}_poc")
+    vah = _numeric_series(frame, f"{p}_vah")
+    val = _numeric_series(frame, f"{p}_val")
     prior_poc = _numeric_series(frame, f"{p}_poc").shift(1)
     prior_vah = _numeric_series(frame, f"{p}_vah").shift(1)
     prior_val = _numeric_series(frame, f"{p}_val").shift(1)
@@ -521,8 +686,14 @@ def _add_interaction_columns(frame: DataFrame, cfg: VolumeProfileConfig) -> Data
     hvn_below = _numeric_series(frame, f"{p}_hvn_below")
     lvn_above = _numeric_series(frame, f"{p}_lvn_above")
     lvn_below = _numeric_series(frame, f"{p}_lvn_below")
+    hvn_above_strength = _numeric_series(frame, f"{p}_hvn_above_strength").fillna(0.0)
+    hvn_below_strength = _numeric_series(frame, f"{p}_hvn_below_strength").fillna(0.0)
+    lvn_above_thinness = _numeric_series(frame, f"{p}_lvn_above_thinness").fillna(0.0)
+    lvn_below_thinness = _numeric_series(frame, f"{p}_lvn_below_thinness").fillna(0.0)
     prior_lvn_above = lvn_above.shift(1)
     prior_lvn_below = lvn_below.shift(1)
+    prior_lvn_above_thinness = lvn_above_thinness.shift(1).fillna(0.0)
+    prior_lvn_below_thinness = lvn_below_thinness.shift(1).fillna(0.0)
 
     bull_pressure = delta >= cfg.pressure_delta_min
     bear_pressure = delta <= -cfg.pressure_delta_min
@@ -572,20 +743,24 @@ def _add_interaction_columns(frame: DataFrame, cfg: VolumeProfileConfig) -> Data
         & close.notna()
         & (_pct_series(hvn_above - close, close).abs() <= node_tolerance_pct)
     )
+    hvn_strength_min = max(float(cfg.hvn_threshold), float(cfg.node_hvn_strength_min))
+    lvn_thinness_min = float(cfg.node_lvn_thinness_min)
+    actionable_hvn_below = near_hvn_below & hvn_below_strength.ge(hvn_strength_min)
+    actionable_hvn_above = near_hvn_above & hvn_above_strength.ge(hvn_strength_min)
 
     vah_breakout_with_pressure = vah_breakout & bull_pressure & (poc_bull | volume_ok) & not_far_above_vah
     val_breakdown_with_pressure = val_breakdown & bear_pressure & (poc_bear | volume_ok) & not_far_below_val
     lower_rejection_with_pressure = lower_rejection & bull_pressure
     upper_rejection_with_pressure = upper_rejection & bear_pressure
     hvn_below_reclaim = (
-        near_hvn_below
+        actionable_hvn_below
         & low.le(hvn_below)
         & close.gt(hvn_below)
         & (prev_close.le(hvn_below) | prev_low.le(hvn_below) | near_hvn_below.shift(1, fill_value=False).astype("bool"))
         & bull_pressure
     )
     hvn_above_reject = (
-        near_hvn_above
+        actionable_hvn_above
         & high.ge(hvn_above)
         & close.lt(hvn_above)
         & (prev_close.ge(hvn_above) | prev_high.ge(hvn_above) | near_hvn_above.shift(1, fill_value=False).astype("bool"))
@@ -601,15 +776,17 @@ def _add_interaction_columns(frame: DataFrame, cfg: VolumeProfileConfig) -> Data
         & close.notna()
         & (_pct_series(lvn_above - close, close).abs() <= node_tolerance_pct)
     )
+    actionable_lvn_below = near_lvn_below & lvn_below_thinness.ge(lvn_thinness_min)
+    actionable_lvn_above = near_lvn_above & lvn_above_thinness.ge(lvn_thinness_min)
     lvn_below_reject_long = (
-        near_lvn_below
+        actionable_lvn_below
         & low.le(lvn_below)
         & close.gt(lvn_below)
         & (prev_close.le(lvn_below) | prev_low.le(lvn_below) | near_lvn_below.shift(1, fill_value=False).astype("bool"))
         & bull_pressure
     )
     lvn_above_reject_short = (
-        near_lvn_above
+        actionable_lvn_above
         & high.ge(lvn_above)
         & close.lt(lvn_above)
         & (prev_close.ge(lvn_above) | prev_high.ge(lvn_above) | near_lvn_above.shift(1, fill_value=False).astype("bool"))
@@ -621,6 +798,7 @@ def _add_interaction_columns(frame: DataFrame, cfg: VolumeProfileConfig) -> Data
         & prev_close.le(prior_lvn_above)
         & bull_pressure
         & not_far_above_lvn
+        & prior_lvn_above_thinness.ge(lvn_thinness_min)
     )
     lvn_accept_short = (
         prior_lvn_below.notna()
@@ -628,6 +806,7 @@ def _add_interaction_columns(frame: DataFrame, cfg: VolumeProfileConfig) -> Data
         & prev_close.ge(prior_lvn_below)
         & bear_pressure
         & not_far_below_lvn
+        & prior_lvn_below_thinness.ge(lvn_thinness_min)
     )
     wide_range = _pct_series((high - low).abs(), atr).abs() >= float(cfg.fast_traverse_atr_mult)
     lvn_fast_traverse_long = (
@@ -637,6 +816,7 @@ def _add_interaction_columns(frame: DataFrame, cfg: VolumeProfileConfig) -> Data
         & wide_range
         & bull_pressure
         & not_far_above_lvn
+        & prior_lvn_above_thinness.ge(lvn_thinness_min)
     )
     lvn_fast_traverse_short = (
         prior_lvn_below.notna()
@@ -645,11 +825,17 @@ def _add_interaction_columns(frame: DataFrame, cfg: VolumeProfileConfig) -> Data
         & wide_range
         & bear_pressure
         & not_far_below_lvn
+        & prior_lvn_below_thinness.ge(lvn_thinness_min)
     )
 
     poc_migration_pct = _pct_series(poc - poc.shift(int(cfg.poc_migration_window)), close)
+    value_mid = (vah + val) / 2.0
+    value_direction_pct = _pct_series(value_mid - value_mid.shift(int(cfg.poc_migration_window)), close)
     poc_migration_long = _clip01(poc_migration_pct / max(cfg.node_near_pct * 4.0, 1e-9))
     poc_migration_short = _clip01(-poc_migration_pct / max(cfg.node_near_pct * 4.0, 1e-9))
+    value_direction_long = _clip01(value_direction_pct / max(cfg.node_near_pct * 4.0, 1e-9))
+    value_direction_short = _clip01(-value_direction_pct / max(cfg.node_near_pct * 4.0, 1e-9))
+    value_direction_abs = pd.concat([value_direction_long, value_direction_short], axis=1).max(axis=1)
     score_long, score_short = _profile_scores(
         cfg,
         poc_migration_long,
@@ -673,138 +859,249 @@ def _add_interaction_columns(frame: DataFrame, cfg: VolumeProfileConfig) -> Data
         np.select([score_long.gt(score_short), score_short.gt(score_long)], [1.0, -1.0], default=0.0),
         index=frame.index,
     )
-    raw_suggested_entry_long = (
+    raw_entry_trigger_long = (
         vah_breakout_with_pressure
         | lower_rejection_with_pressure
         | hvn_below_reclaim
         | lvn_below_reject_long
         | lvn_accept_long
         | lvn_fast_traverse_long
-    ) & score_long.gt(score_short + 0.02)
-    raw_suggested_entry_short = (
+    ) & score_long.gt(score_short + cfg.entry_score_margin)
+    raw_entry_trigger_short = (
         val_breakdown_with_pressure
         | upper_rejection_with_pressure
         | hvn_above_reject
         | lvn_above_reject_short
         | lvn_accept_short
         | lvn_fast_traverse_short
-    ) & score_short.gt(score_long + 0.02)
+    ) & score_short.gt(score_long + cfg.entry_score_margin)
     cooldown_bars = max(3, min(int(cfg.score_window) // 6, 10))
-    suggested_entry_long = _dedupe_events(raw_suggested_entry_long, cooldown_bars)
-    suggested_entry_short = _dedupe_events(raw_suggested_entry_short, cooldown_bars)
+    entry_trigger_long = _dedupe_events(raw_entry_trigger_long, cooldown_bars)
+    entry_trigger_short = _dedupe_events(raw_entry_trigger_short, cooldown_bars)
 
     context_window = max(6, min(int(cfg.score_window) // 2, 18))
     long_event_density = _clip01(
-        raw_suggested_entry_long.astype("float64").rolling(context_window, min_periods=1).sum() / 3.0
+        raw_entry_trigger_long.astype("float64").rolling(context_window, min_periods=1).sum() / 3.0
     )
     short_event_density = _clip01(
-        raw_suggested_entry_short.astype("float64").rolling(context_window, min_periods=1).sum() / 3.0
+        raw_entry_trigger_short.astype("float64").rolling(context_window, min_periods=1).sum() / 3.0
     )
     inside_value_ratio = in_value_area.astype("float64").rolling(context_window, min_periods=1).mean()
+    bull_acceptance_ratio = (
+        above_value_area | (in_value_area & close.ge(prior_poc)) | lower_rejection_with_pressure
+    ).astype("float64").rolling(context_window, min_periods=1).mean()
+    bear_acceptance_ratio = (
+        below_value_area | (in_value_area & close.le(prior_poc)) | upper_rejection_with_pressure
+    ).astype("float64").rolling(context_window, min_periods=1).mean()
     pressure_abs = delta.abs().clip(0.0, 1.0)
     pressure_bull_score = _clip01(delta / max(float(cfg.pressure_delta_min) * 3.0, 1e-9))
     pressure_bear_score = _clip01(-delta / max(float(cfg.pressure_delta_min) * 3.0, 1e-9))
     poc_stability = _clip01(1.0 - (poc_migration_pct.abs() / max(float(cfg.node_near_pct) * 3.0, 1e-9)))
-    bull_location = (
-        above_value_area
-        | (in_value_area & close.ge(prior_poc))
-        | near_prior_poc
-        | lower_rejection_with_pressure
-    ).astype("float64")
-    bear_location = (
-        below_value_area
-        | (in_value_area & close.le(prior_poc))
-        | near_prior_poc
-        | upper_rejection_with_pressure
-    ).astype("float64")
     bull_context_raw = _clip01(
-        0.30 * score_long
-        + 0.22 * poc_migration_long
-        + 0.18 * long_event_density
-        + 0.15 * pressure_bull_score
-        + 0.15 * bull_location
+        0.24 * score_long
+        + 0.19 * poc_migration_long
+        + 0.17 * value_direction_long
+        + 0.17 * bull_acceptance_ratio
+        + 0.13 * long_event_density
+        + 0.10 * pressure_bull_score
     )
     bear_context_raw = _clip01(
-        0.30 * score_short
-        + 0.22 * poc_migration_short
-        + 0.18 * short_event_density
-        + 0.15 * pressure_bear_score
-        + 0.15 * bear_location
+        0.24 * score_short
+        + 0.19 * poc_migration_short
+        + 0.17 * value_direction_short
+        + 0.17 * bear_acceptance_ratio
+        + 0.13 * short_event_density
+        + 0.10 * pressure_bear_score
     )
-    chop_context_raw = _clip01(
-        0.35 * inside_value_ratio
-        + 0.25 * poc_stability
-        + 0.20 * (1.0 - score_abs)
-        + 0.20 * (1.0 - pressure_abs)
+    balance_context_raw = _clip01(
+        0.30 * inside_value_ratio
+        + 0.24 * poc_stability
+        + 0.18 * (1.0 - score_abs)
+        + 0.16 * (1.0 - pressure_abs)
+        + 0.12 * (1.0 - value_direction_abs)
     )
     context_smooth = max(3, min(int(cfg.score_window) // 4, 10))
     bull_context_score = _clip01(bull_context_raw.rolling(context_smooth, min_periods=1).mean())
     bear_context_score = _clip01(bear_context_raw.rolling(context_smooth, min_periods=1).mean())
-    chop_context_score = _clip01(chop_context_raw.rolling(context_smooth, min_periods=1).mean())
+    balance_context_score = _clip01(balance_context_raw.rolling(context_smooth, min_periods=1).mean())
     min_duration = max(2, min(context_smooth // 2, 4))
-    bull_candidate = (
+    full_bull_candidate = (
         valid_prior
-        & bull_context_score.ge(0.46)
-        & bull_context_score.gt(bear_context_score + 0.08)
-        & bull_context_score.gt(chop_context_score + 0.02)
+        & bull_context_score.ge(cfg.context_full_min)
+        & bull_context_score.gt(bear_context_score + cfg.context_full_margin)
+        & bull_context_score.gt(balance_context_score)
     )
-    bear_candidate = (
+    full_bear_candidate = (
         valid_prior
-        & bear_context_score.ge(0.46)
-        & bear_context_score.gt(bull_context_score + 0.08)
-        & bear_context_score.gt(chop_context_score + 0.02)
+        & bear_context_score.ge(cfg.context_full_min)
+        & bear_context_score.gt(bull_context_score + cfg.context_full_margin)
+        & bear_context_score.gt(balance_context_score)
     )
-    bull_flag = bull_candidate.astype("float64").rolling(min_duration, min_periods=min_duration).mean().ge(0.66)
-    bear_flag = bear_candidate.astype("float64").rolling(min_duration, min_periods=min_duration).mean().ge(0.66) & ~bull_flag
-    chop_flag = valid_prior & ~(bull_flag | bear_flag)
+    full_bull_context = full_bull_candidate.astype("float64").rolling(
+        min_duration,
+        min_periods=min_duration,
+    ).mean().ge(0.66)
+    full_bear_context = (
+        full_bear_candidate.astype("float64").rolling(min_duration, min_periods=min_duration).mean().ge(0.66)
+        & ~full_bull_context
+    )
+    direction_margin = bull_context_score - bear_context_score
+    bullish_chop_candidate = (
+        valid_prior
+        & ~full_bull_context
+        & ~full_bear_context
+        & direction_margin.ge(cfg.context_soft_margin)
+        & bull_context_score.ge(cfg.context_soft_min)
+        & balance_context_score.ge(cfg.context_balance_min)
+    )
+    bearish_chop_candidate = (
+        valid_prior
+        & ~full_bull_context
+        & ~full_bear_context
+        & direction_margin.le(-cfg.context_soft_margin)
+        & bear_context_score.ge(cfg.context_soft_min)
+        & balance_context_score.ge(cfg.context_balance_min)
+    )
+    bullish_chop_context = bullish_chop_candidate.astype("float64").rolling(
+        min_duration,
+        min_periods=min_duration,
+    ).mean().ge(0.66)
+    bearish_chop_context = (
+        bearish_chop_candidate.astype("float64").rolling(min_duration, min_periods=min_duration).mean().ge(0.66)
+        & ~bullish_chop_context
+    )
+    market_context = pd.Series(
+        np.select(
+            [full_bull_context, full_bear_context, bullish_chop_context, bearish_chop_context],
+            [2, -2, 1, -1],
+            default=0,
+        ),
+        index=frame.index,
+        dtype="int8",
+    )
 
-    frame[f"{p}_prior_poc"] = prior_poc
-    frame[f"{p}_prior_vah"] = prior_vah
-    frame[f"{p}_prior_val"] = prior_val
-    frame[f"{p}_in_value_area"] = in_value_area
-    frame[f"{p}_above_value_area"] = above_value_area
-    frame[f"{p}_below_value_area"] = below_value_area
-    frame[f"{p}_upper_rejection"] = upper_rejection
-    frame[f"{p}_lower_rejection"] = lower_rejection
-    frame[f"{p}_vah_breakout"] = vah_breakout
-    frame[f"{p}_val_breakdown"] = val_breakdown
-    frame[f"{p}_bull_pressure"] = bull_pressure
-    frame[f"{p}_bear_pressure"] = bear_pressure
-    frame[f"{p}_poc_delta_bull"] = poc_bull
-    frame[f"{p}_poc_delta_bear"] = poc_bear
-    frame[f"{p}_close_bin_volume_ok"] = volume_ok
-    frame[f"{p}_near_hvn_below"] = near_hvn_below
-    frame[f"{p}_near_hvn_above"] = near_hvn_above
-    frame[f"{p}_near_lvn_below"] = near_lvn_below
-    frame[f"{p}_near_lvn_above"] = near_lvn_above
-    frame[f"{p}_hvn_below_reclaim"] = hvn_below_reclaim
-    frame[f"{p}_hvn_above_reject"] = hvn_above_reject
-    frame[f"{p}_lvn_below_reject_long"] = lvn_below_reject_long
-    frame[f"{p}_lvn_above_reject_short"] = lvn_above_reject_short
-    frame[f"{p}_lvn_accept_long"] = lvn_accept_long
-    frame[f"{p}_lvn_accept_short"] = lvn_accept_short
-    frame[f"{p}_lvn_fast_traverse_long"] = lvn_fast_traverse_long
-    frame[f"{p}_lvn_fast_traverse_short"] = lvn_fast_traverse_short
-    frame[f"{p}_poc_migration_pct"] = poc_migration_pct
-    frame[f"{p}_poc_migration_score_long"] = poc_migration_long
-    frame[f"{p}_poc_migration_score_short"] = poc_migration_short
-    frame[f"{p}_vah_breakout_with_pressure"] = vah_breakout_with_pressure
-    frame[f"{p}_val_breakdown_with_pressure"] = val_breakdown_with_pressure
-    frame[f"{p}_lower_rejection_with_pressure"] = lower_rejection_with_pressure
-    frame[f"{p}_upper_rejection_with_pressure"] = upper_rejection_with_pressure
-    frame[f"{p}_suggested_entry_long"] = suggested_entry_long
-    frame[f"{p}_suggested_entry_short"] = suggested_entry_short
-    frame[f"{p}_bull_flag"] = bull_flag.astype("int8")
-    frame[f"{p}_bear_flag"] = bear_flag.astype("int8")
-    frame[f"{p}_chop_flag"] = chop_flag.astype("int8")
-    frame[f"{p}_context_score_bull"] = bull_context_score
-    frame[f"{p}_context_score_bear"] = bear_context_score
-    frame[f"{p}_context_score_chop"] = chop_context_score
-    frame[f"{p}_score_long"] = score_long
-    frame[f"{p}_score_short"] = score_short
-    frame[f"{p}_score_abs"] = score_abs
-    frame[f"{p}_state"] = score_state
-    return frame
+    node_entry_long_raw = (
+        hvn_below_reclaim
+        | lvn_below_reject_long
+        | lvn_accept_long
+        | lvn_fast_traverse_long
+    ) & score_long.gt(score_short + cfg.entry_score_margin)
+    node_entry_short_raw = (
+        hvn_above_reject
+        | lvn_above_reject_short
+        | lvn_accept_short
+        | lvn_fast_traverse_short
+    ) & score_short.gt(score_long + cfg.entry_score_margin)
+    node_entry_long = _dedupe_events(node_entry_long_raw, cooldown_bars)
+    node_entry_short = _dedupe_events(node_entry_short_raw, cooldown_bars)
+    hvn_hold_long = (
+        hvn_below.notna()
+        & hvn_below_strength.ge(hvn_strength_min)
+        & close.gt(hvn_below)
+        & _pct_series(close - hvn_below, close).le(entry_extension_pct * cfg.node_hold_near_mult)
+        & (score_long.ge(score_short) | market_context.ge(1))
+    )
+    hvn_hold_short = (
+        hvn_above.notna()
+        & hvn_above_strength.ge(hvn_strength_min)
+        & close.lt(hvn_above)
+        & _pct_series(hvn_above - close, close).le(entry_extension_pct * cfg.node_hold_near_mult)
+        & (score_short.ge(score_long) | market_context.le(-1))
+    )
+    lvn_hold_long = (
+        prior_lvn_above.notna()
+        & prior_lvn_above_thinness.ge(lvn_thinness_min)
+        & close.gt(prior_lvn_above)
+        & close_above_lvn_pct.le(entry_extension_pct * cfg.node_hold_near_mult)
+        & (score_long.gt(score_short) | market_context.ge(1))
+    )
+    lvn_hold_short = (
+        prior_lvn_below.notna()
+        & prior_lvn_below_thinness.ge(lvn_thinness_min)
+        & close.lt(prior_lvn_below)
+        & close_below_lvn_pct.le(entry_extension_pct * cfg.node_hold_near_mult)
+        & (score_short.gt(score_long) | market_context.le(-1))
+    )
+    node_hold_long = hvn_hold_long | lvn_hold_long
+    node_hold_short = hvn_hold_short | lvn_hold_short
+    node_exit_long_raw = actionable_hvn_above & (
+        hvn_above_reject
+        | lvn_above_reject_short
+        | upper_rejection_with_pressure
+        | (bear_pressure & score_short.ge(score_long * 0.75))
+    )
+    node_exit_short_raw = actionable_hvn_below & (
+        hvn_below_reclaim
+        | lvn_below_reject_long
+        | lower_rejection_with_pressure
+        | (bull_pressure & score_long.ge(score_short * 0.75))
+    )
+    node_exit_long = _dedupe_events(node_exit_long_raw, cooldown_bars)
+    node_exit_short = _dedupe_events(node_exit_short_raw, cooldown_bars)
+
+    updates = {
+        f"{p}_prior_poc": prior_poc,
+        f"{p}_prior_vah": prior_vah,
+        f"{p}_prior_val": prior_val,
+        f"{p}_in_value_area": in_value_area,
+        f"{p}_above_value_area": above_value_area,
+        f"{p}_below_value_area": below_value_area,
+        f"{p}_upper_rejection": upper_rejection,
+        f"{p}_lower_rejection": lower_rejection,
+        f"{p}_vah_breakout": vah_breakout,
+        f"{p}_val_breakdown": val_breakdown,
+        f"{p}_bull_pressure": bull_pressure,
+        f"{p}_bear_pressure": bear_pressure,
+        f"{p}_poc_delta_bull": poc_bull,
+        f"{p}_poc_delta_bear": poc_bear,
+        f"{p}_close_bin_volume_ok": volume_ok,
+        f"{p}_near_hvn_below": near_hvn_below,
+        f"{p}_near_hvn_above": near_hvn_above,
+        f"{p}_actionable_hvn_below": actionable_hvn_below,
+        f"{p}_actionable_hvn_above": actionable_hvn_above,
+        f"{p}_near_lvn_below": near_lvn_below,
+        f"{p}_near_lvn_above": near_lvn_above,
+        f"{p}_actionable_lvn_below": actionable_lvn_below,
+        f"{p}_actionable_lvn_above": actionable_lvn_above,
+        f"{p}_hvn_below_reclaim": hvn_below_reclaim,
+        f"{p}_hvn_above_reject": hvn_above_reject,
+        f"{p}_lvn_below_reject_long": lvn_below_reject_long,
+        f"{p}_lvn_above_reject_short": lvn_above_reject_short,
+        f"{p}_lvn_accept_long": lvn_accept_long,
+        f"{p}_lvn_accept_short": lvn_accept_short,
+        f"{p}_lvn_fast_traverse_long": lvn_fast_traverse_long,
+        f"{p}_lvn_fast_traverse_short": lvn_fast_traverse_short,
+        f"{p}_poc_migration_pct": poc_migration_pct,
+        f"{p}_value_direction_pct": value_direction_pct,
+        f"{p}_poc_migration_score_long": poc_migration_long,
+        f"{p}_poc_migration_score_short": poc_migration_short,
+        f"{p}_value_direction_score_long": value_direction_long,
+        f"{p}_value_direction_score_short": value_direction_short,
+        f"{p}_vah_breakout_with_pressure": vah_breakout_with_pressure,
+        f"{p}_val_breakdown_with_pressure": val_breakdown_with_pressure,
+        f"{p}_lower_rejection_with_pressure": lower_rejection_with_pressure,
+        f"{p}_upper_rejection_with_pressure": upper_rejection_with_pressure,
+        f"{p}_entry_trigger_long": entry_trigger_long,
+        f"{p}_entry_trigger_short": entry_trigger_short,
+        f"{p}_context_score_bull": bull_context_score,
+        f"{p}_context_score_bear": bear_context_score,
+        f"{p}_context_score_balance": balance_context_score,
+        f"{p}_market_context": market_context,
+        f"{p}_node_entry_long": node_entry_long,
+        f"{p}_node_entry_short": node_entry_short,
+        f"{p}_node_hold_long": node_hold_long,
+        f"{p}_node_hold_short": node_hold_short,
+        f"{p}_node_exit_long": node_exit_long,
+        f"{p}_node_exit_short": node_exit_short,
+        f"{p}_score_long": score_long,
+        f"{p}_score_short": score_short,
+        f"{p}_score_abs": score_abs,
+        f"{p}_state": score_state,
+    }
+    update_frame = pd.DataFrame(updates, index=frame.index)
+    existing_update_columns = [column for column in update_frame.columns if column in frame.columns]
+    frame = frame.drop(columns=existing_update_columns, errors="ignore")
+    return pd.concat([frame, update_frame], axis=1)
 
 
 def _profile_scores(
@@ -998,7 +1295,8 @@ def _nearest_nodes(
     bin_centers: np.ndarray,
     current_close: np.ndarray,
     node_mask: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
+    node_score: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     above_distance = np.where(
         node_mask & (bin_centers > current_close[:, None]),
         bin_centers - current_close[:, None],
@@ -1015,7 +1313,13 @@ def _nearest_nodes(
     has_below = np.isfinite(below_distance[np.arange(len(current_close)), below_idx])
     above = np.where(has_above, bin_centers[np.arange(len(current_close)), above_idx], np.nan)
     below = np.where(has_below, bin_centers[np.arange(len(current_close)), below_idx], np.nan)
-    return above, below
+    if node_score is None:
+        above_score = np.where(has_above, 1.0, np.nan)
+        below_score = np.where(has_below, 1.0, np.nan)
+    else:
+        above_score = np.where(has_above, node_score[np.arange(len(current_close)), above_idx], np.nan)
+        below_score = np.where(has_below, node_score[np.arange(len(current_close)), below_idx], np.nan)
+    return above, below, above_score, below_score
 
 
 def _nearest_distance_pct(
