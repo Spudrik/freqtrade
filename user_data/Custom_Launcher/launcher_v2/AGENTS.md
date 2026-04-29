@@ -14,6 +14,7 @@ Use simple tab modules and shared helpers to replace the monolithic launcher gra
 - Do not create another architecture pattern.
 - Do not add promotion/comparison/random-tag/namespace controls to ExplorerV2.
 - Keep FreqUI launch available as a simple `freqtrade webserver` surface using Setup config/userdir/datadir.
+- Any foreground process launched through `ProcessRunner` must be terminated as a process tree on Stop and app close; this includes Freqtrade/Explorer hyperopt/backtest workers. Detached news/web/orderbook collectors are intentionally outside this shutdown path.
 - Do not change strategy trading logic unless the current task is explicitly strategy research work.
 - Do not delete old launcher code unless the current phase explicitly says deletion is safe.
 - If unsure, stop and report instead of broadening scope.
@@ -26,7 +27,11 @@ Use simple tab modules and shared helpers to replace the monolithic launcher gra
 - Prefer one trading hypothesis per strategy file.
 - Keep the first-pass capital model simple: fixed stake, no leverage experiments, no adds, no peels.
 - Standardize exits early when comparing entry quality.
-- Use clear prefixes for experimental strategy files so they are easy to group and filter, including `test_` for split research files and `codex_` for original exploratory ideas.
+- Use clear prefixes for experimental strategy files so they are easy to group and filter. Current entry-sieve strategy files use the `sieve1_` file prefix and `Sieve1` class prefix.
+- Strategy files intended for HyperOpt must be standalone modules. Do not use parent strategy classes, mixin strategy bases, or external strategy helper files in hyperopted strategy logic.
+- Sieve1 results are informative diagnostics for refining entry signals; do not treat them as pass/fail or acceptance decisions.
+- Future Sieve2/Sieve3/Sieve4 passes may test exits, adds, global guards, or other ideas, but do not implement those without explicit user request.
+- Check that local definitions for sieve, strategies, entries, exits, guards, and result interpretation are still accurate before changing this area. Report stale definitions or deviations to the user.
 - Keep the ladder and daily-structure family split into separate files when the goal is to isolate entry edge.
 - Strategy parameter tags are limited to `family:*` and `mode:*` only.
 - Use `family` as the top-level block, limited to only: `entries`, `exits`, `adjust_position`, `stake`, `risk`.

@@ -74,6 +74,7 @@ class LauncherV2(tk.Tk):
         )
         self.state_path = app_dir / "launcher_v2" / "runtime" / "launcher_v2_state.json"
         self.process_runner = ProcessRunner(self.output_queue, log_dir=app_dir / "launcher_v2" / "runtime" / "process_logs")
+        self._closing = False
         self.context = LauncherContext(
             app_dir=app_dir,
             preset_path=self.state_path,
@@ -566,7 +567,8 @@ class LauncherV2(tk.Tk):
                     "log_file": str(self.process_runner.last_log_file or ""),
                 }
             )
-        self.after(10 if processed >= OUTPUT_DRAIN_MAX_LINES or char_count >= OUTPUT_DRAIN_MAX_CHARS else 75, self._drain_output_queue)
+        if not self._closing:
+            self.after(10 if processed >= OUTPUT_DRAIN_MAX_LINES or char_count >= OUTPUT_DRAIN_MAX_CHARS else 75, self._drain_output_queue)
 
     def _dispatch_process_output(self, payload: dict[str, Any]) -> None:
         owner = str(payload.get("owner") or "")
@@ -589,6 +591,11 @@ class LauncherV2(tk.Tk):
                 tab.on_app_event("process_output", payload)
 
     def _on_close(self) -> None:
+        self._closing = True
+        if self.process_runner.is_running():
+            self.shared.status.set("Stopping Freqtrade process tree")
+            self.update_idletasks()
+            self.process_runner.stop(timeout_seconds=8.0)
         self.destroy()
 
 
