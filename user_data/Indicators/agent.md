@@ -90,6 +90,32 @@ VP tuning levers that strategies may expose to hyperopt:
 - Pressure/participation: `pressure_delta_min`, `volume_percentile_min`, `fast_traverse_atr_mult`.
 - Context/trigger scoring: `poc_migration_window`, `score_window`, `entry_score_margin`, `context_full_min`, `context_full_margin`, `context_soft_min`, `context_soft_margin`, `context_balance_min`.
 
+## Complex Volume Strategy Outputs
+
+Complex Volume (`vol`) should infer volume intent from OHLCV only. It does not have true order-flow delta, so CVD, pressure, absorption, and sweep outputs are proxy evidence derived from candle body, close location, range, and relative volume.
+
+Expected behaviour:
+- High-quality bullish readings should cluster around springs, low sweeps with reclaim, bullish absorption, anchored VWAP reclaim, and volume-confirmed upside breaks.
+- High-quality bearish readings should cluster around upthrusts, high sweeps with rejection, bearish absorption, anchored VWAP rejection, and volume-confirmed downside breaks.
+- Diagnostic entry columns should be sparse fresh events, not every candle in an ongoing pressure state.
+
+Strategy-facing VOL concepts:
+- Pressure and CVD proxy: `vol_delta_pressure`, `vol_delta_zscore`, `vol_cvd`, `vol_cvd_trend`, and `vol_cvd_trend_confirm_long/short` describe inferred participation direction.
+- Relative volume state: `vol_rvol`, `vol_volume_zscore`, `vol_regime_dry`, `vol_regime_expansion`, `vol_regime_climax`, `vol_regime_capitulation`, and `vol_regime_accumulation` describe participation quality.
+- Effort-vs-result: `vol_evr_bull_absorption`, `vol_evr_bear_absorption`, `vol_evr_spring`, `vol_evr_upthrust`, and exhaustion columns identify high-volume candles where the price result may reveal absorption, stop-runs, or exhaustion.
+- Liquidity sweep and breakout evidence: `vol_liq_stoprun_long/short`, `vol_vol_breakout_confirm_long/short`, and fakeout-risk columns are raw evidence. Strategies should combine them with structure or regime guards.
+- Anchored VWAP context: `vol_avwap`, `vol_avwap_upper/lower`, `vol_avwap_reclaim_long`, `vol_avwap_reject_short`, and mean-reversion columns describe interaction with the current volume anchor.
+- Directional context: `vol_market_context` uses `+2`, `+1`, `0`, `-1`, `-2`; full states require stronger score separation and recent/active volume pressure.
+- Entry diagnostics: `vol_entry_stoprun_long/short`, `vol_entry_absorption_long/short`, `vol_entry_avwap_reclaim_long`, `vol_entry_avwap_reject_short`, `vol_entry_volume_breakout_long`, and `vol_entry_volume_breakdown_short` are reason-specific sparse trigger evidence.
+- Composite triggers: `vol_suggested_entry_long/short` are de-duplicated composites of the reason-specific entry diagnostics. They are useful for plotting and smoke tests, but strategies should usually prefer the reason-specific columns.
+- Position evidence: `vol_hold_long`, `vol_hold_short`, `vol_exit_long`, and `vol_exit_short` expose whether current volume evidence supports holding or warns that opposite pressure is appearing.
+
+VOL tuning levers that strategies may expose to hyperopt:
+- Windows: `short_window`, `medium_window`, `long_window`, `divergence_window`, `sweep_window`, `vwap_window`, and `score_window`.
+- Volume thresholds: `dry_rvol`, `expansion_rvol`, `climax_rvol`, `anchor_volume_zscore`, and `vwap_band_mult`.
+- Effort/result thresholds: `absorption_zscore`, `low_result_atr`, `wide_result_atr`, `accumulation_close_location`, `absorption_close_location`, and `exhaustion_close_location`.
+- Pressure/sweep thresholds: `pressure_zscore_min`, `spring_close_location_min`, `upthrust_close_location_max`, `sweep_reclaim_close_location`, `absorption_delta_tolerance`, and `stoprun_delta_tolerance`.
+
 ## Pivot Structure Strategy Outputs
 
 Pivot Structure should separate tactical local swings from larger structural market memory.

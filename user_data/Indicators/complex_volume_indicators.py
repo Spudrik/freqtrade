@@ -390,6 +390,9 @@ def _add_vwap_columns(frame: DataFrame, cfg: ComplexVolumeConfig) -> DataFrame:
 def _add_score_columns(frame: DataFrame, cfg: ComplexVolumeConfig) -> DataFrame:
     p = cfg.prefix
     w = int(cfg.score_window)
+    cooldown = max(3, int(round(w / 8.0)))
+    close = _num(frame, "close")
+    avwap = _num(frame, f"{p}_avwap")
     delta_z = _num(frame, f"{p}_delta_zscore").fillna(0.0)
     volume_z = _num(frame, f"{p}_volume_zscore").fillna(0.0)
     pressure_long = _clip01(delta_z / max(float(cfg.pressure_zscore_min) * 4.0, 1e-9))
@@ -422,11 +425,128 @@ def _add_score_columns(frame: DataFrame, cfg: ComplexVolumeConfig) -> DataFrame:
     long_score = _clip01(0.45 * long_recent + 0.35 * pressure_long + 0.20 * volume_quality - fakeout_long_penalty)
     short_score = _clip01(0.45 * short_recent + 0.35 * pressure_short + 0.20 * volume_quality - fakeout_short_penalty)
     abs_score = pd.concat([long_score, short_score], axis=1).max(axis=1)
+    score_margin = long_score - short_score
     score_state = pd.Series(
         np.select([long_score.gt(short_score), short_score.gt(long_score)], [1.0, -1.0], default=0.0),
         index=frame.index,
     )
 
+    context_span = max(3, int(round(w / 3.0)))
+    context_long_score = long_score.ewm(span=context_span, min_periods=1, adjust=False).mean()
+    context_short_score = short_score.ewm(span=context_span, min_periods=1, adjust=False).mean()
+    context_margin = context_long_score - context_short_score
+
+    full_bull = context_long_score.ge(0.48) & context_margin.ge(0.06) & (
+        long_recent.ge(0.35) | pressure_long.ge(0.50)
+    )
+    full_bear = context_short_score.ge(0.48) & context_margin.le(-0.06) & (
+        short_recent.ge(0.35) | pressure_short.ge(0.50)
+    )
+    bullish_chop = ~full_bull & ~full_bear & context_long_score.ge(0.30) & context_margin.ge(0.03) & (
+        long_recent.gt(0.0) | pressure_long.ge(0.30)
+    )
+    bearish_chop = ~full_bull & ~full_bear & context_short_score.ge(0.30) & context_margin.le(-0.03) & (
+        short_recent.gt(0.0) | pressure_short.ge(0.30)
+    )
+
+    market_context = pd.Series(
+        np.select(
+            [full_bull, bullish_chop, full_bear, bearish_chop],
+            [2.0, 1.0, -2.0, -1.0],
+            default=0.0,
+        ),
+        index=frame.index,
+        dtype="float64",
+    )
+
+    long_bias_ok = long_score.ge(short_score - 0.03)
+    short_bias_ok = short_score.ge(long_score - 0.03)
+    long_trigger_stoprun = _bool(frame, f"{p}_evr_spring") | _bool(frame, f"{p}_liq_stoprun_long")
+    short_trigger_stoprun = _bool(frame, f"{p}_evr_upthrust") | _bool(frame, f"{p}_liq_stoprun_short")
+    long_trigger_avwap = _bool(frame, f"{p}_avwap_reclaim_long") | _bool(frame, f"{p}_avwap_mean_reversion_long")
+    short_trigger_avwap = _bool(frame, f"{p}_avwap_reject_short") | _bool(frame, f"{p}_avwap_mean_reversion_short")
+
+    entry_stoprun_long = _dedupe_events(long_trigger_stoprun & long_bias_ok & long_score.ge(0.28), cooldown)
+    entry_absorption_long = _dedupe_events(
+        _bool(frame, f"{p}_evr_bull_absorption") & long_bias_ok & pressure_long.ge(0.15),
+        cooldown,
+    )
+    entry_avwap_reclaim_long = _dedupe_events(
+        long_trigger_avwap & long_bias_ok & (pressure_long.ge(0.15) | long_recent.ge(0.20)),
+        cooldown,
+    )
+    entry_volume_breakout_long = _dedupe_events(
+        _bool(frame, f"{p}_vol_breakout_confirm_long") & long_score.ge(0.35) & score_margin.ge(0.02),
+        cooldown,
+    )
+    entry_stoprun_short = _dedupe_events(short_trigger_stoprun & short_bias_ok & short_score.ge(0.28), cooldown)
+    entry_absorption_short = _dedupe_events(
+        _bool(frame, f"{p}_evr_bear_absorption") & short_bias_ok & pressure_short.ge(0.15),
+        cooldown,
+    )
+    entry_avwap_reject_short = _dedupe_events(
+        short_trigger_avwap & short_bias_ok & (pressure_short.ge(0.15) | short_recent.ge(0.20)),
+        cooldown,
+    )
+    entry_volume_breakdown_short = _dedupe_events(
+        _bool(frame, f"{p}_vol_breakout_confirm_short") & short_score.ge(0.35) & score_margin.le(-0.02),
+        cooldown,
+    )
+
+    suggested_entry_long = (
+        entry_stoprun_long
+        | entry_absorption_long
+        | entry_avwap_reclaim_long
+        | entry_volume_breakout_long
+    )
+    suggested_entry_short = (
+        entry_stoprun_short
+        | entry_absorption_short
+        | entry_avwap_reject_short
+        | entry_volume_breakdown_short
+    )
+    hold_long = long_score.ge(0.38) & long_score.ge(short_score) & (
+        _bool(frame, f"{p}_cvd_trend_confirm_long") | close.gt(avwap) | long_recent.ge(0.30)
+    ) & ~_bool(frame, f"{p}_vol_fakeout_risk_long")
+    hold_short = short_score.ge(0.38) & short_score.ge(long_score) & (
+        _bool(frame, f"{p}_cvd_trend_confirm_short") | close.lt(avwap) | short_recent.ge(0.30)
+    ) & ~_bool(frame, f"{p}_vol_fakeout_risk_short")
+    exit_long = _dedupe_events(
+        (
+            _bool(frame, f"{p}_vol_fakeout_risk_long")
+            | _bool(frame, f"{p}_evr_upthrust")
+            | _bool(frame, f"{p}_avwap_reject_short")
+            | short_score.gt(long_score + 0.12)
+        )
+        & short_score.ge(0.30),
+        cooldown,
+    )
+    exit_short = _dedupe_events(
+        (
+            _bool(frame, f"{p}_vol_fakeout_risk_short")
+            | _bool(frame, f"{p}_evr_spring")
+            | _bool(frame, f"{p}_avwap_reclaim_long")
+            | long_score.gt(short_score + 0.12)
+        )
+        & long_score.ge(0.30),
+        cooldown,
+    )
+
+    frame[f"{p}_market_context"] = market_context
+    frame[f"{p}_entry_stoprun_long"] = entry_stoprun_long
+    frame[f"{p}_entry_absorption_long"] = entry_absorption_long
+    frame[f"{p}_entry_avwap_reclaim_long"] = entry_avwap_reclaim_long
+    frame[f"{p}_entry_volume_breakout_long"] = entry_volume_breakout_long
+    frame[f"{p}_entry_stoprun_short"] = entry_stoprun_short
+    frame[f"{p}_entry_absorption_short"] = entry_absorption_short
+    frame[f"{p}_entry_avwap_reject_short"] = entry_avwap_reject_short
+    frame[f"{p}_entry_volume_breakdown_short"] = entry_volume_breakdown_short
+    frame[f"{p}_hold_long"] = hold_long
+    frame[f"{p}_hold_short"] = hold_short
+    frame[f"{p}_exit_long"] = exit_long
+    frame[f"{p}_exit_short"] = exit_short
+    frame[f"{p}_suggested_entry_long"] = suggested_entry_long
+    frame[f"{p}_suggested_entry_short"] = suggested_entry_short
     frame[f"{p}_score_long"] = long_score
     frame[f"{p}_score_short"] = short_score
     frame[f"{p}_score_abs"] = abs_score
@@ -528,6 +648,13 @@ def _safe_div(numerator: Series, denominator: Series) -> Series:
 
 def _clip01(series: Series) -> Series:
     return pd.to_numeric(series, errors="coerce").replace([np.inf, -np.inf], np.nan).clip(0.0, 1.0).fillna(0.0)
+
+
+def _dedupe_events(mask: Series, cooldown_bars: int) -> Series:
+    event = pd.Series(mask, index=mask.index).astype("boolean").fillna(False).astype(bool)
+    cooldown = max(1, int(cooldown_bars))
+    previous_count = event.astype("float64").shift(1).rolling(cooldown, min_periods=1).sum().fillna(0.0)
+    return event & previous_count.eq(0.0)
 
 
 def _num(frame: DataFrame, column: str) -> Series:
