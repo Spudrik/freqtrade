@@ -9,6 +9,14 @@
 - Binance USD-M context: funding, open interest, global long/short account ratio, and taker long/short volume from public REST endpoints.
 - Bybit linear context: funding, open interest, account ratio, and recent-trade taker volume approximation from public REST endpoints. The shared `5m` context period is translated to Bybit's `5min` parameter format at request time.
 
+## Implemented in Global Context
+
+- Alternative.me Fear & Greed index: stored as a 0-100 sentiment score with risk-on/risk-off labeling.
+- CoinGecko global market endpoint: total crypto market cap, volume, BTC dominance, and 24h market-cap change.
+- CoinGecko BTC/ETH markets endpoint: BTC/ETH price and short-term price-change context.
+- DeFiLlama stablecoins endpoint: stablecoin supply trend as a crypto-liquidity proxy.
+- DeFiLlama chains endpoint: aggregate DeFi TVL and weighted chain TVL change.
+
 ## Good Next Candidates
 
 - OKX public order book, funding, open interest, long/short ratio, and taker flow. This is the most natural next exchange because the public market-data API is broad and derivatives context is strong.

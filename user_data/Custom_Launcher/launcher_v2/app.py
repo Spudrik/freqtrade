@@ -283,6 +283,13 @@ class LauncherV2(tk.Tk):
                 "interval_minutes": preset.get("web_interval_minutes"),
                 "once": preset.get("web_once"),
             },
+            "global_context": {
+                "config_path": preset.get("global_context_config_path"),
+                "data_dir": preset.get("global_context_data_dir"),
+                "db_path": preset.get("global_context_db_path"),
+                "interval_minutes": preset.get("global_context_interval_minutes"),
+                "once": preset.get("global_context_once"),
+            },
             "orderbook": {
                 "config_path": preset.get("orderbook_config_path"),
                 "data_dir": preset.get("orderbook_data_dir"),
@@ -357,6 +364,7 @@ class LauncherV2(tk.Tk):
         explorer = tabs.get("explorer", {})
         news = tabs.get("news", {})
         web = tabs.get("web", {})
+        global_context = tabs.get("global_context", {})
         orderbook = tabs.get("orderbook", {})
         file_converter = tabs.get("file_converter", {})
         indicator_validator = tabs.get("indicator_external_validator", {})
@@ -458,6 +466,11 @@ class LauncherV2(tk.Tk):
             "web_db_path": web.get("db_path", ""),
             "web_interval_minutes": web.get("interval_minutes", ""),
             "web_once": bool(web.get("once", False)),
+            "global_context_config_path": global_context.get("config_path", ""),
+            "global_context_data_dir": global_context.get("data_dir", ""),
+            "global_context_db_path": global_context.get("db_path", ""),
+            "global_context_interval_minutes": global_context.get("interval_minutes", ""),
+            "global_context_once": bool(global_context.get("once", False)),
             "orderbook_config_path": orderbook.get("config_path", ""),
             "orderbook_data_dir": orderbook.get("data_dir", ""),
             "orderbook_market_profiles": list(orderbook.get("market_profiles") or []),
