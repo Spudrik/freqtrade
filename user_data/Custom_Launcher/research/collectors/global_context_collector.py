@@ -44,6 +44,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pid-file", type=Path, default=DEFAULT_PID_PATH)
     parser.add_argument("--stop-file", type=Path, default=DEFAULT_STOP_PATH)
     parser.add_argument("--log-file", type=Path, default=DEFAULT_LOG_PATH)
+    parser.add_argument("--key-file", type=Path, default=None)
+    parser.add_argument("--fred-key-json-path", default="")
+    parser.add_argument("--enable-fred", action="store_true")
     parser.add_argument("--interval-seconds", type=int, default=1800)
     parser.add_argument("--once", action="store_true")
     return parser.parse_args()
@@ -54,7 +57,7 @@ def ensure_dirs(data_dir: Path) -> None:
         path.mkdir(parents=True, exist_ok=True)
 
 
-def read_config(path: Path) -> dict[str, Any]:
+def read_config(path: Path, *, key_file: Path | None = None, fred_key_json_path: str = "") -> dict[str, Any]:
     payload = load_json(path, {})
     if not isinstance(payload, dict):
         payload = {}
@@ -67,7 +70,36 @@ def read_config(path: Path) -> dict[str, Any]:
     payload.setdefault("store_raw_payloads", True)
     payload.setdefault("user_agent", "FreQ-GlobalContextCollector/1.0")
     payload.setdefault("sources", [])
+    fred_json_path = fred_key_json_path or str(payload.get("fred_api_key_json_path") or "")
+    fred_key = load_fred_api_key_from_file(key_file, fred_json_path) if key_file else ""
+    if fred_key:
+        payload["fred_api_key"] = fred_key
     return payload
+
+
+def load_fred_api_key_from_file(key_file: Path | None, json_path: str = "") -> str:
+    if not key_file:
+        return ""
+    payload = load_json(key_file, {})
+    if not isinstance(payload, dict):
+        return ""
+    candidates = [json_path, "fred.api_key", "fred.FRED_API_KEY", "fred_api_key", "FRED_API_KEY"]
+    for candidate in candidates:
+        value = _extract_json_path(payload, str(candidate or "").strip())
+        if value:
+            return str(value).strip()
+    return ""
+
+
+def _extract_json_path(payload: dict[str, Any], json_path: str) -> Any:
+    if not json_path:
+        return None
+    value: Any = payload
+    for part in [item for item in json_path.split(".") if item]:
+        if not isinstance(value, dict):
+            return None
+        value = value.get(part)
+    return value
 
 
 def fetch_public_json(url: str, *, timeout_seconds: int, user_agent: str) -> Any:
@@ -76,7 +108,7 @@ def fetch_public_json(url: str, *, timeout_seconds: int, user_agent: str) -> Any
         return json.loads(response.read().decode("utf-8"))
 
 
-def fetch_source(source: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
+def fetch_source(source: dict[str, Any], config: dict[str, Any]) -> list[dict[str, Any]]:
     source_type = str(source.get("type") or "").strip()
     url = str(source.get("url") or "").strip()
     timeout_seconds = int(config.get("request_timeout_seconds", 20))
@@ -84,7 +116,16 @@ def fetch_source(source: dict[str, Any], config: dict[str, Any]) -> dict[str, An
     payload = fetch_global_source_payload(source, config)
     if payload is None:
         payload = fetch_public_json(url, timeout_seconds=timeout_seconds, user_agent=user_agent)
-    return normalize_global_source_payload(source, payload, store_raw=bool(config.get("store_raw_payloads", True)))
+    normalized = normalize_global_source_payload(source, payload, store_raw=bool(config.get("store_raw_payloads", True)))
+    if isinstance(normalized, list):
+        rows = [row for row in normalized if isinstance(row, dict)]
+    elif isinstance(normalized, dict):
+        rows = [normalized]
+    else:
+        rows = []
+    if not rows:
+        raise ValueError(f"Source returned no normalized rows: {source.get('id')}")
+    return rows
 
 
 def main() -> int:
@@ -92,7 +133,11 @@ def main() -> int:
     ensure_dirs(args.data_dir)
     configure_logging(args.log_file)
     init_db(args.db)
-    config = read_config(args.config)
+    config = read_config(args.config, key_file=args.key_file, fred_key_json_path=str(args.fred_key_json_path or ""))
+    if args.enable_fred:
+        for source in config.get("sources", []):
+            if isinstance(source, dict) and str(source.get("type") or "") == "fred_series_basket":
+                source["enabled"] = True
     sources = [source for source in config.get("sources", []) if isinstance(source, dict)]
     enabled_sources = [source for source in sources if bool(source.get("enabled", True))]
     interval_seconds = max(60, int(args.interval_seconds or config.get("poll_interval_seconds", 1800)))
@@ -121,6 +166,8 @@ def main() -> int:
         "last_error": None,
         "db_path": str(args.db),
         "config_path": str(args.config),
+        "key_file": str(args.key_file) if args.key_file else "",
+        "fred_enabled_override": bool(args.enable_fred),
         "data_dir": str(args.data_dir),
     }
     save_json(args.status_file, status_payload)
@@ -205,10 +252,11 @@ def run_collection_cycle(db_path: Path, enabled_sources: list[dict[str, Any]], c
     try:
         for source in enabled_sources:
             try:
-                row = fetch_source(source, config)
-                insert_context_tick(conn, row)
-                upsert_source_status(conn, _source_status_payload(source, enabled=True, row=row))
-                inserted += 1
+                rows = fetch_source(source, config)
+                for row in rows:
+                    insert_context_tick(conn, row)
+                upsert_source_status(conn, _source_status_payload(source, enabled=True, row=_primary_status_row(rows)))
+                inserted += len(rows)
             except Exception as exc:
                 failures += 1
                 logging.warning("Global context source failed source_id=%s error=%s", source.get("id"), exc)
@@ -237,6 +285,8 @@ def _source_status_payload(
         "last_failure_at": utc_now() if error else None,
         "last_error": error,
         "last_score": None,
+        "last_source_score": None,
+        "last_calc_score": None,
         "last_signal": None,
         "last_value": None,
         "last_unit": None,
@@ -250,6 +300,8 @@ def _source_status_payload(
                 "last_failure_at": None,
                 "last_error": None,
                 "last_score": row.get("score"),
+                "last_source_score": row.get("source_score"),
+                "last_calc_score": row.get("calc_score"),
                 "last_signal": row.get("signal"),
                 "last_value": row.get("value"),
                 "last_unit": row.get("unit"),
@@ -257,6 +309,13 @@ def _source_status_payload(
             }
         )
     return payload
+
+
+def _primary_status_row(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for row in rows:
+        if row.get("score") is not None:
+            return row
+    return rows[0] if rows else None
 
 
 if __name__ == "__main__":

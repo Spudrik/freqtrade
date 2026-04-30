@@ -29,6 +29,8 @@ def result(
     value: float | None,
     unit: str,
     notes: str,
+    source_score: float | None = None,
+    calc_score: float | None = None,
     source_ts: str | None = None,
     raw: Any = None,
 ) -> dict[str, Any]:
@@ -40,6 +42,8 @@ def result(
         "source_type": source.get("type") or "",
         "metric_key": metric_key,
         "score": score,
+        "source_score": source_score,
+        "calc_score": calc_score,
         "signal": signal,
         "value": value,
         "unit": unit,

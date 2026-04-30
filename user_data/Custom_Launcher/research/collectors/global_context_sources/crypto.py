@@ -45,6 +45,7 @@ def normalize_fear_greed(source: dict[str, Any], payload: Any, *, store_raw: boo
         source,
         metric_key="fear_greed_index",
         score=score,
+        source_score=score,
         signal=score_signal(score),
         value=value,
         unit="index",
@@ -54,7 +55,7 @@ def normalize_fear_greed(source: dict[str, Any], payload: Any, *, store_raw: boo
     )
 
 
-def normalize_coingecko_global(source: dict[str, Any], payload: Any, *, store_raw: bool = True) -> dict[str, Any]:
+def normalize_coingecko_global(source: dict[str, Any], payload: Any, *, store_raw: bool = True) -> list[dict[str, Any]]:
     data = payload.get("data") if isinstance(payload, dict) else {}
     if not isinstance(data, dict):
         data = {}
@@ -64,16 +65,32 @@ def normalize_coingecko_global(source: dict[str, Any], payload: Any, *, store_ra
     change_24h = float_or_none(data.get("market_cap_change_percentage_24h_usd"))
     score = clamp(50.0 + (change_24h or 0.0) * 5.0)
     notes = f"cap ${compact_usd(market_cap)}, volume ${compact_usd(volume)}, BTC dom {fmt_pct(btc_dom)}, 24h cap {fmt_pct(change_24h)}"
-    return result(
+    primary = result(
         source,
         metric_key="global_market_cap_change_24h",
         score=score,
+        calc_score=score,
         signal=score_signal(score),
         value=change_24h,
         unit="percent",
         notes=notes,
         raw=payload if store_raw else None,
     )
+    rows = [primary]
+    if btc_dom is not None:
+        rows.append(
+            result(
+                source,
+                metric_key="btc_dominance_pct",
+                score=None,
+                signal="",
+                value=btc_dom,
+                unit="percent",
+                notes="BTC market-cap dominance from CoinGecko global endpoint.",
+                raw=None,
+            )
+        )
+    return rows
 
 
 def normalize_coingecko_markets(source: dict[str, Any], payload: Any, *, store_raw: bool = True) -> dict[str, Any]:
@@ -101,6 +118,7 @@ def normalize_coingecko_markets(source: dict[str, Any], payload: Any, *, store_r
         source,
         metric_key="btc_eth_avg_change_24h",
         score=score,
+        calc_score=score,
         signal=score_signal(score),
         value=avg_24h,
         unit="percent",

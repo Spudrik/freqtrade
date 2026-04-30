@@ -8,7 +8,7 @@ from .common import clamp, fetch_public_json, float_or_none, fmt_pct, pct_change
 
 
 def fetch_fred_series_basket(source: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
-    api_key = str(source.get("api_key") or "").strip()
+    api_key = str(source.get("api_key") or config.get("fred_api_key") or "").strip()
     env_name = str(source.get("api_key_env") or config.get("fred_api_key_env") or "FRED_API_KEY")
     if not api_key and env_name:
         api_key = str(os.environ.get(env_name, "")).strip()
@@ -76,6 +76,7 @@ def normalize_fred_series_basket(source: dict[str, Any], payload: Any, *, store_
         source,
         metric_key=str(source.get("metric_key") or "fred_series_basket_change"),
         score=score,
+        calc_score=score,
         signal=score_signal(score),
         value=combined_change,
         unit="percent",

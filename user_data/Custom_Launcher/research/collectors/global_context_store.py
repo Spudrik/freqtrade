@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "2"
 
 
 def utc_now() -> str:
@@ -57,6 +57,8 @@ def init_db(db_path: Path) -> None:
                 last_failure_at TEXT,
                 last_error TEXT,
                 last_score REAL,
+                last_source_score REAL,
+                last_calc_score REAL,
                 last_signal TEXT,
                 last_value REAL,
                 last_unit TEXT,
@@ -73,6 +75,8 @@ def init_db(db_path: Path) -> None:
                 source_type TEXT NOT NULL,
                 metric_key TEXT NOT NULL,
                 score REAL,
+                source_score REAL,
+                calc_score REAL,
                 signal TEXT,
                 value REAL,
                 unit TEXT,
@@ -84,10 +88,20 @@ def init_db(db_path: Path) -> None:
             CREATE INDEX IF NOT EXISTS idx_global_context_group_ts ON global_context_ticks(source_group, ts);
             """
         )
+        _ensure_column(conn, "context_sources", "last_source_score", "REAL")
+        _ensure_column(conn, "context_sources", "last_calc_score", "REAL")
+        _ensure_column(conn, "global_context_ticks", "source_score", "REAL")
+        _ensure_column(conn, "global_context_ticks", "calc_score", "REAL")
         conn.execute("INSERT OR REPLACE INTO schema_meta(key, value) VALUES(?, ?)", ("version", SCHEMA_VERSION))
         conn.commit()
     finally:
         conn.close()
+
+
+def _ensure_column(conn: sqlite3.Connection, table_name: str, column_name: str, column_type: str) -> None:
+    columns = {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()}
+    if column_name not in columns:
+        conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
 
 
 def upsert_collector_run(
@@ -131,6 +145,8 @@ def upsert_source_status(conn: sqlite3.Connection, payload: dict[str, Any]) -> N
         "last_failure_at",
         "last_error",
         "last_score",
+        "last_source_score",
+        "last_calc_score",
         "last_signal",
         "last_value",
         "last_unit",
@@ -149,6 +165,8 @@ def upsert_source_status(conn: sqlite3.Connection, payload: dict[str, Any]) -> N
         last_failure_at=COALESCE(excluded.last_failure_at, context_sources.last_failure_at),
         last_error=excluded.last_error,
         last_score=COALESCE(excluded.last_score, context_sources.last_score),
+        last_source_score=COALESCE(excluded.last_source_score, context_sources.last_source_score),
+        last_calc_score=COALESCE(excluded.last_calc_score, context_sources.last_calc_score),
         last_signal=COALESCE(excluded.last_signal, context_sources.last_signal),
         last_value=COALESCE(excluded.last_value, context_sources.last_value),
         last_unit=COALESCE(excluded.last_unit, context_sources.last_unit),
@@ -181,11 +199,11 @@ def fetch_latest_context_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         SELECT t.*
         FROM global_context_ticks t
         JOIN (
-            SELECT source_id, MAX(id) AS latest_id
+            SELECT source_id, metric_key, MAX(id) AS latest_id
             FROM global_context_ticks
-            GROUP BY source_id
+            GROUP BY source_id, metric_key
         ) latest ON latest.latest_id = t.id
-        ORDER BY t.source_group, t.source_id
+        ORDER BY t.source_group, t.source_id, t.metric_key
         """
     ).fetchall()
     return [dict(row) for row in rows]
@@ -195,7 +213,7 @@ def fetch_source_health(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     rows = conn.execute(
         """
         SELECT source_id, source_group, source_type, enabled, market_relevance, last_success_at,
-               last_failure_at, last_error, last_score, last_signal, last_value, last_unit,
+               last_failure_at, last_error, last_score, last_source_score, last_calc_score, last_signal, last_value, last_unit,
                last_notes, updated_at
         FROM context_sources
         ORDER BY source_group, source_id
@@ -225,6 +243,8 @@ def export_latest_csv(db_path: Path, csv_path: Path) -> int:
         "source_type",
         "metric_key",
         "score",
+        "source_score",
+        "calc_score",
         "signal",
         "value",
         "unit",

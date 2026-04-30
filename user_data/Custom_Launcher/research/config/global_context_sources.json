@@ -5,6 +5,7 @@
   "store_raw_payloads": true,
   "user_agent": "FreQ-GlobalContextCollector/1.0",
   "fred_api_key_env": "FRED_API_KEY",
+  "fred_api_key_json_path": "fred.api_key",
   "sources": [
     {
       "id": "alternative_fear_greed",
@@ -153,7 +154,7 @@
         "NASDAQ100": "Nasdaq 100",
         "VIXCLS": "VIX"
       },
-      "notes": "Optional keyed FRED daily US market context. Set FRED_API_KEY and enable this source."
+      "notes": "Optional keyed FRED daily US market context. Set FRED_API_KEY or select a key file, then enable this source."
     },
     {
       "id": "fred_rates_risk_daily",
@@ -179,7 +180,7 @@
         "DGS10": "US 10Y",
         "DTWEXBGS": "Broad USD"
       },
-      "notes": "Optional keyed FRED rates/dollar risk context. Set FRED_API_KEY and enable this source."
+      "notes": "Optional keyed FRED rates/dollar risk context. Set FRED_API_KEY or select a key file, then enable this source."
     }
   ]
 }

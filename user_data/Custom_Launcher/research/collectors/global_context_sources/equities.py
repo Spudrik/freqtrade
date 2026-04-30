@@ -51,6 +51,7 @@ def normalize_stooq_quotes(source: dict[str, Any], payload: Any, *, store_raw: b
         source,
         metric_key=str(source.get("metric_key") or "stooq_quote_basket_change"),
         score=score,
+        calc_score=score,
         signal=score_signal(score),
         value=avg_change,
         unit="percent",

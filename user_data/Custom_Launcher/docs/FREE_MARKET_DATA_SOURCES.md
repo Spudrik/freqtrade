@@ -11,13 +11,32 @@
 
 ## Implemented in Global Context
 
-- Alternative.me Fear & Greed index: stored as a 0-100 sentiment score with risk-on/risk-off labeling.
-- CoinGecko global market endpoint: total crypto market cap, volume, BTC dominance, and 24h market-cap change.
+- Alternative.me Fear & Greed index: stored as a source-provided 0-100 sentiment score with risk-on/risk-off labeling.
+- CoinGecko global market endpoint: total crypto market cap, volume, BTC dominance, and 24h market-cap change. BTC dominance is also stored as its own `btc_dominance_pct` metric row.
 - CoinGecko BTC/ETH markets endpoint: BTC/ETH price and short-term price-change context.
-- DeFiLlama stablecoins endpoint: stablecoin supply trend as a crypto-liquidity proxy.
+- DeFiLlama stablecoins endpoint: stablecoin supply trend as a crypto-liquidity proxy. Current supply is stored as `stablecoin_supply_usd`, with change rows for later analysis.
 - DeFiLlama chains endpoint: aggregate DeFi TVL and weighted chain TVL change.
 - Stooq no-key quote CSV: US equity, global equity, and safe-haven/rates proxy headline baskets for broad risk context.
 - FRED optional keyed API: disabled by default until `FRED_API_KEY` is set, with starter baskets for US equity indices, VIX, rates, and broad USD.
+
+## Global Context Scoring
+
+- `score` is the effective 0-100 risk score used by the UI summary and remains backward-compatible for existing queries.
+- `source_score` is populated only when the source supplies an actual score, such as Alternative.me Fear & Greed.
+- `calc_score` is populated when the launcher normalizes raw source data into a comparable risk score.
+- Metric-only rows such as `btc_dominance_pct` and `stablecoin_supply_usd` intentionally keep score fields empty so they do not distort the average.
+
+## FRED Key File
+
+The Global Context UI can point at an external JSON key file instead of storing secrets in the committed source config. The default JSON path is `fred.api_key`.
+
+```json
+{
+  "fred": {
+    "api_key": "PASTE_FRED_API_KEY_HERE"
+  }
+}
+```
 
 ## Good Next Candidates
 

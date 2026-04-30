@@ -11,6 +11,8 @@ import subprocess
 import sys
 
 from .collector_service import is_process_running, open_path, parse_minutes_to_seconds, utc_now, utf8_subprocess_env
+from research.collectors.global_context_collector import load_fred_api_key_from_file
+from research.collectors.global_context_store import init_db
 
 
 class GlobalContextService:
@@ -82,6 +84,14 @@ class GlobalContextService:
             "--interval-seconds",
             str(parse_minutes_to_seconds(str(state.get("interval_minutes") or ""), 30)),
         ]
+        key_file = str(state.get("key_file") or "").strip()
+        if key_file:
+            command.extend(["--key-file", key_file])
+        fred_key_json_path = str(state.get("fred_key_json_path") or "").strip()
+        if fred_key_json_path:
+            command.extend(["--fred-key-json-path", fred_key_json_path])
+        if state.get("enable_fred"):
+            command.append("--enable-fred")
         if state.get("once"):
             command.append("--once")
         return command
@@ -141,6 +151,7 @@ class GlobalContextService:
         paths = self.paths(state)
         if not paths["db"].exists():
             return []
+        init_db(paths["db"])
         with sqlite3.connect(str(paths["db"]), timeout=5.0) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
@@ -148,11 +159,11 @@ class GlobalContextService:
                 SELECT t.*
                 FROM global_context_ticks t
                 JOIN (
-                    SELECT source_id, MAX(id) AS latest_id
+                    SELECT source_id, metric_key, MAX(id) AS latest_id
                     FROM global_context_ticks
-                    GROUP BY source_id
+                    GROUP BY source_id, metric_key
                 ) latest ON latest.latest_id = t.id
-                ORDER BY t.source_group, t.source_id
+                ORDER BY t.source_group, t.source_id, t.metric_key
                 """
             ).fetchall()
         if source_groups is not None:
@@ -165,8 +176,11 @@ class GlobalContextService:
             (
                 row["source_id"],
                 row["source_group"],
+                row["metric_key"],
                 row["signal"],
                 _fmt(row["score"]),
+                _fmt(row["source_score"]),
+                _fmt(row["calc_score"]),
                 _fmt(row["value"]),
                 row["unit"] or "",
                 row["notes"] or "",
@@ -174,6 +188,42 @@ class GlobalContextService:
                 row["ts"] or "",
             )
             for row in rows
+        ]
+
+    def score_summary(self, state: dict[str, Any]) -> dict[str, Any]:
+        rows = self._latest_context_records(state)
+        scored = [row for row in rows if _float_or_none(row["score"]) is not None]
+        scores = [_float_or_none(row["score"]) for row in scored]
+        valid_scores = [score for score in scores if score is not None]
+        avg_score = (sum(valid_scores) / len(valid_scores)) if valid_scores else None
+        source_count = sum(1 for row in scored if _float_or_none(row["source_score"]) is not None)
+        calc_count = sum(1 for row in scored if _float_or_none(row["calc_score"]) is not None)
+        signals = [str(row["signal"] or "") for row in scored]
+        risk_off = signals.count("risk_off")
+        risk_on = signals.count("risk_on")
+        signal = "risk_off" if risk_off > risk_on else "risk_on" if risk_on > risk_off else "neutral"
+        return {
+            "average_score": _fmt(avg_score),
+            "signal": signal,
+            "score_count": str(len(scored)),
+            "source_score_count": str(source_count),
+            "calc_score_count": str(calc_count),
+        }
+
+    def score_detail_rows(self, state: dict[str, Any]) -> list[tuple[Any, ...]]:
+        rows = self._latest_context_records(state)
+        scored = [row for row in rows if _float_or_none(row["score"]) is not None]
+        return [
+            (
+                row["source_id"],
+                row["metric_key"],
+                row["signal"] or "",
+                _fmt(row["score"]),
+                _fmt(row["source_score"]),
+                _fmt(row["calc_score"]),
+                row["ts"] or "",
+            )
+            for row in scored
         ]
 
     def summary_rows(self, state: dict[str, Any]) -> list[tuple[Any, ...]]:
@@ -199,12 +249,13 @@ class GlobalContextService:
         paths = self.paths(state)
         if not paths["db"].exists():
             return []
+        init_db(paths["db"])
         with sqlite3.connect(str(paths["db"]), timeout=5.0) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 """
                 SELECT source_id, source_group, source_type, enabled, market_relevance, last_success_at,
-                       last_failure_at, last_error, last_score, last_signal, last_notes, updated_at
+                       last_failure_at, last_error, last_score, last_source_score, last_calc_score, last_signal, last_notes, updated_at
                 FROM context_sources
                 ORDER BY source_group, source_id
                 """
@@ -222,6 +273,8 @@ class GlobalContextService:
                 row["last_failure_at"],
                 row["last_error"],
                 _fmt(row["last_score"]),
+                _fmt(row["last_source_score"]),
+                _fmt(row["last_calc_score"]),
                 row["last_signal"] or "",
                 row["last_notes"] or "",
                 row["updated_at"],
@@ -235,7 +288,7 @@ class GlobalContextService:
         export_dir = paths["data_dir"] / "exports"
         export_dir.mkdir(parents=True, exist_ok=True)
         output = export_dir / f"global_context_latest_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-        headers = ["source_id", "source_group", "signal", "score", "value", "unit", "notes", "source_ts", "collected_at"]
+        headers = ["source_id", "source_group", "metric_key", "signal", "effective_score", "source_score", "calc_score", "value", "unit", "notes", "source_ts", "collected_at"]
         with open(output, "w", encoding="utf-8", newline="") as handle:
             writer = csv.writer(handle)
             writer.writerow(headers)
@@ -252,6 +305,18 @@ class GlobalContextService:
         paths["log"].parent.mkdir(parents=True, exist_ok=True)
         paths["log"].touch(exist_ok=True)
         open_path(paths["log"])
+
+    def fred_key_status(self, state: dict[str, Any]) -> str:
+        key_file_text = str(state.get("key_file") or "").strip()
+        if not key_file_text:
+            return "No FRED key file selected"
+        key_file = Path(key_file_text)
+        if not key_file.exists():
+            return "FRED key file not found"
+        key = load_fred_api_key_from_file(key_file, str(state.get("fred_key_json_path") or ""))
+        if not key:
+            return "FRED key not found at selected JSON path"
+        return f"FRED key detected ({len(key)} chars)"
 
 
 def _fmt(value: Any) -> str:

@@ -21,9 +21,17 @@ class GlobalContextTab(BaseTab):
         self.config_path_var = tk.StringVar(value=str(paths["config"]))
         self.data_dir_var = tk.StringVar(value=str(paths["data_dir"]))
         self.db_path_var = tk.StringVar(value=str(paths["db"]))
+        self.key_file_var = tk.StringVar(value="")
+        self.fred_key_json_path_var = tk.StringVar(value="fred.api_key")
+        self.enable_fred_var = tk.BooleanVar(value=False)
+        self.fred_status_var = tk.StringVar(value="No FRED key file selected")
         self.interval_minutes_var = tk.StringVar(value="30")
         self.once_var = tk.BooleanVar(value=False)
         self.preview_var = tk.StringVar(value="")
+        self.score_summary_vars = {
+            key: tk.StringVar(value="-")
+            for key in ("average_score", "signal", "score_count", "source_score_count", "calc_score_count")
+        }
         self.status_vars = {
             key: tk.StringVar(value="-")
             for key in (
@@ -50,7 +58,7 @@ class GlobalContextTab(BaseTab):
 
         intro = ttk.Label(
             self,
-            text="Global Context polls free public APIs such as CoinGecko, DeFiLlama, and Alternative.me into SQLite. It is data-only and does not change strategy logic.",
+            text="Global Context polls free public APIs such as CoinGecko, DeFiLlama, Alternative.me, Stooq, and optional FRED into SQLite. It is data-only and does not change strategy logic.",
             wraplength=1120,
         )
         intro.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 6))
@@ -64,6 +72,14 @@ class GlobalContextTab(BaseTab):
         self._path_row(settings, 2, "Database", self.db_path_var, directory=False)
         labeled_entry(settings, 3, 0, "Poll interval minutes", self.interval_minutes_var)
         ttk.Checkbutton(settings, text="Run once", variable=self.once_var).grid(row=3, column=2, sticky="w", padx=8, pady=4)
+        fred = ttk.LabelFrame(settings, text="FRED key file")
+        fred.grid(row=0, column=3, rowspan=4, sticky="nsew", padx=(12, 8), pady=4)
+        fred.grid_columnconfigure(1, weight=1)
+        self._path_row(fred, 0, "Key file", self.key_file_var, directory=False)
+        labeled_entry(fred, 1, 0, "JSON path", self.fred_key_json_path_var)
+        ttk.Checkbutton(fred, text="Enable FRED sources for this run", variable=self.enable_fred_var).grid(row=2, column=0, columnspan=2, sticky="w", padx=8, pady=4)
+        ttk.Label(fred, textvariable=self.fred_status_var).grid(row=3, column=0, columnspan=2, sticky="w", padx=8, pady=4)
+        ttk.Button(fred, text="Check Key", command=self.refresh_fred_key_status).grid(row=3, column=2, sticky="e", padx=8, pady=4)
 
         preview = ttk.LabelFrame(self, text="Generated command")
         preview.grid(row=2, column=0, sticky="ew", padx=8, pady=(0, 8))
@@ -81,6 +97,7 @@ class GlobalContextTab(BaseTab):
 
         status = ttk.LabelFrame(self, text="Status")
         status.grid(row=4, column=0, sticky="ew", padx=8, pady=(0, 8))
+        status.grid_columnconfigure(4, weight=1)
         items = [
             ("Status", "status"),
             ("PID", "pid"),
@@ -98,6 +115,30 @@ class GlobalContextTab(BaseTab):
             col = (index % 2) * 2
             ttk.Label(status, text=f"{label}:").grid(row=row, column=col, sticky="w", padx=8, pady=3)
             ttk.Label(status, textvariable=self.status_vars[key]).grid(row=row, column=col + 1, sticky="w", padx=8, pady=3)
+        score_panel = ttk.LabelFrame(status, text="Score Summary")
+        score_panel.grid(row=0, column=4, rowspan=5, sticky="nsew", padx=(16, 8), pady=4)
+        score_panel.grid_columnconfigure(0, weight=1)
+        score_panel.grid_rowconfigure(2, weight=1)
+        score_header = ttk.Frame(score_panel)
+        score_header.grid(row=0, column=0, sticky="ew", padx=8, pady=(4, 2))
+        labels = [
+            ("Average", "average_score"),
+            ("Signal", "signal"),
+            ("Scores", "score_count"),
+            ("Source", "source_score_count"),
+            ("Calc", "calc_score_count"),
+        ]
+        for index, (label, key) in enumerate(labels):
+            ttk.Label(score_header, text=f"{label}:").grid(row=0, column=index * 2, sticky="w", padx=(0, 3))
+            ttk.Label(score_header, textvariable=self.score_summary_vars[key]).grid(row=0, column=index * 2 + 1, sticky="w", padx=(0, 12))
+        score_columns = ("source_id", "metric_key", "signal", "effective_score", "source_score", "calc_score")
+        self.score_tree = ttk.Treeview(score_panel, columns=score_columns, show="headings", height=4)
+        for column in score_columns:
+            self.score_tree.heading(column, text=column)
+            self.score_tree.column(column, width=120, anchor="w")
+        self.score_tree.column("source_id", width=170, anchor="w")
+        self.score_tree.column("metric_key", width=220, anchor="w")
+        self.score_tree.grid(row=2, column=0, sticky="nsew", padx=8, pady=(2, 6))
 
         views = ttk.Notebook(self)
         views.grid(row=5, column=0, sticky="nsew", padx=8, pady=(0, 8))
@@ -113,7 +154,7 @@ class GlobalContextTab(BaseTab):
 
         summary_tab.grid_columnconfigure(0, weight=1)
         summary_tab.grid_rowconfigure(0, weight=1)
-        summary_columns = ("source_group", "signal", "avg_score", "source_count", "notes", "latest_at")
+        summary_columns = ("source_group", "signal", "avg_effective_score", "metric_count", "notes", "latest_at")
         self.summary_tree = ttk.Treeview(summary_tab, columns=summary_columns, show="headings", height=12)
         for column in summary_columns:
             self.summary_tree.heading(column, text=column)
@@ -124,13 +165,13 @@ class GlobalContextTab(BaseTab):
         summary_scroll.grid(row=0, column=1, sticky="ns", pady=8)
         self.summary_tree.configure(yscrollcommand=summary_scroll.set)
 
-        latest_columns = ("source_id", "source_group", "signal", "score", "value", "unit", "notes", "source_ts", "collected_at")
+        latest_columns = ("source_id", "source_group", "metric_key", "signal", "effective_score", "source_score", "calc_score", "value", "unit", "notes", "source_ts", "collected_at")
         self.crypto_tree = self._context_tree(crypto_tab, latest_columns)
         self.equities_tree = self._context_tree(equities_tab, latest_columns)
 
         health_tab.grid_columnconfigure(0, weight=1)
         health_tab.grid_rowconfigure(0, weight=1)
-        health_columns = ("source_id", "source_group", "source_type", "enabled", "relevance", "last_success_at", "last_failure_at", "last_error", "last_score", "last_signal", "last_notes", "updated_at")
+        health_columns = ("source_id", "source_group", "source_type", "enabled", "relevance", "last_success_at", "last_failure_at", "last_error", "last_effective_score", "last_source_score", "last_calc_score", "last_signal", "last_notes", "updated_at")
         self.health_tree = ttk.Treeview(health_tab, columns=health_columns, show="headings", height=12)
         for column in health_columns:
             self.health_tree.heading(column, text=column)
@@ -165,15 +206,19 @@ class GlobalContextTab(BaseTab):
             variable.set(path)
 
     def _bind_preview(self) -> None:
-        for var in (self.config_path_var, self.data_dir_var, self.db_path_var, self.interval_minutes_var):
+        for var in (self.config_path_var, self.data_dir_var, self.db_path_var, self.key_file_var, self.fred_key_json_path_var, self.interval_minutes_var):
             var.trace_add("write", lambda *_: self.refresh_preview())
         self.once_var.trace_add("write", lambda *_: self.refresh_preview())
+        self.enable_fred_var.trace_add("write", lambda *_: self.refresh_preview())
 
     def _state(self) -> dict[str, Any]:
         return {
             "config_path": self.config_path_var.get(),
             "data_dir": self.data_dir_var.get(),
             "db_path": self.db_path_var.get(),
+            "key_file": self.key_file_var.get(),
+            "fred_key_json_path": self.fred_key_json_path_var.get(),
+            "enable_fred": self.enable_fred_var.get(),
             "interval_minutes": self.interval_minutes_var.get(),
             "once": self.once_var.get(),
         }
@@ -183,6 +228,13 @@ class GlobalContextTab(BaseTab):
             self.preview_var.set(command_text(self.service.build_command(self._state())))
         except Exception as exc:
             self.preview_var.set(f"Invalid Global Context configuration: {exc}")
+        self.refresh_fred_key_status()
+
+    def refresh_fred_key_status(self) -> None:
+        try:
+            self.fred_status_var.set(self.service.fred_key_status(self._state()))
+        except Exception as exc:
+            self.fred_status_var.set(f"FRED key status error: {exc}")
 
     def start_collector(self) -> None:
         try:
@@ -220,6 +272,15 @@ class GlobalContextTab(BaseTab):
         }
         for key, value in mapping.items():
             self.status_vars[key].set(str(value))
+        try:
+            summary = self.service.score_summary(self._state())
+            for key, variable in self.score_summary_vars.items():
+                variable.set(str(summary.get(key) or "-"))
+            set_tree_rows(self.score_tree, [row[:6] for row in self.service.score_detail_rows(self._state())])
+        except Exception:
+            for variable in self.score_summary_vars.values():
+                variable.set("-")
+            set_tree_rows(self.score_tree, [])
         try:
             set_tree_rows(self.summary_tree, self.service.summary_rows(self._state()))
         except Exception:
@@ -265,6 +326,9 @@ class GlobalContextTab(BaseTab):
         self.config_path_var.set(str(state.get("config_path") or paths["config"]))
         self.data_dir_var.set(str(state.get("data_dir") or paths["data_dir"]))
         self.db_path_var.set(str(state.get("db_path") or paths["db"]))
+        self.key_file_var.set(str(state.get("key_file") or ""))
+        self.fred_key_json_path_var.set(str(state.get("fred_key_json_path") or "fred.api_key"))
+        self.enable_fred_var.set(bool(state.get("enable_fred", False)))
         self.interval_minutes_var.set(str(state.get("interval_minutes") or "30"))
         self.once_var.set(bool(state.get("once", False)))
         self.refresh_preview()

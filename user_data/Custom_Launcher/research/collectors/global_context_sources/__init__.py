@@ -19,7 +19,7 @@ def fetch_source_payload(source: dict[str, Any], config: dict[str, Any]) -> Any:
     return None
 
 
-def normalize_source_payload(source: dict[str, Any], payload: Any, *, store_raw: bool = True) -> dict[str, Any]:
+def normalize_source_payload(source: dict[str, Any], payload: Any, *, store_raw: bool = True) -> dict[str, Any] | list[dict[str, Any]]:
     source_type = str(source.get("type") or "").strip()
     if source_type == "alternative_fng":
         return normalize_fear_greed(source, payload, store_raw=store_raw)
