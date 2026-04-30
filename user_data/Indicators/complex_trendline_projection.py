@@ -10,9 +10,11 @@ from pandas import DataFrame, Series
 
 try:
     from .complex_pivot_structure import PivotStructureConfig, add_pivot_structure
+    from .complex_line_engine import PivotLineEngineConfig, ranked_pivot_lines
 except Exception:  # pragma: no cover - optional fallback for standalone notebooks
     PivotStructureConfig = None  # type: ignore[assignment]
     add_pivot_structure = None  # type: ignore[assignment]
+    from complex_line_engine import PivotLineEngineConfig, ranked_pivot_lines  # type: ignore[no-redef]
 
 MissingPivotMode = Literal["raise", "compute", "skip"]
 
@@ -66,6 +68,7 @@ class TrendlineProjectionConfig:
     max_channel_width_pct: float = 0.80
     max_projection_distance_pct: float = 0.60
     max_active_line_distance_pct: float = 0.10
+    max_projection_bars_after_last_touch: int = 50
     compression_window: int = 48
     compression_min_periods: int = 12
     score_window: int = 48
@@ -107,6 +110,7 @@ def add_trendline_projection(
     max_channel_width_pct: float | None = None,
     max_projection_distance_pct: float | None = None,
     max_active_line_distance_pct: float | None = None,
+    max_projection_bars_after_last_touch: int | None = None,
     compression_window: int | None = None,
     compression_min_periods: int | None = None,
     score_window: int | None = None,
@@ -149,6 +153,7 @@ def add_trendline_projection(
         max_channel_width_pct=max_channel_width_pct,
         max_projection_distance_pct=max_projection_distance_pct,
         max_active_line_distance_pct=max_active_line_distance_pct,
+        max_projection_bars_after_last_touch=max_projection_bars_after_last_touch,
         compression_window=compression_window,
         compression_min_periods=compression_min_periods,
         score_window=score_window,
@@ -187,6 +192,7 @@ def add_trendline_projection(
                 high=high,
                 low=low,
                 open_=open_,
+                atr=atr,
                 zone_width=zone_width,
                 strength=s,
                 horizons=horizons_list,
@@ -212,6 +218,7 @@ def _columns_for_strength(
     high: Series,
     low: Series,
     open_: Series,
+    atr: Series,
     zone_width: Series,
     strength: int,
     horizons: list[int],
@@ -229,6 +236,7 @@ def _columns_for_strength(
     ranked_res = _ranked_trendline_candidates(
         frame=frame,
         close=close,
+        atr=atr,
         bar_index=bar_index,
         zone_width=zone_width,
         strength=s,
@@ -238,6 +246,7 @@ def _columns_for_strength(
     ranked_sup = _ranked_trendline_candidates(
         frame=frame,
         close=close,
+        atr=atr,
         bar_index=bar_index,
         zone_width=zone_width,
         strength=s,
@@ -412,6 +421,7 @@ def _ranked_trendline_candidates(
     *,
     frame: DataFrame,
     close: Series,
+    atr: Series,
     bar_index: Series,
     zone_width: Series,
     strength: int,
@@ -419,36 +429,41 @@ def _ranked_trendline_candidates(
     cfg: TrendlineProjectionConfig,
 ) -> dict[str, Series]:
     pp = cfg.pivot_prefix
-    slots = max(int(cfg.ranked_line_count), 1)
-    pivot_count = max(int(cfg.candidate_pivot_count), int(cfg.min_fit_touch_count), 3)
-    event_price = _num(frame, f"{pp}_pivot_{side}_{strength}")
+    pivot_event_price = _num(frame, f"{pp}_pivot_{side}_{strength}")
+    event_price = _body_anchor_price(frame, side, strength).where(pivot_event_price.notna())
     event_prominence = _num(frame, f"{pp}_pivot_{side}_prominence_{strength}")
-    event_index = (bar_index - float(strength)).where(event_price.notna())
-    pivot_allowed = event_price.notna() & event_prominence.fillna(0.0).ge(float(cfg.min_anchor_prominence_atr))
-
-    recent = _recent_pivot_events(
-        event_price.where(pivot_allowed),
-        event_index.where(pivot_allowed),
-        event_prominence.where(pivot_allowed),
-        frame.index,
-        pivot_count,
+    event_index = (bar_index - float(strength)).where(pivot_event_price.notna())
+    engine_cfg = PivotLineEngineConfig(
+        candidate_pivot_count=int(cfg.candidate_pivot_count),
+        ranked_line_count=int(cfg.ranked_line_count),
+        min_touch_count=int(cfg.min_fit_touch_count),
+        min_anchor_span_bars=int(cfg.min_anchor_span_bars),
+        min_line_span_bars=int(cfg.min_anchor_span_bars),
+        max_line_age_bars=int(cfg.max_anchor_age_bars),
+        min_pivot_prominence=float(cfg.min_anchor_prominence_atr),
+        touch_tolerance_atr_mult=float(cfg.near_zone_atr_mult),
+        touch_tolerance_pct=float(cfg.near_zone_pct),
+        fit_touch_tolerance_pct=float(cfg.fit_touch_tolerance_pct),
+        min_respect_ratio=float(cfg.min_respect_ratio),
+        min_span_age_ratio=0.0,
+        max_slope_pct_per_bar=float(cfg.max_line_slope_pct_per_bar),
+        max_projection_distance_pct=float(cfg.max_projection_distance_pct),
+        max_active_line_distance_pct=float(cfg.max_active_line_distance_pct),
+        projection_bars_after_last_touch=int(cfg.max_projection_bars_after_last_touch),
+        use_envelope_fit=False,
+        include_rolling_fit=False,
+        use_weighted_fit=False,
     )
-    candidates: list[dict[str, Series]] = []
-    for newer in range(pivot_count - 1):
-        for older in range(newer + 1, pivot_count):
-            candidates.append(
-                _candidate_from_pivot_pair(
-                    close=close,
-                    bar_index=bar_index,
-                    zone_width=zone_width,
-                    recent=recent,
-                    newer=newer,
-                    older=older,
-                    side=side,
-                    cfg=cfg,
-                )
-            )
-    return _rank_candidate_frames(candidates, frame.index, slots)
+    return ranked_pivot_lines(
+        close=close,
+        atr=atr,
+        bar_index=bar_index,
+        event_price=event_price,
+        event_index=event_index,
+        event_prominence=event_prominence,
+        side=side,
+        cfg=engine_cfg,
+    )
 
 
 def _recent_pivot_events(
@@ -466,6 +481,13 @@ def _recent_pivot_events(
         "index": [index_events.shift(offset).reindex(index).ffill() for offset in range(count)],
         "prominence": [prominence_events.shift(offset).reindex(index).ffill() for offset in range(count)],
     }
+
+
+def _body_anchor_price(frame: DataFrame, side: str, strength: int) -> Series:
+    body_high = pd.concat([_num(frame, "open"), _num(frame, "close")], axis=1).max(axis=1)
+    body_low = pd.concat([_num(frame, "open"), _num(frame, "close")], axis=1).min(axis=1)
+    body = body_high if side == "high" else body_low
+    return body.shift(int(strength))
 
 
 def _candidate_from_pivot_pair(
@@ -941,6 +963,8 @@ def _validate_config(cfg: TrendlineProjectionConfig) -> None:
         raise ValueError("max_line_slope_pct_per_bar must be positive")
     if cfg.max_active_line_distance_pct <= 0.0:
         raise ValueError("max_active_line_distance_pct must be positive")
+    if cfg.max_projection_bars_after_last_touch < 1:
+        raise ValueError("max_projection_bars_after_last_touch must be positive")
     if cfg.compression_window < 2:
         raise ValueError("compression_window must be at least 2")
     if cfg.compression_min_periods < 1 or cfg.compression_min_periods > cfg.compression_window:

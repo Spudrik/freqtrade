@@ -10,9 +10,11 @@ from pandas import DataFrame, Series
 
 try:
     from .complex_pivot_structure import PivotStructureConfig, add_pivot_structure
+    from .complex_line_engine import PivotLineEngineConfig, ranked_pivot_lines
 except Exception:  # pragma: no cover - optional fallback for standalone notebooks
     PivotStructureConfig = None  # type: ignore[assignment]
     add_pivot_structure = None  # type: ignore[assignment]
+    from complex_line_engine import PivotLineEngineConfig, ranked_pivot_lines  # type: ignore[no-redef]
 
 MissingPivotMode = Literal["raise", "compute", "skip"]
 TrendlineSide = Literal["high", "low"]
@@ -53,6 +55,7 @@ class StructuralTrendlineConfig:
     min_span_age_ratio: float = 0.18
     max_slope_pct_per_bar: float = 0.0035
     max_projection_distance_pct: float = 0.25
+    max_projection_bars_after_last_touch: int = 50
     breakout_buffer_pct: float = 0.003
     compression_window: int = 240
     compression_min_periods: int = 48
@@ -86,6 +89,7 @@ def add_structural_trendlines(
     min_span_age_ratio: float | None = None,
     max_slope_pct_per_bar: float | None = None,
     max_projection_distance_pct: float | None = None,
+    max_projection_bars_after_last_touch: int | None = None,
     breakout_buffer_pct: float | None = None,
     compression_window: int | None = None,
     compression_min_periods: int | None = None,
@@ -123,6 +127,7 @@ def add_structural_trendlines(
         min_span_age_ratio=min_span_age_ratio,
         max_slope_pct_per_bar=max_slope_pct_per_bar,
         max_projection_distance_pct=max_projection_distance_pct,
+        max_projection_bars_after_last_touch=max_projection_bars_after_last_touch,
         breakout_buffer_pct=breakout_buffer_pct,
         compression_window=compression_window,
         compression_min_periods=compression_min_periods,
@@ -388,35 +393,41 @@ def _ranked_structural_lines(
     cfg: StructuralTrendlineConfig,
 ) -> dict[str, Series]:
     pp = cfg.pivot_prefix
-    slots = max(int(cfg.ranked_line_count), 1)
-    pivot_count = max(int(cfg.candidate_pivot_count), int(cfg.min_touch_count), 3)
-    event_price = _num(frame, f"{pp}_pivot_{side}_{strength}")
+    pivot_event_price = _num(frame, f"{pp}_pivot_{side}_{strength}")
+    event_price = _body_anchor_price(frame, side, strength).where(pivot_event_price.notna())
     event_prominence = _num(frame, f"{pp}_pivot_{side}_prominence_{strength}")
-    event_index = (bar_index - float(strength)).where(event_price.notna())
-    allowed = event_price.notna() & event_prominence.fillna(0.0).ge(float(cfg.min_pivot_prominence_atr))
-    recent = _recent_pivot_events(
-        event_price.where(allowed),
-        event_index.where(allowed),
-        event_prominence.where(allowed),
-        frame.index,
-        pivot_count,
+    event_index = (bar_index - float(strength)).where(pivot_event_price.notna())
+    engine_cfg = PivotLineEngineConfig(
+        candidate_pivot_count=int(cfg.candidate_pivot_count),
+        ranked_line_count=int(cfg.ranked_line_count),
+        min_touch_count=int(cfg.min_touch_count),
+        min_anchor_span_bars=int(cfg.min_anchor_span_bars),
+        min_line_span_bars=int(cfg.min_line_span_bars),
+        max_line_age_bars=int(cfg.max_line_age_bars),
+        min_pivot_prominence=float(cfg.min_pivot_prominence_atr),
+        touch_tolerance_atr_mult=float(cfg.touch_tolerance_atr_mult),
+        touch_tolerance_pct=float(cfg.touch_tolerance_pct),
+        fit_touch_tolerance_pct=float(cfg.touch_tolerance_pct),
+        min_respect_ratio=float(cfg.min_respect_ratio),
+        min_span_age_ratio=float(cfg.min_span_age_ratio),
+        max_slope_pct_per_bar=float(cfg.max_slope_pct_per_bar),
+        max_projection_distance_pct=float(cfg.max_projection_distance_pct),
+        max_active_line_distance_pct=None,
+        projection_bars_after_last_touch=int(cfg.max_projection_bars_after_last_touch),
+        use_envelope_fit=False,
+        include_rolling_fit=False,
+        use_weighted_fit=False,
     )
-    candidates: list[dict[str, Series]] = []
-    for newer in range(pivot_count - 1):
-        for older in range(newer + 1, pivot_count):
-            candidates.append(
-                _candidate_from_pair(
-                    close=close,
-                    atr=atr,
-                    bar_index=bar_index,
-                    recent=recent,
-                    newer=newer,
-                    older=older,
-                    side=side,
-                    cfg=cfg,
-                )
-            )
-    return _rank_candidates(candidates, frame.index, slots)
+    return ranked_pivot_lines(
+        close=close,
+        atr=atr,
+        bar_index=bar_index,
+        event_price=event_price,
+        event_index=event_index,
+        event_prominence=event_prominence,
+        side=side,
+        cfg=engine_cfg,
+    )
 
 
 def _recent_pivot_events(event_price: Series, event_index: Series, event_prominence: Series, index: pd.Index, count: int) -> dict[str, list[Series]]:
@@ -866,6 +877,8 @@ def _validate_config(cfg: StructuralTrendlineConfig) -> None:
         raise ValueError("min_span_age_ratio must be between 0 and 1")
     if cfg.max_slope_pct_per_bar <= 0.0 or cfg.max_projection_distance_pct <= 0.0:
         raise ValueError("slope/projection settings must be positive")
+    if cfg.max_projection_bars_after_last_touch < 1:
+        raise ValueError("max_projection_bars_after_last_touch must be positive")
     if cfg.compression_window < 2:
         raise ValueError("compression_window must be at least 2")
     if cfg.compression_min_periods < 1 or cfg.compression_min_periods > cfg.compression_window:
@@ -906,6 +919,13 @@ def _num(frame: DataFrame, column: str) -> Series:
     if column not in frame.columns:
         return pd.Series(np.nan, index=frame.index, dtype="float64")
     return pd.to_numeric(frame[column], errors="coerce")
+
+
+def _body_anchor_price(frame: DataFrame, side: str, strength: int) -> Series:
+    body_high = pd.concat([_num(frame, "open"), _num(frame, "close")], axis=1).max(axis=1)
+    body_low = pd.concat([_num(frame, "open"), _num(frame, "close")], axis=1).min(axis=1)
+    body = body_high if side == "high" else body_low
+    return body.shift(int(strength))
 
 
 def _optional_num(frame: DataFrame, column: str, fallback: Series | float) -> Series:
