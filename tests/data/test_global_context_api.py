@@ -40,7 +40,7 @@ def test_global_context_normalizers_score_and_note_payloads() -> None:
     assert fear["score"] == 72.0
     assert fear["source_score"] == 72.0
     assert fear["calc_score"] is None
-    assert fear["signal"] == "risk_on"
+    assert fear["signal"] == "Greed"
     assert fear["value"] == 72.0
     assert fear["source_ts"]
 
@@ -63,7 +63,8 @@ def test_global_context_normalizers_score_and_note_payloads() -> None:
     assert "BTC dom 51.20%" in global_row["notes"]
     btc_dominance = next(row for row in global_rows if row["metric_key"] == "btc_dominance_pct")
     assert btc_dominance["value"] == 51.2
-    assert btc_dominance["score"] is None
+    assert round(float(btc_dominance["score"]), 6) == 52.4
+    assert btc_dominance["signal"] == "Balanced"
 
     markets = normalize_coingecko_markets(
         _source("coingecko_btc_eth", "coingecko_markets", "market"),
@@ -111,6 +112,7 @@ def test_defillama_normalizers_build_liquidity_context() -> None:
     assert supply["value"] == 150.0
     day_change = next(row for row in stablecoin_rows if row["metric_key"] == "stablecoin_supply_change_1d")
     assert round(float(day_change["value"]), 6) == round((150.0 - 149.0) / 149.0 * 100.0, 6)
+    assert day_change["calc_score"] == day_change["score"]
 
     chains = normalize_defillama_chains(
         _source("defillama_chains", "defillama_chains", "defi"),
@@ -142,7 +144,7 @@ def test_equity_and_fred_normalizers_build_headline_risk_context() -> None:
         store_raw=False,
     )
     assert stooq["metric_key"] == "us_equity_risk_basket_change"
-    assert stooq["signal"] == "risk_off"
+    assert stooq["signal"] == "Fear"
     assert stooq["value"] == -1.5
     assert stooq["calc_score"] == stooq["score"]
     assert "SPY -1.00%" in stooq["notes"]
@@ -163,7 +165,7 @@ def test_equity_and_fred_normalizers_build_headline_risk_context() -> None:
         store_raw=False,
     )
     assert fred["metric_key"] == "fred_us_equity_daily_change"
-    assert fred["signal"] == "risk_off"
+    assert fred["signal"] == "Fear"
     assert fred["calc_score"] == fred["score"]
     assert "VIX 10.00%" in fred["notes"]
 
@@ -219,7 +221,7 @@ def test_service_command_and_latest_rows(tmp_path: Path) -> None:
                 "score": 55.0,
                 "source_score": None,
                 "calc_score": 55.0,
-                "signal": "neutral",
+                "signal": "Neutral",
                 "value": 1.0,
                 "unit": "percent",
                 "notes": "test row",
@@ -228,11 +230,14 @@ def test_service_command_and_latest_rows(tmp_path: Path) -> None:
         conn.commit()
 
     rows = service.latest_context_rows(state)
-    assert rows[0][:10] == ("coingecko_global", "market", "global_market_cap_change_24h", "neutral", "55", "-", "55", "1", "percent", "test row")
+    assert rows[0][:10] == ("coingecko_global", "market", "global_market_cap_change_24h", "Neutral", "55", "-", "55", "1", "percent", "test row")
     assert service.latest_context_rows(state, {"equity_indices"}) == []
-    assert service.summary_rows(state)[0][0:4] == ("market", "neutral", "55", 1)
+    assert service.summary_rows(state)[0][0:4] == ("market", "Neutral", "55", 1)
     assert service.score_summary(state)["average_score"] == "55"
-    assert service.score_detail_rows(state)[0][:6] == ("coingecko_global", "global_market_cap_change_24h", "neutral", "55", "-", "55")
+    assert service.score_summary(state)["min_score"] == "55"
+    assert service.score_summary(state)["max_score"] == "55"
+    assert service.score_summary(state)["mean_score"] == "55"
+    assert service.score_detail_rows(state)[0] == ("global_market_cap_change_24h", "55")
 
 
 def test_fred_key_file_json_path(tmp_path: Path) -> None:

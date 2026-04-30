@@ -78,15 +78,17 @@ def normalize_coingecko_global(source: dict[str, Any], payload: Any, *, store_ra
     )
     rows = [primary]
     if btc_dom is not None:
+        dominance_score = _btc_dominance_score(btc_dom)
         rows.append(
             result(
                 source,
                 metric_key="btc_dominance_pct",
-                score=None,
-                signal="",
+                score=dominance_score,
+                calc_score=dominance_score,
+                signal=_btc_dominance_signal(dominance_score),
                 value=btc_dom,
                 unit="percent",
-                notes="BTC market-cap dominance from CoinGecko global endpoint.",
+                notes="BTC market-cap dominance from CoinGecko global endpoint. Score maps low dominance to Weak and high dominance to Strong.",
                 raw=None,
             )
         )
@@ -125,3 +127,15 @@ def normalize_coingecko_markets(source: dict[str, Any], payload: Any, *, store_r
         notes="; ".join(note_parts) or "No coin rows returned.",
         raw=payload if store_raw else None,
     )
+
+
+def _btc_dominance_score(value: float) -> float:
+    return clamp(50.0 + (value - 50.0) * 2.0)
+
+
+def _btc_dominance_signal(score: float) -> str:
+    if score >= 60:
+        return "Strong"
+    if score <= 40:
+        return "Weak"
+    return "Balanced"

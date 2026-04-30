@@ -30,7 +30,7 @@ class GlobalContextTab(BaseTab):
         self.preview_var = tk.StringVar(value="")
         self.score_summary_vars = {
             key: tk.StringVar(value="-")
-            for key in ("average_score", "signal", "score_count", "source_score_count", "calc_score_count")
+            for key in ("average_score", "min_score", "max_score", "mean_score")
         }
         self.status_vars = {
             key: tk.StringVar(value="-")
@@ -123,21 +123,20 @@ class GlobalContextTab(BaseTab):
         score_header.grid(row=0, column=0, sticky="ew", padx=8, pady=(4, 2))
         labels = [
             ("Average", "average_score"),
-            ("Signal", "signal"),
-            ("Scores", "score_count"),
-            ("Source", "source_score_count"),
-            ("Calc", "calc_score_count"),
+            ("Min", "min_score"),
+            ("Max", "max_score"),
+            ("Mean", "mean_score"),
         ]
         for index, (label, key) in enumerate(labels):
             ttk.Label(score_header, text=f"{label}:").grid(row=0, column=index * 2, sticky="w", padx=(0, 3))
             ttk.Label(score_header, textvariable=self.score_summary_vars[key]).grid(row=0, column=index * 2 + 1, sticky="w", padx=(0, 12))
-        score_columns = ("source_id", "metric_key", "signal", "effective_score", "source_score", "calc_score")
+        score_columns = ("metric_key", "effective_score")
         self.score_tree = ttk.Treeview(score_panel, columns=score_columns, show="headings", height=4)
         for column in score_columns:
             self.score_tree.heading(column, text=column)
             self.score_tree.column(column, width=120, anchor="w")
-        self.score_tree.column("source_id", width=170, anchor="w")
-        self.score_tree.column("metric_key", width=220, anchor="w")
+        self.score_tree.column("metric_key", width=360, anchor="w")
+        self.score_tree.column("effective_score", width=120, anchor="w")
         self.score_tree.grid(row=2, column=0, sticky="nsew", padx=8, pady=(2, 6))
 
         views = ttk.Notebook(self)
@@ -276,7 +275,7 @@ class GlobalContextTab(BaseTab):
             summary = self.service.score_summary(self._state())
             for key, variable in self.score_summary_vars.items():
                 variable.set(str(summary.get(key) or "-"))
-            set_tree_rows(self.score_tree, [row[:6] for row in self.service.score_detail_rows(self._state())])
+            set_tree_rows(self.score_tree, self.service.score_detail_rows(self._state()))
         except Exception:
             for variable in self.score_summary_vars.values():
                 variable.set("-")

@@ -11,7 +11,7 @@
 
 ## Implemented in Global Context
 
-- Alternative.me Fear & Greed index: stored as a source-provided 0-100 sentiment score with risk-on/risk-off labeling.
+- Alternative.me Fear & Greed index: stored as a source-provided 0-100 sentiment score with Fear/Neutral/Greed labeling.
 - CoinGecko global market endpoint: total crypto market cap, volume, BTC dominance, and 24h market-cap change. BTC dominance is also stored as its own `btc_dominance_pct` metric row.
 - CoinGecko BTC/ETH markets endpoint: BTC/ETH price and short-term price-change context.
 - DeFiLlama stablecoins endpoint: stablecoin supply trend as a crypto-liquidity proxy. Current supply is stored as `stablecoin_supply_usd`, with change rows for later analysis.
@@ -21,10 +21,11 @@
 
 ## Global Context Scoring
 
-- `score` is the effective 0-100 risk score used by the UI summary and remains backward-compatible for existing queries.
+- `score` is the effective 0-100 score used by the UI summary and remains backward-compatible for existing queries.
 - `source_score` is populated only when the source supplies an actual score, such as Alternative.me Fear & Greed.
 - `calc_score` is populated when the launcher normalizes raw source data into a comparable risk score.
-- Metric-only rows such as `btc_dominance_pct` and `stablecoin_supply_usd` intentionally keep score fields empty so they do not distort the average.
+- Fear/Neutral/Greed labels are used for broad market mood/liquidity scores. BTC dominance uses Weak/Balanced/Strong because its score describes BTC share strength, not market fear.
+- `btc_dominance_pct` gets a calculated dominance-strength score. `stablecoin_supply_change_1d` gets a calculated liquidity-change score. Raw `stablecoin_supply_usd` intentionally stays unscored because the absolute supply level is not meaningful without a historical baseline.
 
 ## FRED Key File
 

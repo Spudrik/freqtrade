@@ -92,6 +92,7 @@ def init_db(db_path: Path) -> None:
         _ensure_column(conn, "context_sources", "last_calc_score", "REAL")
         _ensure_column(conn, "global_context_ticks", "source_score", "REAL")
         _ensure_column(conn, "global_context_ticks", "calc_score", "REAL")
+        _migrate_signal_labels(conn)
         conn.execute("INSERT OR REPLACE INTO schema_meta(key, value) VALUES(?, ?)", ("version", SCHEMA_VERSION))
         conn.commit()
     finally:
@@ -102,6 +103,13 @@ def _ensure_column(conn: sqlite3.Connection, table_name: str, column_name: str, 
     columns = {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()}
     if column_name not in columns:
         conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
+
+
+def _migrate_signal_labels(conn: sqlite3.Connection) -> None:
+    replacements = {"risk_off": "Fear", "risk_on": "Greed", "neutral": "Neutral"}
+    for old, new in replacements.items():
+        conn.execute("UPDATE global_context_ticks SET signal = ? WHERE signal = ?", (new, old))
+        conn.execute("UPDATE context_sources SET last_signal = ? WHERE last_signal = ?", (new, old))
 
 
 def upsert_collector_run(

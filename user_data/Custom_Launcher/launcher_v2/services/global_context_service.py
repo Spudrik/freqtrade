@@ -177,7 +177,7 @@ class GlobalContextService:
                 row["source_id"],
                 row["source_group"],
                 row["metric_key"],
-                row["signal"],
+                _display_signal(row["signal"], row["score"]),
                 _fmt(row["score"]),
                 _fmt(row["source_score"]),
                 _fmt(row["calc_score"]),
@@ -193,21 +193,13 @@ class GlobalContextService:
     def score_summary(self, state: dict[str, Any]) -> dict[str, Any]:
         rows = self._latest_context_records(state)
         scored = [row for row in rows if _float_or_none(row["score"]) is not None]
-        scores = [_float_or_none(row["score"]) for row in scored]
-        valid_scores = [score for score in scores if score is not None]
-        avg_score = (sum(valid_scores) / len(valid_scores)) if valid_scores else None
-        source_count = sum(1 for row in scored if _float_or_none(row["source_score"]) is not None)
-        calc_count = sum(1 for row in scored if _float_or_none(row["calc_score"]) is not None)
-        signals = [str(row["signal"] or "") for row in scored]
-        risk_off = signals.count("risk_off")
-        risk_on = signals.count("risk_on")
-        signal = "risk_off" if risk_off > risk_on else "risk_on" if risk_on > risk_off else "neutral"
+        valid_scores = [score for score in (_float_or_none(row["score"]) for row in scored) if score is not None]
+        mean_score = (sum(valid_scores) / len(valid_scores)) if valid_scores else None
         return {
-            "average_score": _fmt(avg_score),
-            "signal": signal,
-            "score_count": str(len(scored)),
-            "source_score_count": str(source_count),
-            "calc_score_count": str(calc_count),
+            "average_score": _fmt(mean_score),
+            "min_score": _fmt(min(valid_scores) if valid_scores else None),
+            "max_score": _fmt(max(valid_scores) if valid_scores else None),
+            "mean_score": _fmt(mean_score),
         }
 
     def score_detail_rows(self, state: dict[str, Any]) -> list[tuple[Any, ...]]:
@@ -215,13 +207,8 @@ class GlobalContextService:
         scored = [row for row in rows if _float_or_none(row["score"]) is not None]
         return [
             (
-                row["source_id"],
                 row["metric_key"],
-                row["signal"] or "",
                 _fmt(row["score"]),
-                _fmt(row["source_score"]),
-                _fmt(row["calc_score"]),
-                row["ts"] or "",
             )
             for row in scored
         ]
@@ -236,10 +223,7 @@ class GlobalContextService:
             scores = [_float_or_none(row["score"]) for row in group_rows]
             valid_scores = [score for score in scores if score is not None]
             avg_score = (sum(valid_scores) / len(valid_scores)) if valid_scores else None
-            signals = [str(row["signal"] or "") for row in group_rows]
-            risk_off = signals.count("risk_off")
-            risk_on = signals.count("risk_on")
-            signal = "risk_off" if risk_off > risk_on else "risk_on" if risk_on > risk_off else "neutral"
+            signal = _score_signal(avg_score)
             notes = " | ".join(str(row["notes"] or "") for row in group_rows[:3])
             latest_ts = max((str(row["ts"] or "") for row in group_rows), default="")
             output.append((group, signal, _fmt(avg_score), len(group_rows), notes, latest_ts))
@@ -275,7 +259,7 @@ class GlobalContextService:
                 _fmt(row["last_score"]),
                 _fmt(row["last_source_score"]),
                 _fmt(row["last_calc_score"]),
-                row["last_signal"] or "",
+                _display_signal(row["last_signal"], row["last_score"]),
                 row["last_notes"] or "",
                 row["updated_at"],
             )
@@ -332,3 +316,22 @@ def _float_or_none(value: Any) -> float | None:
         return float(value)
     except Exception:
         return None
+
+
+def _score_signal(score: Any) -> str:
+    value = _float_or_none(score)
+    if value is None:
+        return "Neutral"
+    if value >= 65:
+        return "Greed"
+    if value <= 35:
+        return "Fear"
+    return "Neutral"
+
+
+def _display_signal(signal: Any, score: Any) -> str:
+    text = str(signal or "").strip()
+    replacements = {"risk_off": "Fear", "risk_on": "Greed", "neutral": "Neutral"}
+    if text in replacements:
+        return replacements[text]
+    return text or _score_signal(score)

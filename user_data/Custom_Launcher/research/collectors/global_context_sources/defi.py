@@ -53,12 +53,14 @@ def normalize_defillama_stablecoins(source: dict[str, Any], payload: Any, *, sto
         )
     )
     if change_1d is not None:
+        day_score = clamp(50.0 + change_1d * 15.0)
         rows.append(
             result(
                 source,
                 metric_key="stablecoin_supply_change_1d",
-                score=None,
-                signal="",
+                score=day_score,
+                calc_score=day_score,
+                signal=score_signal(day_score),
                 value=change_1d,
                 unit="percent",
                 notes="One-day aggregate stablecoin supply change from DeFiLlama.",

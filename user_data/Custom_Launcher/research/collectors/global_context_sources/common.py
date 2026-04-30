@@ -89,23 +89,23 @@ def clamp(value: float | None, low: float = 0.0, high: float = 100.0) -> float:
 def score_signal(score: float | None) -> str:
     value = clamp(score)
     if value >= 65:
-        return "risk_on"
+        return "Greed"
     if value <= 35:
-        return "risk_off"
-    return "neutral"
+        return "Fear"
+    return "Neutral"
 
 
 def score_label(score: float | None) -> str:
     value = clamp(score)
     if value >= 75:
-        return "strong risk-on"
+        return "Strong Greed"
     if value >= 60:
-        return "risk-on"
+        return "Greed"
     if value <= 25:
-        return "strong risk-off"
+        return "Strong Fear"
     if value <= 40:
-        return "risk-off"
-    return "neutral"
+        return "Fear"
+    return "Neutral"
 
 
 def compact_usd(value: float | None) -> str:
