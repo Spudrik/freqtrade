@@ -21,7 +21,7 @@
     3600
   ],
   "snapshot_interval_seconds": 60,
-  "store_snapshots": true,
+  "store_snapshots": false,
   "store_raw_events": false,
   "max_symbols": 12,
   "capacity_warning_mb": 500,

@@ -131,7 +131,7 @@ def read_config(path: Path) -> dict[str, Any]:
     payload.setdefault("context_period", "5m")
     payload.setdefault("bar_intervals_seconds", [60, 300, 3600])
     payload.setdefault("snapshot_interval_seconds", 60)
-    payload.setdefault("store_snapshots", True)
+    payload.setdefault("store_snapshots", False)
     payload.setdefault("store_raw_events", False)
     payload.setdefault("max_symbols", 12)
     payload.setdefault("capacity_warning_mb", 500)

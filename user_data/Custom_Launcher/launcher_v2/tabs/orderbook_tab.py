@@ -33,7 +33,7 @@ class OrderBookTab(BaseTab):
         self.capacity_warning_mb_var = tk.StringVar(value="500")
         self.capacity_critical_mb_var = tk.StringVar(value="2000")
         self.max_symbols_var = tk.StringVar(value="12")
-        self.store_snapshots_var = tk.BooleanVar(value=True)
+        self.store_snapshots_var = tk.BooleanVar(value=False)
         self.collector_preview_var = tk.StringVar(value="")
         self.status_vars = {key: tk.StringVar(value="-") for key in ("status", "pid", "started_at", "heartbeat_at", "last_message_at", "last_metric_at", "pair_count", "active_streams", "messages", "metrics", "contexts", "db_mb", "data_dir_mb", "capacity", "last_error")}
         self.estimate_vars = {key: tk.StringVar(value="-") for key in ("metric_rows", "snapshot_rows", "mb_per_day", "days_to_warning", "pair_count", "symbol_count")}
@@ -93,7 +93,7 @@ class OrderBookTab(BaseTab):
             labeled_entry(settings, offset, 0, left_label, left_var)
             if right_var is not None:
                 labeled_entry(settings, offset, 2, right_label, right_var)
-        ttk.Checkbutton(settings, text="Store snapshots", variable=self.store_snapshots_var).grid(row=8, column=0, columnspan=2, sticky="w", padx=8, pady=4)
+        ttk.Checkbutton(settings, text="Store raw snapshots (optional, high storage)", variable=self.store_snapshots_var).grid(row=8, column=0, columnspan=2, sticky="w", padx=8, pady=4)
 
         preview = ttk.LabelFrame(root, text="Generated command")
         preview.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 8))
@@ -131,13 +131,27 @@ class OrderBookTab(BaseTab):
         pair_frame = ttk.LabelFrame(lower, text="Whitelist preview")
         pair_frame.grid_columnconfigure(0, weight=1)
         pair_frame.grid_rowconfigure(0, weight=1)
-        self.pair_tree = ttk.Treeview(pair_frame, columns=("pair", "market", "symbol", "status"), show="headings", height=5)
-        for column in ("pair", "market", "symbol", "status"):
+        self.pair_tree = ttk.Treeview(pair_frame, columns=("pair", "market", "symbol", "depth", "update_ms", "status"), show="headings", height=5)
+        for column in ("pair", "market", "symbol", "depth", "update_ms", "status"):
             self.pair_tree.heading(column, text=column)
-            self.pair_tree.column(column, width=170, anchor="w")
+            self.pair_tree.column(column, width=140, anchor="w")
+        self.pair_tree.column("pair", width=170, anchor="w")
+        self.pair_tree.column("market", width=170, anchor="w")
         self.pair_tree.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
         ttk.Label(pair_frame, textvariable=self.pair_warning_var).grid(row=1, column=0, sticky="w", padx=8, pady=(0, 8))
         lower.add(pair_frame, weight=1)
+
+        health = ttk.LabelFrame(lower, text="Stream health")
+        health.grid_columnconfigure(0, weight=1)
+        health.grid_rowconfigure(0, weight=1)
+        health_columns = ("market_key", "canonical_pair", "symbol", "status", "messages", "metrics", "reconnects", "errors", "last_message_at", "last_metric_at", "last_error")
+        self.health_tree = ttk.Treeview(health, columns=health_columns, show="headings", height=5)
+        for column in health_columns:
+            self.health_tree.heading(column, text=column)
+            self.health_tree.column(column, width=135, anchor="w")
+        self.health_tree.column("last_error", width=260, anchor="w")
+        self.health_tree.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
+        lower.add(health, weight=1)
 
         metrics = ttk.LabelFrame(lower, text="Latest metrics")
         metrics.grid_columnconfigure(0, weight=1)
@@ -288,7 +302,7 @@ class OrderBookTab(BaseTab):
     def refresh_pair_preview(self) -> None:
         state = self._state()
         valid, preview = self.service.normalized_pairs(self._main_pairs(), state)
-        set_tree_rows(self.pair_tree, [(row["pair"], row["market"], row["symbol"], row["status"]) for row in preview] if hasattr(self, "pair_tree") else [])
+        set_tree_rows(self.pair_tree, [(row["pair"], row["market"], row["symbol"], row["depth"], row["update_ms"], row["status"]) for row in preview] if hasattr(self, "pair_tree") else [])
         estimate = self.service.estimate(len(valid), state)
         self.estimate_vars["metric_rows"].set(f"{estimate['metric_rows_per_day']:.0f}")
         self.estimate_vars["snapshot_rows"].set(f"{estimate['snapshot_rows_per_day']:.0f}")
@@ -344,6 +358,10 @@ class OrderBookTab(BaseTab):
         }
         for key, value in mapping.items():
             self.status_vars[key].set(str(value))
+        try:
+            set_tree_rows(self.health_tree, self.service.stream_health_rows(self._state()))
+        except Exception:
+            set_tree_rows(self.health_tree, [])
         try:
             set_tree_rows(self.metrics_tree, self.service.latest_metric_rows(self._state()))
         except Exception:
@@ -484,7 +502,7 @@ class OrderBookTab(BaseTab):
         self.capacity_warning_mb_var.set(str(state.get("capacity_warning_mb") or "500"))
         self.capacity_critical_mb_var.set(str(state.get("capacity_critical_mb") or "2000"))
         self.max_symbols_var.set(str(state.get("max_symbols") or "12"))
-        self.store_snapshots_var.set(bool(state.get("store_snapshots", True)))
+        self.store_snapshots_var.set(bool(state.get("store_snapshots", False)))
         self.history_datadir_var.set(str(state.get("history_datadir") or self.history_datadir_var.get()))
         self.history_exchange_var.set(str(state.get("history_exchange") or "bybit"))
         self.history_trading_mode_var.set(str(state.get("history_trading_mode") or "futures"))

@@ -165,8 +165,13 @@ def test_service_generates_multi_profile_config_and_single_pair_arg() -> None:
     command = service.build_collector_command(state, ["BTC/USDT"])
 
     assert runtime["market_profiles"] == ["binance_spot", "binance_usdm_futures", "bybit_spot", "bybit_linear"]
+    assert runtime["store_snapshots"] is False
     assert len(valid) == 4
     assert len(preview) == 4
+    assert preview[0]["depth"] == "20"
+    assert preview[0]["update_ms"] == "100"
+    assert preview[2]["depth"] == "50"
+    assert preview[2]["update_ms"] == "20"
     assert command[-2:] == ["--pairs", "BTC/USDT"]
 
 

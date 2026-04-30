@@ -17,6 +17,7 @@ from orderbook.markets import (
     normalize_pairs_for_profiles,
     pair_to_symbol,
     resolve_profile_depth,
+    resolve_profile_update_ms,
 )
 from orderbook.metrics import estimate_storage_usage, normalize_freqtrade_pair_to_binance_symbol, normalize_whitelist_pairs
 
@@ -97,7 +98,7 @@ class OrderBookService:
             "context_poll_seconds": context_poll_seconds,
             "context_period": str(state.get("context_period") or "5m"),
             "snapshot_interval_seconds": snapshot_interval,
-            "store_snapshots": bool(state.get("store_snapshots", True)),
+            "store_snapshots": bool(state.get("store_snapshots", False)),
             "max_symbols": max_symbols,
             "capacity_warning_mb": warning_mb,
             "capacity_critical_mb": critical_mb,
@@ -118,7 +119,7 @@ class OrderBookService:
         paths["config"].write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
         return paths["config"]
 
-    def normalized_pairs(self, pairs: list[str], state: dict[str, Any]) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    def normalized_pairs(self, pairs: list[str], state: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
         max_symbols = max(1, int(str(state.get("max_symbols") or "12")))
         profile_keys = normalize_market_profile_keys(state.get("market_profiles"))
         valid = normalize_pairs_for_profiles(
@@ -128,25 +129,32 @@ class OrderBookService:
             depth_levels=max(1, int(str(state.get("depth_levels") or "20"))),
             stream_update_ms=max(1, int(str(state.get("stream_update_ms") or "500"))),
         )
+        records_by_pair_market = {
+            (str(item["canonical_pair"]), str(item["market_key"])): item
+            for item in valid
+        }
         seen = {item["canonical_pair"] for item in normalize_whitelist_pairs(pairs, max_symbols=max_symbols)}
         preview: list[dict[str, str]] = []
         for pair in pairs:
             canonical = str(pair or "").strip().upper()
             if "/" not in canonical:
-                preview.append({"pair": pair, "market": "-", "symbol": "-", "status": "invalid"})
+                preview.append({"pair": pair, "market": "-", "symbol": "-", "depth": "-", "update_ms": "-", "status": "invalid"})
                 continue
             canonical_pair = canonical.split(":", 1)[0]
             if canonical_pair not in seen:
-                preview.append({"pair": pair, "market": "-", "symbol": "-", "status": "max_symbols_limit"})
+                preview.append({"pair": pair, "market": "-", "symbol": "-", "depth": "-", "update_ms": "-", "status": "max_symbols_limit"})
                 continue
             for profile_key in profile_keys:
                 profile = MARKET_PROFILES[profile_key]
                 symbol = pair_to_symbol(pair, profile)
+                record = records_by_pair_market.get((canonical_pair, profile.market_key))
                 preview.append(
                     {
                         "pair": pair,
                         "market": profile.market_key,
                         "symbol": symbol or "-",
+                        "depth": str(record.get("stream_depth")) if record else "-",
+                        "update_ms": str(record.get("stream_update_ms")) if record else "-",
                         "status": "ok" if symbol else "unsupported_quote",
                     }
                 )
@@ -161,7 +169,7 @@ class OrderBookService:
                 metric_interval_seconds=max(1, int(str(state.get("metric_interval_seconds") or "1"))),
                 snapshot_interval_seconds=max(1, int(str(state.get("snapshot_interval_seconds") or "60"))),
                 depth_levels=requested_depth,
-                store_snapshots=bool(state.get("store_snapshots", True)),
+                store_snapshots=bool(state.get("store_snapshots", False)),
             )
         retained_depth = max(
             min(requested_depth, resolve_profile_depth(MARKET_PROFILES[key], requested_depth))
@@ -172,8 +180,24 @@ class OrderBookService:
             metric_interval_seconds=max(1, int(str(state.get("metric_interval_seconds") or "1"))),
             snapshot_interval_seconds=max(1, int(str(state.get("snapshot_interval_seconds") or "60"))),
             depth_levels=retained_depth,
-            store_snapshots=bool(state.get("store_snapshots", True)),
+            store_snapshots=bool(state.get("store_snapshots", False)),
         )
+
+    def effective_profile_settings(self, state: dict[str, Any]) -> list[tuple[str, str, str, str]]:
+        requested_depth = max(1, int(str(state.get("depth_levels") or "20")))
+        requested_update = max(1, int(str(state.get("stream_update_ms") or "500")))
+        rows: list[tuple[str, str, str, str]] = []
+        for profile_key in normalize_market_profile_keys(state.get("market_profiles")):
+            profile = MARKET_PROFILES[profile_key]
+            rows.append(
+                (
+                    profile.market_key,
+                    str(resolve_profile_depth(profile, requested_depth)),
+                    str(resolve_profile_update_ms(profile, requested_update)),
+                    "yes" if profile.context_supported else "no",
+                )
+            )
+        return rows
 
     def build_collector_command(self, state: dict[str, Any], pairs: list[str]) -> list[str]:
         paths = self.paths(state)
@@ -283,6 +307,22 @@ class OrderBookService:
                 SELECT market_key, canonical_pair, pair, symbol, status, best_bid, best_ask, spread_bps, imbalance_top20,
                        bid_pressure_ratio_60s, ask_pressure_ratio_60s,
                        nearest_bid_wall_distance_bps, nearest_ask_wall_distance_bps, last_metric_at
+                FROM stream_status
+                ORDER BY canonical_pair, market_key
+                """
+            ).fetchall()
+        return [tuple(row[key] for key in row.keys()) for row in rows]
+
+    def stream_health_rows(self, state: dict[str, Any]) -> list[tuple[Any, ...]]:
+        paths = self.paths(state)
+        if not paths["db"].exists():
+            return []
+        with sqlite3.connect(str(paths["db"]), timeout=5.0) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT market_key, canonical_pair, symbol, status, message_count, metric_count,
+                       reconnect_count, error_count, last_message_at, last_metric_at, last_error
                 FROM stream_status
                 ORDER BY canonical_pair, market_key
                 """

@@ -6,6 +6,7 @@
 - Binance USD-M futures order book partial-depth streams: public WebSocket, no key required.
 - Bybit spot order book streams: public V5 WebSocket, no key required.
 - Bybit linear futures order book streams: public V5 WebSocket, no key required.
+- Live order book metric ticks and bars are the default storage path for later dataframe/backtest use. Raw depth snapshots are optional and default off because they increase storage quickly and are not required for metric-based dataframe features.
 - Binance USD-M context: funding, open interest, global long/short account ratio, and taker long/short volume from public REST endpoints.
 - Bybit linear context: funding, open interest, account ratio, and recent-trade taker volume approximation from public REST endpoints. The shared `5m` context period is translated to Bybit's `5min` parameter format at request time.
 
