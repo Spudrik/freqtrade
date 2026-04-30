@@ -5,6 +5,8 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+SCHEMA_VERSION = "2"
+
 
 def utc_now() -> str:
     from datetime import datetime, timezone
@@ -45,8 +47,13 @@ def init_db(db_path: Path) -> None:
 
             CREATE TABLE IF NOT EXISTS stream_status (
                 stream_id TEXT PRIMARY KEY,
+                market_key TEXT NOT NULL,
+                venue TEXT NOT NULL,
                 exchange TEXT NOT NULL,
                 market_type TEXT NOT NULL,
+                margin_type TEXT NOT NULL,
+                quote_asset TEXT NOT NULL,
+                canonical_pair TEXT NOT NULL,
                 pair TEXT NOT NULL,
                 symbol TEXT NOT NULL,
                 depth_levels INTEGER NOT NULL,
@@ -76,8 +83,14 @@ def init_db(db_path: Path) -> None:
             CREATE TABLE IF NOT EXISTS orderbook_metric_ticks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ts TEXT NOT NULL,
+                stream_id TEXT NOT NULL,
+                market_key TEXT NOT NULL,
+                venue TEXT NOT NULL,
                 exchange TEXT NOT NULL,
                 market_type TEXT NOT NULL,
+                margin_type TEXT NOT NULL,
+                quote_asset TEXT NOT NULL,
+                canonical_pair TEXT NOT NULL,
                 pair TEXT NOT NULL,
                 symbol TEXT NOT NULL,
                 book_valid INTEGER NOT NULL,
@@ -140,8 +153,14 @@ def init_db(db_path: Path) -> None:
                 ts_start TEXT NOT NULL,
                 ts_end TEXT NOT NULL,
                 timeframe_seconds INTEGER NOT NULL,
+                stream_id TEXT NOT NULL,
+                market_key TEXT NOT NULL,
+                venue TEXT NOT NULL,
                 exchange TEXT NOT NULL,
                 market_type TEXT NOT NULL,
+                margin_type TEXT NOT NULL,
+                quote_asset TEXT NOT NULL,
+                canonical_pair TEXT NOT NULL,
                 pair TEXT NOT NULL,
                 symbol TEXT NOT NULL,
                 valid_samples INTEGER NOT NULL,
@@ -171,8 +190,14 @@ def init_db(db_path: Path) -> None:
             CREATE TABLE IF NOT EXISTS orderbook_snapshots (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ts TEXT NOT NULL,
+                stream_id TEXT NOT NULL,
+                market_key TEXT NOT NULL,
+                venue TEXT NOT NULL,
                 exchange TEXT NOT NULL,
                 market_type TEXT NOT NULL,
+                margin_type TEXT NOT NULL,
+                quote_asset TEXT NOT NULL,
+                canonical_pair TEXT NOT NULL,
                 pair TEXT NOT NULL,
                 symbol TEXT NOT NULL,
                 depth_levels INTEGER NOT NULL,
@@ -184,6 +209,30 @@ def init_db(db_path: Path) -> None:
                 created_at TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_orderbook_snapshots_pair_ts ON orderbook_snapshots(pair, ts);
+
+            CREATE TABLE IF NOT EXISTS market_context_ticks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts TEXT NOT NULL,
+                source_ts TEXT,
+                market_key TEXT NOT NULL,
+                venue TEXT NOT NULL,
+                market_type TEXT NOT NULL,
+                margin_type TEXT NOT NULL,
+                quote_asset TEXT NOT NULL,
+                canonical_pair TEXT NOT NULL,
+                symbol TEXT NOT NULL,
+                funding_rate REAL,
+                open_interest REAL,
+                long_ratio REAL,
+                short_ratio REAL,
+                long_short_ratio REAL,
+                taker_buy_volume REAL,
+                taker_sell_volume REAL,
+                taker_buy_sell_ratio REAL,
+                raw_json TEXT,
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_market_context_market_pair_ts ON market_context_ticks(market_key, canonical_pair, ts);
 
             CREATE TABLE IF NOT EXISTS capacity_alerts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -205,10 +254,64 @@ def init_db(db_path: Path) -> None:
             );
             """
         )
-        conn.execute("INSERT OR REPLACE INTO schema_meta(key, value) VALUES(?, ?)", ("version", "1"))
+        _ensure_schema_columns(conn)
+        _ensure_schema_indexes(conn)
+        conn.execute("INSERT OR REPLACE INTO schema_meta(key, value) VALUES(?, ?)", ("version", SCHEMA_VERSION))
         conn.commit()
     finally:
         conn.close()
+
+
+def _ensure_schema_columns(conn: sqlite3.Connection) -> None:
+    required = {
+        "stream_status": {
+            "market_key": "TEXT NOT NULL DEFAULT ''",
+            "venue": "TEXT NOT NULL DEFAULT ''",
+            "margin_type": "TEXT NOT NULL DEFAULT ''",
+            "quote_asset": "TEXT NOT NULL DEFAULT ''",
+            "canonical_pair": "TEXT NOT NULL DEFAULT ''",
+        },
+        "orderbook_metric_ticks": {
+            "stream_id": "TEXT NOT NULL DEFAULT ''",
+            "market_key": "TEXT NOT NULL DEFAULT ''",
+            "venue": "TEXT NOT NULL DEFAULT ''",
+            "margin_type": "TEXT NOT NULL DEFAULT ''",
+            "quote_asset": "TEXT NOT NULL DEFAULT ''",
+            "canonical_pair": "TEXT NOT NULL DEFAULT ''",
+        },
+        "orderbook_metric_bars": {
+            "stream_id": "TEXT NOT NULL DEFAULT ''",
+            "market_key": "TEXT NOT NULL DEFAULT ''",
+            "venue": "TEXT NOT NULL DEFAULT ''",
+            "margin_type": "TEXT NOT NULL DEFAULT ''",
+            "quote_asset": "TEXT NOT NULL DEFAULT ''",
+            "canonical_pair": "TEXT NOT NULL DEFAULT ''",
+        },
+        "orderbook_snapshots": {
+            "stream_id": "TEXT NOT NULL DEFAULT ''",
+            "market_key": "TEXT NOT NULL DEFAULT ''",
+            "venue": "TEXT NOT NULL DEFAULT ''",
+            "margin_type": "TEXT NOT NULL DEFAULT ''",
+            "quote_asset": "TEXT NOT NULL DEFAULT ''",
+            "canonical_pair": "TEXT NOT NULL DEFAULT ''",
+        },
+    }
+    for table, columns in required.items():
+        existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        for column, spec in columns.items():
+            if column not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {spec}")
+
+
+def _ensure_schema_indexes(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE INDEX IF NOT EXISTS idx_orderbook_metric_ticks_stream_ts ON orderbook_metric_ticks(stream_id, ts);
+        CREATE INDEX IF NOT EXISTS idx_orderbook_metric_ticks_canonical_ts ON orderbook_metric_ticks(canonical_pair, ts);
+        CREATE INDEX IF NOT EXISTS idx_orderbook_metric_bars_stream_tf_ts ON orderbook_metric_bars(stream_id, timeframe_seconds, ts_start);
+        CREATE INDEX IF NOT EXISTS idx_orderbook_snapshots_stream_ts ON orderbook_snapshots(stream_id, ts);
+        """
+    )
 
 
 def upsert_collector_run(conn: sqlite3.Connection, run_id: str, started_at: str, status: str, pid: int, config_path: str, db_path: str, notes: str | None = None) -> None:
@@ -224,8 +327,13 @@ def upsert_collector_run(conn: sqlite3.Connection, run_id: str, started_at: str,
 def update_stream_status(conn: sqlite3.Connection, payload: dict[str, Any]) -> None:
     columns = [
         "stream_id",
+        "market_key",
+        "venue",
         "exchange",
         "market_type",
+        "margin_type",
+        "quote_asset",
+        "canonical_pair",
         "pair",
         "symbol",
         "depth_levels",
@@ -299,6 +407,17 @@ def insert_snapshot(conn: sqlite3.Connection, payload: dict[str, Any]) -> None:
     )
 
 
+def insert_market_context(conn: sqlite3.Connection, payload: dict[str, Any]) -> None:
+    payload = dict(payload)
+    payload.setdefault("ts", utc_now())
+    payload.setdefault("created_at", utc_now())
+    columns = list(payload.keys())
+    conn.execute(
+        f"INSERT INTO market_context_ticks({', '.join(columns)}) VALUES({', '.join('?' for _ in columns)})",
+        [payload[key] for key in columns],
+    )
+
+
 def insert_capacity_alert(
     conn: sqlite3.Connection,
     *,
@@ -334,7 +453,7 @@ def fetch_latest_metrics(conn: sqlite3.Connection, limit: int = 200) -> list[dic
 
 
 def fetch_stream_status(conn: sqlite3.Connection) -> list[dict[str, Any]]:
-    rows = conn.execute("SELECT * FROM stream_status ORDER BY pair").fetchall()
+    rows = conn.execute("SELECT * FROM stream_status ORDER BY canonical_pair, market_key").fetchall()
     return [dict(row) for row in rows]
 
 
@@ -343,9 +462,11 @@ def fetch_storage_summary(conn: sqlite3.Connection) -> dict[str, Any]:
     snapshot_rows = int(conn.execute("SELECT COUNT(*) FROM orderbook_snapshots").fetchone()[0])
     bar_rows = int(conn.execute("SELECT COUNT(*) FROM orderbook_metric_bars").fetchone()[0])
     stream_rows = int(conn.execute("SELECT COUNT(*) FROM stream_status").fetchone()[0])
+    context_rows = int(conn.execute("SELECT COUNT(*) FROM market_context_ticks").fetchone()[0])
     return {
         "metric_rows": metric_rows,
         "snapshot_rows": snapshot_rows,
         "bar_rows": bar_rows,
         "stream_rows": stream_rows,
+        "context_rows": context_rows,
     }

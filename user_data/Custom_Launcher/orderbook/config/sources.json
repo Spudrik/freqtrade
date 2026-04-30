@@ -1,19 +1,27 @@
 {
   "version": 1,
-  "exchange": "binance_usdm_futures",
-  "market_type": "futures",
+  "market_profiles": [
+    "binance_spot",
+    "binance_usdm_futures",
+    "bybit_spot",
+    "bybit_linear"
+  ],
+  "exchange": "multi_market",
+  "market_type": "multi",
   "use_launcher_whitelist": true,
   "stream_mode": "partial_depth",
   "depth_levels": 20,
   "stream_update_ms": 500,
   "metric_interval_seconds": 1,
+  "context_poll_seconds": 300,
+  "context_period": "5m",
   "bar_intervals_seconds": [
     60,
     300,
     3600
   ],
   "snapshot_interval_seconds": 60,
-  "store_snapshots": true,
+  "store_snapshots": false,
   "store_raw_events": false,
   "max_symbols": 12,
   "capacity_warning_mb": 500,
