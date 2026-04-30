@@ -16,6 +16,8 @@
 - CoinGecko BTC/ETH markets endpoint: BTC/ETH price and short-term price-change context.
 - DeFiLlama stablecoins endpoint: stablecoin supply trend as a crypto-liquidity proxy.
 - DeFiLlama chains endpoint: aggregate DeFi TVL and weighted chain TVL change.
+- Stooq no-key quote CSV: US equity, global equity, and safe-haven/rates proxy headline baskets for broad risk context.
+- FRED optional keyed API: disabled by default until `FRED_API_KEY` is set, with starter baskets for US equity indices, VIX, rates, and broad USD.
 
 ## Good Next Candidates
 
@@ -31,8 +33,10 @@
 - Prefer official public API, WebSocket, or RSS endpoints before HTML scraping.
 - Store every source with `market_key`, `canonical_pair`, `symbol`, and timestamp fields so it can join to order book bars later.
 - Keep this layer data-only. Strategy use belongs in a separate research card after the data has enough history to validate.
+- For global context sources without pair identity, store source-group, source-id, score, signal, value, unit, and notes in `global_context_ticks`.
 
 ## Official References Checked
 
 - Binance USD-M Futures market data REST docs: [funding rate](https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Get-Funding-Rate-History), [open interest](https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Open-Interest), [long/short ratio](https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Long-Short-Ratio), and [taker buy/sell volume](https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Taker-BuySell-Volume).
 - Bybit V5 market data docs: [funding history](https://bybit-exchange.github.io/docs/v5/market/history-fund-rate), [open interest](https://bybit-exchange.github.io/docs/v5/market/open-interest), [long/short ratio](https://bybit-exchange.github.io/docs/v5/market/long-short-ratio), and [recent public trades](https://bybit-exchange.github.io/docs/v5/market/recent-trade).
+- FRED API docs: [series observations](https://fred.stlouisfed.org/docs/api/fred/series_observations.html) and [API key](https://fred.stlouisfed.org/docs/api/fred/v2/api_key.html).

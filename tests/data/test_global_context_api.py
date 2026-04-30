@@ -9,13 +9,17 @@ if str(LAUNCHER_DIR) not in sys.path:
     sys.path.insert(0, str(LAUNCHER_DIR))
 
 from launcher_v2.services.global_context_service import GlobalContextService
-from research.collectors.global_context_collector import (
+from research.collectors.global_context_sources.crypto import (
     normalize_coingecko_global,
     normalize_coingecko_markets,
-    normalize_defillama_chains,
-    normalize_defillama_stablecoins,
     normalize_fear_greed,
 )
+from research.collectors.global_context_sources.defi import (
+    normalize_defillama_chains,
+    normalize_defillama_stablecoins,
+)
+from research.collectors.global_context_sources.equities import normalize_stooq_quotes
+from research.collectors.global_context_sources.fred import normalize_fred_series_basket
 from research.collectors.global_context_store import (
     connect_db,
     fetch_latest_context_rows,
@@ -105,6 +109,46 @@ def test_defillama_normalizers_build_liquidity_context() -> None:
     assert "Ethereum" in chains["notes"]
 
 
+def test_equity_and_fred_normalizers_build_headline_risk_context() -> None:
+    stooq = normalize_stooq_quotes(
+        {
+            **_source("stooq_us_equity_risk", "stooq_quotes", "equity_indices"),
+            "metric_key": "us_equity_risk_basket_change",
+            "symbol_labels": {"SPY.US": "SPY", "QQQ.US": "QQQ"},
+        },
+        {
+            "rows": [
+                {"Symbol": "SPY.US", "Date": "2026-04-29", "Time": "22:00:00", "Close": "99", "Prev": "100"},
+                {"Symbol": "QQQ.US", "Date": "2026-04-29", "Time": "22:00:00", "Close": "98", "Prev": "100"},
+            ]
+        },
+        store_raw=False,
+    )
+    assert stooq["metric_key"] == "us_equity_risk_basket_change"
+    assert stooq["signal"] == "risk_off"
+    assert stooq["value"] == -1.5
+    assert "SPY -1.00%" in stooq["notes"]
+
+    fred = normalize_fred_series_basket(
+        {
+            **_source("fred_us_equity_daily", "fred_series_basket", "equity_indices"),
+            "metric_key": "fred_us_equity_daily_change",
+            "inverse_risk_series": ["VIXCLS"],
+            "series_labels": {"SP500": "S&P 500", "VIXCLS": "VIX"},
+        },
+        {
+            "series": {
+                "SP500": {"observations": [{"date": "2026-04-29", "value": "4950"}, {"date": "2026-04-28", "value": "5000"}]},
+                "VIXCLS": {"observations": [{"date": "2026-04-29", "value": "22"}, {"date": "2026-04-28", "value": "20"}]},
+            }
+        },
+        store_raw=False,
+    )
+    assert fred["metric_key"] == "fred_us_equity_daily_change"
+    assert fred["signal"] == "risk_off"
+    assert "VIX 10.00%" in fred["notes"]
+
+
 def test_store_keeps_latest_success_when_later_failure_occurs(tmp_path: Path) -> None:
     db_path = tmp_path / "global_context.sqlite"
     init_db(db_path)
@@ -158,6 +202,8 @@ def test_service_command_and_latest_rows(tmp_path: Path) -> None:
 
     rows = service.latest_context_rows(state)
     assert rows[0][:7] == ("coingecko_global", "market", "neutral", "55", "1", "percent", "test row")
+    assert service.latest_context_rows(state, {"equity_indices"}) == []
+    assert service.summary_rows(state)[0][0:4] == ("market", "neutral", "55", 1)
 
 
 def _source(source_id: str, source_type: str, group: str) -> dict[str, object]:

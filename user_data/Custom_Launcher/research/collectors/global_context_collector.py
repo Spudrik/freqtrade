@@ -5,13 +5,14 @@ import hashlib
 import json
 import logging
 import os
-import time
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from .global_context_sources import (
+    fetch_source_payload as fetch_global_source_payload,
+    normalize_source_payload as normalize_global_source_payload,
+)
 from .global_context_store import (
     connect_db,
     fetch_storage_summary,
@@ -80,179 +81,10 @@ def fetch_source(source: dict[str, Any], config: dict[str, Any]) -> dict[str, An
     url = str(source.get("url") or "").strip()
     timeout_seconds = int(config.get("request_timeout_seconds", 20))
     user_agent = str(config.get("user_agent") or "FreQ-GlobalContextCollector/1.0")
-    if source_type == "coingecko_markets":
-        params = {
-            "vs_currency": str(source.get("vs_currency") or "usd"),
-            "ids": ",".join(str(value) for value in source.get("coin_ids") or ["bitcoin", "ethereum"]),
-            "sparkline": "false",
-            "price_change_percentage": "1h,24h,7d",
-        }
-        separator = "&" if "?" in url else "?"
-        url = url + separator + urlencode(params)
-    payload = fetch_public_json(url, timeout_seconds=timeout_seconds, user_agent=user_agent)
-    return normalize_source_payload(source, payload, store_raw=bool(config.get("store_raw_payloads", True)))
-
-
-def normalize_source_payload(source: dict[str, Any], payload: Any, *, store_raw: bool = True) -> dict[str, Any]:
-    source_type = str(source.get("type") or "").strip()
-    if source_type == "alternative_fng":
-        return normalize_fear_greed(source, payload, store_raw=store_raw)
-    if source_type == "coingecko_global":
-        return normalize_coingecko_global(source, payload, store_raw=store_raw)
-    if source_type == "coingecko_markets":
-        return normalize_coingecko_markets(source, payload, store_raw=store_raw)
-    if source_type == "defillama_stablecoins":
-        return normalize_defillama_stablecoins(source, payload, store_raw=store_raw)
-    if source_type == "defillama_chains":
-        return normalize_defillama_chains(source, payload, store_raw=store_raw)
-    raise ValueError(f"Unsupported global context source type: {source_type}")
-
-
-def normalize_fear_greed(source: dict[str, Any], payload: Any, *, store_raw: bool = True) -> dict[str, Any]:
-    rows = payload.get("data") if isinstance(payload, dict) else []
-    row = rows[0] if isinstance(rows, list) and rows and isinstance(rows[0], dict) else {}
-    value = _float_or_none(row.get("value"))
-    classification = str(row.get("value_classification") or "")
-    score = _clamp(value if value is not None else 50.0)
-    notes = classification or _score_label(score)
-    return _result(
-        source,
-        metric_key="fear_greed_index",
-        score=score,
-        signal=_score_signal(score),
-        value=value,
-        unit="index",
-        notes=notes,
-        source_ts=_unix_to_iso(row.get("timestamp")),
-        raw=payload if store_raw else None,
-    )
-
-
-def normalize_coingecko_global(source: dict[str, Any], payload: Any, *, store_raw: bool = True) -> dict[str, Any]:
-    data = payload.get("data") if isinstance(payload, dict) else {}
-    if not isinstance(data, dict):
-        data = {}
-    market_cap = _nested_float(data, "total_market_cap", "usd")
-    volume = _nested_float(data, "total_volume", "usd")
-    btc_dom = _nested_float(data, "market_cap_percentage", "btc")
-    change_24h = _float_or_none(data.get("market_cap_change_percentage_24h_usd"))
-    score = _clamp(50.0 + (change_24h or 0.0) * 5.0)
-    notes = f"cap ${_compact_usd(market_cap)}, volume ${_compact_usd(volume)}, BTC dom {_fmt_pct(btc_dom)}, 24h cap {_fmt_pct(change_24h)}"
-    return _result(
-        source,
-        metric_key="global_market_cap_change_24h",
-        score=score,
-        signal=_score_signal(score),
-        value=change_24h,
-        unit="percent",
-        notes=notes,
-        raw=payload if store_raw else None,
-    )
-
-
-def normalize_coingecko_markets(source: dict[str, Any], payload: Any, *, store_raw: bool = True) -> dict[str, Any]:
-    rows = payload if isinstance(payload, list) else []
-    changes_24h: list[float] = []
-    changes_7d: list[float] = []
-    note_parts: list[str] = []
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        symbol = str(row.get("symbol") or row.get("id") or "").upper()
-        price = _float_or_none(row.get("current_price"))
-        change_24h = _float_or_none(row.get("price_change_percentage_24h"))
-        change_7d = _float_or_none(row.get("price_change_percentage_7d_in_currency"))
-        if change_24h is not None:
-            changes_24h.append(change_24h)
-        if change_7d is not None:
-            changes_7d.append(change_7d)
-        if symbol:
-            note_parts.append(f"{symbol} ${_compact_usd(price)} 24h {_fmt_pct(change_24h)} 7d {_fmt_pct(change_7d)}")
-    avg_24h = _mean(changes_24h)
-    avg_7d = _mean(changes_7d)
-    score = _clamp(50.0 + (avg_24h or 0.0) * 4.0 + (avg_7d or 0.0) * 1.5)
-    return _result(
-        source,
-        metric_key="btc_eth_avg_change_24h",
-        score=score,
-        signal=_score_signal(score),
-        value=avg_24h,
-        unit="percent",
-        notes="; ".join(note_parts) or "No coin rows returned.",
-        raw=payload if store_raw else None,
-    )
-
-
-def normalize_defillama_stablecoins(source: dict[str, Any], payload: Any, *, store_raw: bool = True) -> dict[str, Any]:
-    assets = payload.get("peggedAssets") if isinstance(payload, dict) else []
-    totals = {"current": 0.0, "day": 0.0, "week": 0.0, "month": 0.0}
-    top_assets: list[tuple[str, float]] = []
-    for asset in assets if isinstance(assets, list) else []:
-        if not isinstance(asset, dict):
-            continue
-        current = _nested_float(asset, "circulating", "peggedUSD")
-        day = _nested_float(asset, "circulatingPrevDay", "peggedUSD")
-        week = _nested_float(asset, "circulatingPrevWeek", "peggedUSD")
-        month = _nested_float(asset, "circulatingPrevMonth", "peggedUSD")
-        totals["current"] += current or 0.0
-        totals["day"] += day or 0.0
-        totals["week"] += week or 0.0
-        totals["month"] += month or 0.0
-        name = str(asset.get("symbol") or asset.get("name") or "")
-        if name and current:
-            top_assets.append((name, current))
-    change_1d = _pct_change(totals["current"], totals["day"])
-    change_7d = _pct_change(totals["current"], totals["week"])
-    score = _clamp(50.0 + (change_7d or 0.0) * 10.0 + (change_1d or 0.0) * 5.0)
-    top = ", ".join(f"{name} ${_compact_usd(value)}" for name, value in sorted(top_assets, key=lambda item: item[1], reverse=True)[:3])
-    notes = f"supply ${_compact_usd(totals['current'])}, 1d {_fmt_pct(change_1d)}, 7d {_fmt_pct(change_7d)}, top {top}"
-    return _result(
-        source,
-        metric_key="stablecoin_supply_change_7d",
-        score=score,
-        signal=_score_signal(score),
-        value=change_7d,
-        unit="percent",
-        notes=notes,
-        raw=payload if store_raw else None,
-    )
-
-
-def normalize_defillama_chains(source: dict[str, Any], payload: Any, *, store_raw: bool = True) -> dict[str, Any]:
-    rows = payload if isinstance(payload, list) else []
-    total_tvl = 0.0
-    weighted_1d = 0.0
-    weighted_7d = 0.0
-    top_chains: list[tuple[str, float]] = []
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        tvl = _float_or_none(row.get("tvl")) or 0.0
-        if tvl <= 0:
-            continue
-        change_1d = _float_or_none(row.get("change_1d")) or 0.0
-        change_7d = _float_or_none(row.get("change_7d")) or 0.0
-        total_tvl += tvl
-        weighted_1d += tvl * change_1d
-        weighted_7d += tvl * change_7d
-        name = str(row.get("name") or "")
-        if name:
-            top_chains.append((name, tvl))
-    avg_1d = (weighted_1d / total_tvl) if total_tvl > 0 else None
-    avg_7d = (weighted_7d / total_tvl) if total_tvl > 0 else None
-    score = _clamp(50.0 + (avg_7d or 0.0) * 2.0 + (avg_1d or 0.0) * 3.0)
-    top = ", ".join(f"{name} ${_compact_usd(value)}" for name, value in sorted(top_chains, key=lambda item: item[1], reverse=True)[:3])
-    notes = f"TVL ${_compact_usd(total_tvl)}, weighted 1d {_fmt_pct(avg_1d)}, 7d {_fmt_pct(avg_7d)}, top {top}"
-    return _result(
-        source,
-        metric_key="defi_tvl_weighted_change_7d",
-        score=score,
-        signal=_score_signal(score),
-        value=avg_7d,
-        unit="percent",
-        notes=notes,
-        raw=payload if store_raw else None,
-    )
+    payload = fetch_global_source_payload(source, config)
+    if payload is None:
+        payload = fetch_public_json(url, timeout_seconds=timeout_seconds, user_agent=user_agent)
+    return normalize_global_source_payload(source, payload, store_raw=bool(config.get("store_raw_payloads", True)))
 
 
 def main() -> int:
@@ -425,119 +257,6 @@ def _source_status_payload(
             }
         )
     return payload
-
-
-def _result(
-    source: dict[str, Any],
-    *,
-    metric_key: str,
-    score: float | None,
-    signal: str,
-    value: float | None,
-    unit: str,
-    notes: str,
-    source_ts: str | None = None,
-    raw: Any = None,
-) -> dict[str, Any]:
-    return {
-        "ts": utc_now(),
-        "source_ts": source_ts,
-        "source_id": source.get("id"),
-        "source_group": source.get("source_group") or "",
-        "source_type": source.get("type") or "",
-        "metric_key": metric_key,
-        "score": score,
-        "signal": signal,
-        "value": value,
-        "unit": unit,
-        "notes": notes[:2000],
-        "raw_json": raw,
-    }
-
-
-def _nested_float(payload: dict[str, Any], *keys: str) -> float | None:
-    value: Any = payload
-    for key in keys:
-        if not isinstance(value, dict):
-            return None
-        value = value.get(key)
-    return _float_or_none(value)
-
-
-def _float_or_none(value: Any) -> float | None:
-    try:
-        if value is None or value == "":
-            return None
-        return float(value)
-    except Exception:
-        return None
-
-
-def _mean(values: list[float]) -> float | None:
-    return (sum(values) / len(values)) if values else None
-
-
-def _pct_change(current: float, previous: float) -> float | None:
-    if previous <= 0:
-        return None
-    return (current - previous) / previous * 100.0
-
-
-def _clamp(value: float | None, low: float = 0.0, high: float = 100.0) -> float:
-    if value is None:
-        return 50.0
-    return max(low, min(high, float(value)))
-
-
-def _score_signal(score: float | None) -> str:
-    value = _clamp(score)
-    if value >= 65:
-        return "risk_on"
-    if value <= 35:
-        return "risk_off"
-    return "neutral"
-
-
-def _score_label(score: float | None) -> str:
-    value = _clamp(score)
-    if value >= 75:
-        return "strong risk-on"
-    if value >= 60:
-        return "risk-on"
-    if value <= 25:
-        return "strong risk-off"
-    if value <= 40:
-        return "risk-off"
-    return "neutral"
-
-
-def _compact_usd(value: float | None) -> str:
-    if value is None:
-        return "-"
-    abs_value = abs(value)
-    if abs_value >= 1_000_000_000_000:
-        return f"{value / 1_000_000_000_000:.2f}T"
-    if abs_value >= 1_000_000_000:
-        return f"{value / 1_000_000_000:.2f}B"
-    if abs_value >= 1_000_000:
-        return f"{value / 1_000_000:.2f}M"
-    if abs_value >= 1_000:
-        return f"{value / 1_000:.2f}K"
-    return f"{value:.2f}"
-
-
-def _fmt_pct(value: float | None) -> str:
-    return "-" if value is None else f"{value:.2f}%"
-
-
-def _unix_to_iso(value: Any) -> str | None:
-    try:
-        number = float(value)
-        if number > 10_000_000_000:
-            number = number / 1000.0
-        return datetime.fromtimestamp(number, timezone.utc).isoformat()
-    except Exception:
-        return None
 
 
 if __name__ == "__main__":

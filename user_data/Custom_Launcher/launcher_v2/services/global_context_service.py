@@ -137,7 +137,7 @@ class GlobalContextService:
                 pass
         return status
 
-    def latest_context_rows(self, state: dict[str, Any]) -> list[tuple[Any, ...]]:
+    def _latest_context_records(self, state: dict[str, Any], source_groups: set[str] | None = None) -> list[sqlite3.Row]:
         paths = self.paths(state)
         if not paths["db"].exists():
             return []
@@ -155,6 +155,12 @@ class GlobalContextService:
                 ORDER BY t.source_group, t.source_id
                 """
             ).fetchall()
+        if source_groups is not None:
+            rows = [row for row in rows if str(row["source_group"]) in source_groups]
+        return rows
+
+    def latest_context_rows(self, state: dict[str, Any], source_groups: set[str] | None = None) -> list[tuple[Any, ...]]:
+        rows = self._latest_context_records(state, source_groups=source_groups)
         return [
             (
                 row["source_id"],
@@ -170,7 +176,26 @@ class GlobalContextService:
             for row in rows
         ]
 
-    def source_health_rows(self, state: dict[str, Any]) -> list[tuple[Any, ...]]:
+    def summary_rows(self, state: dict[str, Any]) -> list[tuple[Any, ...]]:
+        rows = self._latest_context_records(state)
+        groups: dict[str, list[sqlite3.Row]] = {}
+        for row in rows:
+            groups.setdefault(str(row["source_group"] or "unknown"), []).append(row)
+        output: list[tuple[Any, ...]] = []
+        for group, group_rows in sorted(groups.items()):
+            scores = [_float_or_none(row["score"]) for row in group_rows]
+            valid_scores = [score for score in scores if score is not None]
+            avg_score = (sum(valid_scores) / len(valid_scores)) if valid_scores else None
+            signals = [str(row["signal"] or "") for row in group_rows]
+            risk_off = signals.count("risk_off")
+            risk_on = signals.count("risk_on")
+            signal = "risk_off" if risk_off > risk_on else "risk_on" if risk_on > risk_off else "neutral"
+            notes = " | ".join(str(row["notes"] or "") for row in group_rows[:3])
+            latest_ts = max((str(row["ts"] or "") for row in group_rows), default="")
+            output.append((group, signal, _fmt(avg_score), len(group_rows), notes, latest_ts))
+        return output
+
+    def source_health_rows(self, state: dict[str, Any], source_groups: set[str] | None = None) -> list[tuple[Any, ...]]:
         paths = self.paths(state)
         if not paths["db"].exists():
             return []
@@ -184,6 +209,8 @@ class GlobalContextService:
                 ORDER BY source_group, source_id
                 """
             ).fetchall()
+        if source_groups is not None:
+            rows = [row for row in rows if str(row["source_group"]) in source_groups]
         return [
             (
                 row["source_id"],
@@ -233,3 +260,10 @@ def _fmt(value: Any) -> str:
     except Exception:
         return "-"
     return f"{number:.6g}"
+
+
+def _float_or_none(value: Any) -> float | None:
+    try:
+        return float(value)
+    except Exception:
+        return None

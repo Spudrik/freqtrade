@@ -47,7 +47,6 @@ class GlobalContextTab(BaseTab):
     def _build_ui(self) -> None:
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(5, weight=1)
-        self.grid_rowconfigure(6, weight=1)
 
         intro = ttk.Label(
             self,
@@ -100,35 +99,61 @@ class GlobalContextTab(BaseTab):
             ttk.Label(status, text=f"{label}:").grid(row=row, column=col, sticky="w", padx=8, pady=3)
             ttk.Label(status, textvariable=self.status_vars[key]).grid(row=row, column=col + 1, sticky="w", padx=8, pady=3)
 
-        latest = ttk.LabelFrame(self, text="Latest source context")
-        latest.grid(row=5, column=0, sticky="nsew", padx=8, pady=(0, 8))
-        latest.grid_columnconfigure(0, weight=1)
-        latest.grid_rowconfigure(0, weight=1)
-        latest_columns = ("source_id", "source_group", "signal", "score", "value", "unit", "notes", "source_ts", "collected_at")
-        self.latest_tree = ttk.Treeview(latest, columns=latest_columns, show="headings", height=10)
-        for column in latest_columns:
-            self.latest_tree.heading(column, text=column)
-            self.latest_tree.column(column, width=150, anchor="w")
-        self.latest_tree.column("notes", width=520, anchor="w")
-        self.latest_tree.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
-        latest_scroll = ttk.Scrollbar(latest, orient="vertical", command=self.latest_tree.yview)
-        latest_scroll.grid(row=0, column=1, sticky="ns", pady=8)
-        self.latest_tree.configure(yscrollcommand=latest_scroll.set)
+        views = ttk.Notebook(self)
+        views.grid(row=5, column=0, sticky="nsew", padx=8, pady=(0, 8))
 
-        health = ttk.LabelFrame(self, text="Source health")
-        health.grid(row=6, column=0, sticky="nsew", padx=8, pady=(0, 8))
-        health.grid_columnconfigure(0, weight=1)
-        health.grid_rowconfigure(0, weight=1)
+        summary_tab = ttk.Frame(views)
+        crypto_tab = ttk.Frame(views)
+        equities_tab = ttk.Frame(views)
+        health_tab = ttk.Frame(views)
+        views.add(summary_tab, text="Summary")
+        views.add(crypto_tab, text="Crypto/Liquidity")
+        views.add(equities_tab, text="Equities/Risk")
+        views.add(health_tab, text="Source Health")
+
+        summary_tab.grid_columnconfigure(0, weight=1)
+        summary_tab.grid_rowconfigure(0, weight=1)
+        summary_columns = ("source_group", "signal", "avg_score", "source_count", "notes", "latest_at")
+        self.summary_tree = ttk.Treeview(summary_tab, columns=summary_columns, show="headings", height=12)
+        for column in summary_columns:
+            self.summary_tree.heading(column, text=column)
+            self.summary_tree.column(column, width=150, anchor="w")
+        self.summary_tree.column("notes", width=700, anchor="w")
+        self.summary_tree.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
+        summary_scroll = ttk.Scrollbar(summary_tab, orient="vertical", command=self.summary_tree.yview)
+        summary_scroll.grid(row=0, column=1, sticky="ns", pady=8)
+        self.summary_tree.configure(yscrollcommand=summary_scroll.set)
+
+        latest_columns = ("source_id", "source_group", "signal", "score", "value", "unit", "notes", "source_ts", "collected_at")
+        self.crypto_tree = self._context_tree(crypto_tab, latest_columns)
+        self.equities_tree = self._context_tree(equities_tab, latest_columns)
+
+        health_tab.grid_columnconfigure(0, weight=1)
+        health_tab.grid_rowconfigure(0, weight=1)
         health_columns = ("source_id", "source_group", "source_type", "enabled", "relevance", "last_success_at", "last_failure_at", "last_error", "last_score", "last_signal", "last_notes", "updated_at")
-        self.health_tree = ttk.Treeview(health, columns=health_columns, show="headings", height=8)
+        self.health_tree = ttk.Treeview(health_tab, columns=health_columns, show="headings", height=12)
         for column in health_columns:
             self.health_tree.heading(column, text=column)
             self.health_tree.column(column, width=145, anchor="w")
         self.health_tree.column("last_notes", width=420, anchor="w")
         self.health_tree.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
-        health_scroll = ttk.Scrollbar(health, orient="vertical", command=self.health_tree.yview)
+        health_scroll = ttk.Scrollbar(health_tab, orient="vertical", command=self.health_tree.yview)
         health_scroll.grid(row=0, column=1, sticky="ns", pady=8)
         self.health_tree.configure(yscrollcommand=health_scroll.set)
+
+    def _context_tree(self, parent: ttk.Frame, columns: tuple[str, ...]) -> ttk.Treeview:
+        parent.grid_columnconfigure(0, weight=1)
+        parent.grid_rowconfigure(0, weight=1)
+        tree = ttk.Treeview(parent, columns=columns, show="headings", height=12)
+        for column in columns:
+            tree.heading(column, text=column)
+            tree.column(column, width=150, anchor="w")
+        tree.column("notes", width=620, anchor="w")
+        tree.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
+        scroll = ttk.Scrollbar(parent, orient="vertical", command=tree.yview)
+        scroll.grid(row=0, column=1, sticky="ns", pady=8)
+        tree.configure(yscrollcommand=scroll.set)
+        return tree
 
     def _path_row(self, parent: tk.Misc, row: int, label: str, variable: tk.StringVar, *, directory: bool) -> None:
         labeled_entry(parent, row, 0, label, variable)
@@ -196,9 +221,17 @@ class GlobalContextTab(BaseTab):
         for key, value in mapping.items():
             self.status_vars[key].set(str(value))
         try:
-            set_tree_rows(self.latest_tree, self.service.latest_context_rows(self._state()))
+            set_tree_rows(self.summary_tree, self.service.summary_rows(self._state()))
         except Exception:
-            set_tree_rows(self.latest_tree, [])
+            set_tree_rows(self.summary_tree, [])
+        try:
+            set_tree_rows(self.crypto_tree, self.service.latest_context_rows(self._state(), {"sentiment", "market", "defi"}))
+        except Exception:
+            set_tree_rows(self.crypto_tree, [])
+        try:
+            set_tree_rows(self.equities_tree, self.service.latest_context_rows(self._state(), {"equity_indices", "rates_fx"}))
+        except Exception:
+            set_tree_rows(self.equities_tree, [])
         try:
             set_tree_rows(self.health_tree, self.service.source_health_rows(self._state()))
         except Exception:
