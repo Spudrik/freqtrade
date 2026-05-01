@@ -8,6 +8,10 @@ import numpy as np
 import pandas as pd
 from pandas import DataFrame, Series
 
+# TODO: Once V2 behaviour is accepted, split or remove the diagnostic/review
+# machinery so this module ends as the strategy-facing indicator only.
+# Keep diagnostics elsewhere if future trendline research needs revisiting.
+
 LineSide = Literal["resistance", "support"]
 LineMode = Literal["raw", "confirmed", "absorbed"]
 
@@ -32,15 +36,14 @@ class TrendlineProjectionV2Config:
     - ``max_anchor_bars``: removes seed lines whose p1->p2 span is too long to
       be a clean initial trendline definition.
     - ``max_projection_bars``: caps each line after its second anchor.
-    - ``structural_max_anchor_bars`` / ``structural_max_projection_bars``:
-      optional broader caps for slower, shallow market structure lines. These
-      are kept separate from local raw lines because they solve a different
-      problem: floors/ceilings that need more time between first two anchors.
     - ``channel_*``: optional channel detector settings. Channels pair a real
       resistance line with a real support line and score both parallel ranges
       and converging wedge-like ranges. Channel source lines can use weaker
       local pivots than standalone trendlines because ranges often form from
       smaller repeated touches.
+      Active channel outputs deliberately prefer current usable structures:
+      stale channels are suppressed after repeated body exits and duplicate
+      channels must agree on midpoint, width, and slope before both survive.
     - ``density_proximity_pct`` / ``density_min_lines``: define same-side fuzzy
       support/resistance bands.
     - ``hotspot_proximity_pct`` / ``hotspot_min_lines``: define all-line
@@ -59,8 +62,10 @@ class TrendlineProjectionV2Config:
       filter.
 
     Strategy-facing outputs:
-    - ``*_resistance_line_rankN`` / ``*_support_line_rankN``: raw p1->p2 seed
-      candidates.
+    - ``*_resistance_line_rankN`` / ``*_support_line_rankN``: compact ranked
+      local trendline slots. The default is 10 resistance + 10 support slots.
+      If more than those are simultaneously useful, the filtering/ranking is
+      probably not finished.
     - ``*_confirmed_resistance_line_rankN`` /
       ``*_confirmed_support_line_rankN``: seed geometry that has at least one
       later real-pivot confirmation.
@@ -68,18 +73,9 @@ class TrendlineProjectionV2Config:
       ``*_absorbed_support_line_rankN``: confirmed seed geometry with nearby
       same-side evidence absorbed into score/width. Geometry remains anchored
       to the original seed line.
-    - ``*_structural_resistance_line_rankN`` /
-      ``*_structural_support_line_rankN``: longer-span p1->p2 candidates for
-      broad floors/ceilings. These are disabled by default because they are
-      slower and should be reviewed separately from local line behaviour.
     - ``*_local_channel_upper_rankN`` / ``*_local_channel_lower_rankN``:
       optional paired support/resistance structures from weaker local pivots.
-      These are intended as active channel evidence. ``*_channel_*`` remains as
-      a compatibility alias for this local-channel output.
-    - ``*_structural_channel_upper_rankN`` /
-      ``*_structural_channel_lower_rankN``: optional paired longer-span
-      support/resistance structures. These are broader market context, not
-      precise local entry channels.
+      These are intended as active channel evidence.
     - ``*_fuzzy_resistance_price_rankN`` / ``*_fuzzy_support_price_rankN``:
       same-side dense line zones. These are extra evidence, not core
       trendlines.
@@ -91,27 +87,24 @@ class TrendlineProjectionV2Config:
     pivot_strength: int = 5
     confirmation_pivot_strength: int = 3
     candidate_pivot_count: int = 36
-    raw_line_output_count: int = 14
-    confirmed_line_output_count: int = 14
-    absorbed_line_output_count: int = 14
-    structural_line_output_count: int = 10
-    channel_output_count: int = 5
+    raw_line_output_count: int = 10
+    confirmed_line_output_count: int = 10
+    absorbed_line_output_count: int = 10
+    channel_output_count: int = 3
     emit_confirmed_lines: bool = False
     emit_absorbed_lines: bool = False
-    emit_structural_lines: bool = False
     emit_channel_lines: bool = False
-    emit_structural_channel_lines: bool = False
-    fuzzy_zone_count: int = 3
-    hotspot_count: int = 3
+    emit_fuzzy_zones: bool = False
+    emit_hotspots: bool = False
+    fuzzy_zone_count: int = 2
+    hotspot_count: int = 2
 
     min_anchor_bars: int = 10
     max_anchor_bars: int = 50
-    structural_max_anchor_bars: int = 180
     min_pivot_prominence_atr: float = 0.35
     min_confirmation_pivot_prominence_atr: float = 0.18
     max_slope_pct_per_bar: float = 0.012
     max_projection_bars: int = 50
-    structural_max_projection_bars: int = 320
 
     channel_source_line_count: int = 10
     channel_candidate_pool_size: int = 320
@@ -125,6 +118,7 @@ class TrendlineProjectionV2Config:
     channel_min_convergence_pct: float = 0.12
     channel_min_width_pct: float = 0.004
     channel_max_width_pct: float = 0.24
+    channel_preferred_width_pct: float = 0.045
     channel_min_containment_ratio: float = 0.48
     channel_touch_tolerance_pct: float = 0.0050
     channel_touch_atr_mult: float = 0.55
@@ -134,8 +128,9 @@ class TrendlineProjectionV2Config:
     channel_recent_touch_fraction: float = 0.45
     channel_min_position_coverage: float = 0.14
     channel_duplicate_overlap_pct: float = 0.60
-    channel_duplicate_mid_width_mult: float = 0.45
-    channel_duplicate_slope_tolerance_pct: float = 0.25
+    channel_duplicate_mid_width_mult: float = 0.90
+    channel_duplicate_width_tolerance_pct: float = 0.70
+    channel_duplicate_slope_tolerance_pct: float = 0.32
     channel_breakout_grace_bars: int = 3
 
     confirmation_tolerance_pct: float = 0.0040
@@ -173,10 +168,8 @@ class TrendlineProjectionV2Diagnostic:
 
     frame: DataFrame
     raw_candidates: DataFrame
-    structural_candidates: DataFrame
     channel_source_candidates: DataFrame
     raw_channel_candidates: DataFrame
-    structural_channel_candidates: DataFrame
     channel_candidates: DataFrame
     confirmed_candidates: DataFrame
     absorbed_candidates: DataFrame
@@ -209,35 +202,10 @@ def add_trendline_projection_v2(
     base = _base_inputs(frame, cfg)
     resistance = _rolling_candidate_pack(base, "resistance", cfg, mode="raw")
     support = _rolling_candidate_pack(base, "support", cfg, mode="raw")
-    structural_required = bool(cfg.emit_structural_lines or cfg.emit_structural_channel_lines)
-    structural_resistance = (
-        _rolling_candidate_pack(
-            base,
-            "resistance",
-            cfg,
-            mode="raw",
-            max_anchor_bars=int(cfg.structural_max_anchor_bars),
-            max_projection_bars=int(cfg.structural_max_projection_bars),
-        )
-        if structural_required
-        else _empty_pack()
-    )
-    structural_support = (
-        _rolling_candidate_pack(
-            base,
-            "support",
-            cfg,
-            mode="raw",
-            max_anchor_bars=int(cfg.structural_max_anchor_bars),
-            max_projection_bars=int(cfg.structural_max_projection_bars),
-        )
-        if structural_required
-        else _empty_pack()
-    )
-    confirmed_resistance = _rolling_candidate_pack(base, "resistance", cfg, mode="confirmed") if cfg.emit_confirmed_lines else _empty_pack()
-    confirmed_support = _rolling_candidate_pack(base, "support", cfg, mode="confirmed") if cfg.emit_confirmed_lines else _empty_pack()
-    absorbed_resistance = _rolling_candidate_pack(base, "resistance", cfg, mode="absorbed") if cfg.emit_absorbed_lines else _empty_pack()
-    absorbed_support = _rolling_candidate_pack(base, "support", cfg, mode="absorbed") if cfg.emit_absorbed_lines else _empty_pack()
+    confirmed_resistance = _rolling_candidate_pack(base, "resistance", cfg, mode="confirmed") if cfg.emit_confirmed_lines else None
+    confirmed_support = _rolling_candidate_pack(base, "support", cfg, mode="confirmed") if cfg.emit_confirmed_lines else None
+    absorbed_resistance = _rolling_candidate_pack(base, "resistance", cfg, mode="absorbed") if cfg.emit_absorbed_lines else None
+    absorbed_support = _rolling_candidate_pack(base, "support", cfg, mode="absorbed") if cfg.emit_absorbed_lines else None
     channel_source_resistance = (
         _rolling_candidate_pack(
             base,
@@ -285,24 +253,8 @@ def add_trendline_projection_v2(
     }
     raw_resistance_cols = _rank_raw_candidate_columns(resistance, "resistance", cfg, slots=int(cfg.raw_line_output_count), index=frame.index)
     raw_support_cols = _rank_raw_candidate_columns(support, "support", cfg, slots=int(cfg.raw_line_output_count), index=frame.index)
-    structural_resistance_cols = _rank_raw_candidate_columns(
-        structural_resistance,
-        "structural_resistance",
-        cfg,
-        slots=int(cfg.structural_line_output_count),
-        index=frame.index,
-    )
-    structural_support_cols = _rank_raw_candidate_columns(
-        structural_support,
-        "structural_support",
-        cfg,
-        slots=int(cfg.structural_line_output_count),
-        index=frame.index,
-    )
     new_cols.update(raw_resistance_cols)
     new_cols.update(raw_support_cols)
-    new_cols.update(structural_resistance_cols)
-    new_cols.update(structural_support_cols)
     if cfg.emit_channel_lines:
         channel_source_resistance_cols = _rank_raw_candidate_columns(
             channel_source_resistance,
@@ -326,91 +278,79 @@ def add_trendline_projection_v2(
             output_label="local_channel",
         )
         new_cols.update(local_channel_cols)
-        new_cols.update(_alias_channel_columns(local_channel_cols, p, source_label="local_channel", alias_label="channel"))
-    else:
-        new_cols.update(_empty_channel_columns(frame.index, p, int(cfg.channel_output_count), label="local_channel"))
-        new_cols.update(_empty_channel_columns(frame.index, p, int(cfg.channel_output_count), label="channel"))
-    if cfg.emit_structural_channel_lines:
-        structural_channel_cols = _channel_columns_from_ranked(
-            {**structural_resistance_cols, **structural_support_cols},
-            base,
-            cfg,
-            source_label="structural",
-            output_label="structural_channel",
-            source_count=int(cfg.structural_line_output_count),
+    if cfg.emit_confirmed_lines and confirmed_resistance is not None and confirmed_support is not None:
+        new_cols.update(
+            _rank_raw_candidate_columns(
+                confirmed_resistance,
+                "confirmed_resistance",
+                cfg,
+                slots=int(cfg.confirmed_line_output_count),
+                index=frame.index,
+            )
         )
-        new_cols.update(structural_channel_cols)
-    else:
-        new_cols.update(_empty_channel_columns(frame.index, p, int(cfg.channel_output_count), label="structural_channel"))
-    new_cols.update(
-        _rank_raw_candidate_columns(
-            confirmed_resistance,
-            "confirmed_resistance",
-            cfg,
-            slots=int(cfg.confirmed_line_output_count),
-            index=frame.index,
+        new_cols.update(
+            _rank_raw_candidate_columns(
+                confirmed_support,
+                "confirmed_support",
+                cfg,
+                slots=int(cfg.confirmed_line_output_count),
+                index=frame.index,
+            )
         )
-    )
-    new_cols.update(
-        _rank_raw_candidate_columns(
-            confirmed_support,
-            "confirmed_support",
-            cfg,
-            slots=int(cfg.confirmed_line_output_count),
-            index=frame.index,
+    if cfg.emit_absorbed_lines and absorbed_resistance is not None and absorbed_support is not None:
+        new_cols.update(
+            _rank_raw_candidate_columns(
+                absorbed_resistance,
+                "absorbed_resistance",
+                cfg,
+                slots=int(cfg.absorbed_line_output_count),
+                index=frame.index,
+            )
         )
-    )
-    new_cols.update(
-        _rank_raw_candidate_columns(
-            absorbed_resistance,
-            "absorbed_resistance",
-            cfg,
-            slots=int(cfg.absorbed_line_output_count),
-            index=frame.index,
+        new_cols.update(
+            _rank_raw_candidate_columns(
+                absorbed_support,
+                "absorbed_support",
+                cfg,
+                slots=int(cfg.absorbed_line_output_count),
+                index=frame.index,
+            )
         )
-    )
-    new_cols.update(
-        _rank_raw_candidate_columns(
-            absorbed_support,
-            "absorbed_support",
-            cfg,
-            slots=int(cfg.absorbed_line_output_count),
-            index=frame.index,
+    if cfg.emit_fuzzy_zones:
+        new_cols.update(
+            _cluster_columns(
+                resistance,
+                label="fuzzy_resistance",
+                close=base["close"],
+                proximity_pct=float(cfg.density_proximity_pct),
+                min_lines=int(cfg.density_min_lines),
+                slots=int(cfg.fuzzy_zone_count),
+                prefix=p,
+            )
         )
-    )
-    new_cols.update(
-        _cluster_columns(
-            resistance,
-            label="fuzzy_resistance",
-            close=base["close"],
-            proximity_pct=float(cfg.density_proximity_pct),
-            min_lines=int(cfg.density_min_lines),
-            slots=int(cfg.fuzzy_zone_count),
-            prefix=p,
+        new_cols.update(
+            _cluster_columns(
+                support,
+                label="fuzzy_support",
+                close=base["close"],
+                proximity_pct=float(cfg.density_proximity_pct),
+                min_lines=int(cfg.density_min_lines),
+                slots=int(cfg.fuzzy_zone_count),
+                prefix=p,
+            )
         )
-    )
-    new_cols.update(
-        _cluster_columns(
-            support,
-            label="fuzzy_support",
-            close=base["close"],
-            proximity_pct=float(cfg.density_proximity_pct),
-            min_lines=int(cfg.density_min_lines),
-            slots=int(cfg.fuzzy_zone_count),
-            prefix=p,
+    if cfg.emit_hotspots:
+        new_cols.update(
+            _hotspot_columns(
+                resistance,
+                support,
+                close=base["close"],
+                proximity_pct=float(cfg.hotspot_proximity_pct),
+                min_lines=int(cfg.hotspot_min_lines),
+                slots=int(cfg.hotspot_count),
+                prefix=p,
+            )
         )
-    )
-    new_cols.update(
-        _hotspot_columns(
-            resistance,
-            support,
-            close=base["close"],
-            proximity_pct=float(cfg.hotspot_proximity_pct),
-            min_lines=int(cfg.hotspot_min_lines),
-            slots=int(cfg.hotspot_count),
-            prefix=p,
-        )
-    )
 
     existing = [col for col in frame.columns if str(col).startswith(f"{p}_")]
     clean = frame.drop(columns=existing).copy() if existing else frame.copy()
@@ -443,27 +383,6 @@ def build_trendline_projection_v2_diagnostic(
         ],
         ignore_index=True,
     )
-    structural_candidates = pd.concat(
-        [
-            _diagnostic_candidates(
-                base,
-                "resistance",
-                cfg,
-                max_anchor_bars=int(cfg.structural_max_anchor_bars),
-                max_projection_bars=int(cfg.structural_max_projection_bars),
-                line_kind="structural_raw",
-            ),
-            _diagnostic_candidates(
-                base,
-                "support",
-                cfg,
-                max_anchor_bars=int(cfg.structural_max_anchor_bars),
-                max_projection_bars=int(cfg.structural_max_projection_bars),
-                line_kind="structural_raw",
-            ),
-        ],
-        ignore_index=True,
-    )
     channel_source_candidates = pd.concat(
         [
             _diagnostic_candidates(
@@ -492,12 +411,6 @@ def build_trendline_projection_v2_diagnostic(
         ignore_index=True,
     )
     raw_channel_candidates = _diagnostic_channel_candidates(candidates, base, cfg, line_kind="raw_channel")
-    structural_channel_candidates = _diagnostic_channel_candidates(
-        structural_candidates,
-        base,
-        cfg,
-        line_kind="structural_channel",
-    )
     channel_candidates = _diagnostic_channel_candidates(channel_source_candidates, base, cfg, line_kind="channel")
     confirmed_candidates = _confirm_candidate_table(candidates, base, cfg)
     absorbed_candidates = _absorb_confirmed_keep_seed_table(confirmed_candidates, base, cfg)
@@ -535,12 +448,9 @@ def build_trendline_projection_v2_diagnostic(
         "anchor_clear_raw_support": int(candidates["side"].eq("support").sum()),
         "raw_resistance": int(candidates["side"].eq("resistance").sum()),
         "raw_support": int(candidates["side"].eq("support").sum()),
-        "structural_resistance": int(structural_candidates["side"].eq("resistance").sum()) if not structural_candidates.empty else 0,
-        "structural_support": int(structural_candidates["side"].eq("support").sum()) if not structural_candidates.empty else 0,
         "channel_source_resistance": int(channel_source_candidates["side"].eq("resistance").sum()) if not channel_source_candidates.empty else 0,
         "channel_source_support": int(channel_source_candidates["side"].eq("support").sum()) if not channel_source_candidates.empty else 0,
         "raw_channels": int(len(raw_channel_candidates)),
-        "structural_channels": int(len(structural_channel_candidates)),
         "channels": int(len(channel_candidates)),
         "confirmed_resistance": int(confirmed_candidates["side"].eq("resistance").sum()) if not confirmed_candidates.empty else 0,
         "confirmed_support": int(confirmed_candidates["side"].eq("support").sum()) if not confirmed_candidates.empty else 0,
@@ -561,10 +471,8 @@ def build_trendline_projection_v2_diagnostic(
     return TrendlineProjectionV2Diagnostic(
         frame=enriched,
         raw_candidates=candidates,
-        structural_candidates=structural_candidates,
         channel_source_candidates=channel_source_candidates,
         raw_channel_candidates=raw_channel_candidates,
-        structural_channel_candidates=structural_channel_candidates,
         channel_candidates=channel_candidates,
         confirmed_candidates=confirmed_candidates,
         absorbed_candidates=absorbed_candidates,
@@ -1002,18 +910,6 @@ def _channel_columns_from_ranked(
     return _rank_channel_columns(pack, cfg, index=base["close"].index, label=output_label)
 
 
-def _alias_channel_columns(
-    columns: dict[str, Series],
-    prefix: str,
-    *,
-    source_label: str,
-    alias_label: str,
-) -> dict[str, Series]:
-    source_token = f"{prefix}_{source_label}_"
-    alias_token = f"{prefix}_{alias_label}_"
-    return {name.replace(source_token, alias_token, 1): value for name, value in columns.items()}
-
-
 def _rolling_channel_from_ranked_pair(
     line_columns: dict[str, Series],
     base: dict[str, Series],
@@ -1073,7 +969,8 @@ def _rolling_channel_from_ranked_pair(
     line_score = pd.concat([res_score, sup_score], axis=1).mean(axis=1)
     overlap_score = _clip01(overlap_bars / max(float(cfg.channel_min_overlap_bars) * 3.0, 1.0))
     slope_score = _clip01(1.0 - slope_diff_pct / max(float(cfg.channel_slope_tolerance_pct), 1e-9))
-    width_score = _clip01(1.0 - (width_pct - 0.08).abs() / 0.08)
+    preferred_width = max(float(cfg.channel_preferred_width_pct), float(cfg.channel_min_width_pct))
+    width_score = _clip01(1.0 - (width_pct - preferred_width).abs() / max(preferred_width, 1e-9))
     pivot_score = _clip01((res_pivots.fillna(2.0) + sup_pivots.fillna(2.0)) / 10.0)
     score = _clip01(
         0.24 * line_score
@@ -1104,28 +1001,45 @@ def _rolling_channel_from_ranked_pair(
         axis=1,
     ).max(axis=1)
     position = ((close - lower) / width.replace(0.0, np.nan)).replace([np.inf, -np.inf], np.nan)
+    body_high = base["body_high"]
+    body_low = base["body_low"]
+    inside = (body_high.le(upper + tolerance) & body_low.ge(lower - tolerance)).fillna(False)
+    breakout_up = close.gt(upper + tolerance).fillna(False)
+    breakdown_down = close.lt(lower - tolerance).fillna(False)
+    outside = breakout_up | breakdown_down
+    stale_break = _rolling_all_true(outside.where(valid, False), max(int(cfg.channel_breakout_grace_bars), 1))
+    active = valid & ~stale_break
+    active_quality = pd.Series(1.0, index=index, dtype="float64").where(
+        inside,
+        0.72,
+    )
+    active_quality = active_quality.where(~outside, 0.46)
+    score = (score * active_quality).where(active)
     return {
-        "upper": upper.where(valid),
-        "lower": lower.where(valid),
-        "mid": ((upper + lower) / 2.0).where(valid),
-        "width": width.where(valid),
-        "width_pct": width_pct.where(valid),
-        "position": position.where(valid),
-        "score": score.where(valid),
-        "slope_upper": res_slope.where(valid),
-        "slope_lower": sup_slope.where(valid),
-        "slope_diff_pct": slope_diff_pct.where(valid),
-        "width_change_pct": width_change_pct.where(valid),
-        "shape": channel_shape.where(valid),
-        "overlap_start_index": overlap_start.where(valid),
-        "overlap_end_index": overlap_end.where(valid),
-        "overlap_bars": overlap_bars.where(valid),
-        "source_resistance_slot": pd.Series(float(resistance_rank), index=index).where(valid),
-        "source_support_slot": pd.Series(float(support_rank), index=index).where(valid),
-        "breakout_up": close.gt(upper + tolerance).astype("float64").where(valid),
-        "breakdown_down": close.lt(lower - tolerance).astype("float64").where(valid),
-        "near_upper": (upper - close).abs().le(tolerance).astype("float64").where(valid),
-        "near_lower": (close - lower).abs().le(tolerance).astype("float64").where(valid),
+        "upper": upper.where(active),
+        "lower": lower.where(active),
+        "mid": ((upper + lower) / 2.0).where(active),
+        "width": width.where(active),
+        "width_pct": width_pct.where(active),
+        "position": position.where(active),
+        "score": score,
+        "slope_upper": res_slope.where(active),
+        "slope_lower": sup_slope.where(active),
+        "slope_diff_pct": slope_diff_pct.where(active),
+        "width_change_pct": width_change_pct.where(active),
+        "shape": channel_shape.where(active),
+        "overlap_start_index": overlap_start.where(active),
+        "overlap_end_index": overlap_end.where(active),
+        "overlap_bars": overlap_bars.where(active),
+        "source_resistance_slot": pd.Series(float(resistance_rank), index=index).where(active),
+        "source_support_slot": pd.Series(float(support_rank), index=index).where(active),
+        "active": active.astype("float64").where(valid),
+        "inside": inside.astype("float64").where(valid),
+        "stale_break": stale_break.astype("float64").where(valid),
+        "breakout_up": breakout_up.astype("float64").where(valid),
+        "breakdown_down": breakdown_down.astype("float64").where(valid),
+        "near_upper": (upper - close).abs().le(tolerance).astype("float64").where(active),
+        "near_lower": (close - lower).abs().le(tolerance).astype("float64").where(active),
     }
 
 
@@ -1181,6 +1095,9 @@ def _rank_channel_columns(
             "overlap_bars",
             "source_resistance_slot",
             "source_support_slot",
+            "active",
+            "inside",
+            "stale_break",
             "breakout_up",
             "breakdown_down",
             "near_upper",
@@ -1229,22 +1146,26 @@ def _rolling_channel_duplicate_mask(
     overlap_ratio = overlap / np.maximum(np.minimum(span, chosen_span), 1.0)
     width_ref = np.maximum(np.minimum(width, chosen_width), 1e-9)
     mid_close = np.abs(mid - chosen_mid) <= width_ref * float(cfg.channel_duplicate_mid_width_mult)
-    upper_slope_close = _relative_array_diff(upper_slope, chosen_upper_slope) <= float(cfg.channel_duplicate_slope_tolerance_pct)
-    lower_slope_close = _relative_array_diff(lower_slope, chosen_lower_slope) <= float(cfg.channel_duplicate_slope_tolerance_pct)
+    width_close = _relative_array_diff(width, chosen_width) <= float(cfg.channel_duplicate_width_tolerance_pct)
     finite = np.isfinite(start) & np.isfinite(end) & np.isfinite(mid) & np.isfinite(width)
     return (
         valid[:, np.newaxis]
         & finite
         & (overlap_ratio >= float(cfg.channel_duplicate_overlap_pct))
         & mid_close
-        & upper_slope_close
-        & lower_slope_close
+        & width_close
     )
 
 
 def _relative_array_diff(left: np.ndarray, right: np.ndarray) -> np.ndarray:
     denominator = np.maximum(np.maximum(np.abs(left), np.abs(right)), 1e-9)
     return np.abs(left - right) / denominator
+
+
+def _rolling_all_true(condition: Series, window: int) -> Series:
+    lookback = max(int(window), 1)
+    values = condition.fillna(False).astype("float64")
+    return values.rolling(lookback, min_periods=lookback).sum().ge(float(lookback))
 
 
 def _empty_channel_pack() -> dict[str, list[Series]]:
@@ -1266,6 +1187,9 @@ def _empty_channel_pack() -> dict[str, list[Series]]:
         "overlap_bars": [],
         "source_resistance_slot": [],
         "source_support_slot": [],
+        "active": [],
+        "inside": [],
+        "stale_break": [],
         "breakout_up": [],
         "breakdown_down": [],
         "near_upper": [],
@@ -1295,6 +1219,9 @@ def _empty_channel_columns(index: pd.Index, prefix: str, slots: int, *, label: s
             "overlap_bars",
             "source_resistance_slot",
             "source_support_slot",
+            "active",
+            "inside",
+            "stale_break",
             "breakout_up",
             "breakdown_down",
             "near_upper",
@@ -1603,6 +1530,7 @@ def _diagnostic_channel_candidates(
         "sup_pivot_path",
         "start",
         "end",
+        "raw_end",
         "overlap_bars",
         "upper_slope",
         "lower_slope",
@@ -1643,6 +1571,10 @@ def _diagnostic_channel_candidates(
             metrics = _diagnostic_channel_metrics(upper, lower, base, start, end, cfg)
             if metrics is None:
                 continue
+            active_end = int(round(metrics["active_end"]))
+            active_overlap = active_end - start
+            if active_overlap < int(cfg.channel_min_overlap_bars):
+                continue
             if metrics["width_pct_mid"] < float(cfg.channel_min_width_pct) or metrics["width_pct_mid"] > float(cfg.channel_max_width_pct):
                 continue
             if metrics["containment_ratio"] < float(cfg.channel_min_containment_ratio):
@@ -1662,7 +1594,7 @@ def _diagnostic_channel_candidates(
             relation_score = max(metrics["parallel_score"], metrics["convergence_score"])
             if relation_score <= 0.0:
                 continue
-            overlap_score = min(overlap / max(float(cfg.channel_min_overlap_bars) * 3.0, 1.0), 1.0)
+            overlap_score = min(active_overlap / max(float(cfg.channel_min_overlap_bars) * 3.0, 1.0), 1.0)
             touch_score = min(metrics["pivot_touch_count"] / 10.0, 1.0)
             line_score = (float(upper["score"]) + float(lower["score"])) / 2.0
             tight_score = max(
@@ -1688,8 +1620,9 @@ def _diagnostic_channel_candidates(
                     "res_pivot_path": str(upper["pivot_path"]),
                     "sup_pivot_path": str(lower["pivot_path"]),
                     "start": float(start),
-                    "end": float(end),
-                    "overlap_bars": float(overlap),
+                    "end": float(active_end),
+                    "raw_end": float(end),
+                    "overlap_bars": float(active_overlap),
                     "upper_slope": float(upper["slope"]),
                     "lower_slope": float(lower["slope"]),
                     "upper_intercept": float(upper["intercept"]),
@@ -1767,6 +1700,28 @@ def _diagnostic_channel_metrics(
     while sample_end > 1 and trimmed < int(cfg.channel_breakout_grace_bars) and not bool(contained[sample_end - 1]):
         sample_end -= 1
         trimmed += 1
+    if sample_end <= 1:
+        return None
+    active_end = start + sample_end - 1
+    active_width = width[:sample_end]
+    active_mid_idx = start + int(round((sample_end - 1) / 2.0))
+    close_ref = max(abs(float(base["close"].iloc[active_mid_idx])), 1e-9)
+    width_start = float(active_width[0])
+    width_end = float(active_width[-1])
+    width_mid = float(active_width[len(active_width) // 2])
+    width_pct_mid = width_mid / close_ref
+    width_change_pct = (width_end - width_start) / max(abs(width_start), 1e-9)
+    parallel_score = min(1.0, max(0.0, 1.0 - abs(width_change_pct) / max(float(cfg.channel_parallel_width_change_pct), 1e-9)))
+    convergence_score = min(
+        1.0,
+        max(0.0, (-width_change_pct - float(cfg.channel_min_convergence_pct)) / max(float(cfg.channel_parallel_width_change_pct), 1e-9)),
+    )
+    if convergence_score > parallel_score:
+        shape = 1.0
+    elif width_change_pct > float(cfg.channel_parallel_width_change_pct):
+        shape = -1.0
+    else:
+        shape = 0.0
     containment_sample = contained[:sample_end]
     containment_ratio = float(np.mean(containment_sample)) if len(containment_sample) else 0.0
     close_values = base["close"].iloc[start : end + 1].to_numpy(dtype="float64")
@@ -1779,21 +1734,28 @@ def _diagnostic_channel_metrics(
     else:
         position_coverage = 0.0
 
-    high_pivot = base["confirm_pivot_high"].combine_first(base["pivot_high"]).iloc[start : end + 1].to_numpy(dtype="float64")
-    low_pivot = base["confirm_pivot_low"].combine_first(base["pivot_low"]).iloc[start : end + 1].to_numpy(dtype="float64")
+    high_pivot = base["confirm_pivot_high"].combine_first(base["pivot_high"]).iloc[start : end + 1].to_numpy(dtype="float64")[
+        :sample_end
+    ]
+    low_pivot = base["confirm_pivot_low"].combine_first(base["pivot_low"]).iloc[start : end + 1].to_numpy(dtype="float64")[
+        :sample_end
+    ]
     high_valid = np.isfinite(high_pivot)
     low_valid = np.isfinite(low_pivot)
-    active_indexes = np.arange(start, end + 1, dtype="int64")
+    active_indexes = np.arange(start, active_end + 1, dtype="int64")
+    upper_line_sample = upper_line[:sample_end]
+    lower_line_sample = lower_line[:sample_end]
+    tolerance_sample = tolerance[:sample_end]
     upper_overlap_touches = {
         int(active_indexes[pos])
-        for pos in np.flatnonzero(high_valid & (np.abs(high_pivot - upper_line) <= tolerance))
+        for pos in np.flatnonzero(high_valid & (np.abs(high_pivot - upper_line_sample) <= tolerance_sample))
     }
     lower_overlap_touches = {
         int(active_indexes[pos])
-        for pos in np.flatnonzero(low_valid & (np.abs(low_pivot - lower_line) <= tolerance))
+        for pos in np.flatnonzero(low_valid & (np.abs(low_pivot - lower_line_sample) <= tolerance_sample))
     }
-    recent_bars = max(1, int(round((end - start + 1) * float(cfg.channel_recent_touch_fraction))))
-    recent_start = max(start, end - recent_bars + 1)
+    recent_bars = max(1, int(round((active_end - start + 1) * float(cfg.channel_recent_touch_fraction))))
+    recent_start = max(start, active_end - recent_bars + 1)
     upper_recent_touches = {pivot for pivot in upper_overlap_touches if pivot >= recent_start}
     lower_recent_touches = {pivot for pivot in lower_overlap_touches if pivot >= recent_start}
     upper_touches = len(upper_overlap_touches)
@@ -1811,6 +1773,7 @@ def _diagnostic_channel_metrics(
         "width_start": width_start,
         "width_end": width_end,
         "width_mid": width_mid,
+        "active_end": float(active_end),
         "width_pct_mid": float(width_pct_mid),
         "width_change_pct": float(width_change_pct),
         "shape": shape,
@@ -1873,10 +1836,11 @@ def _channels_are_duplicates(left: pd.Series, right: pd.Series, cfg: TrendlinePr
     width_ref = max(min(left_width, right_width), 1e-9)
     if mid_distance > width_ref * float(cfg.channel_duplicate_mid_width_mult):
         return False
+    width_diff = abs(left_width - right_width) / max(max(left_width, right_width), 1e-9)
+    if width_diff > float(cfg.channel_duplicate_width_tolerance_pct):
+        return False
 
-    upper_slope_diff = _relative_float_diff(float(left["upper_slope"]), float(right["upper_slope"]))
-    lower_slope_diff = _relative_float_diff(float(left["lower_slope"]), float(right["lower_slope"]))
-    return max(upper_slope_diff, lower_slope_diff) <= float(cfg.channel_duplicate_slope_tolerance_pct)
+    return True
 
 
 def _relative_float_diff(left: float, right: float) -> float:
@@ -2598,8 +2562,8 @@ def _validate_config(cfg: TrendlineProjectionV2Config) -> None:
         raise ValueError("candidate_pivot_count must be at least 3")
     if cfg.raw_line_output_count < 1:
         raise ValueError("raw_line_output_count must be positive")
-    if cfg.confirmed_line_output_count < 1 or cfg.absorbed_line_output_count < 1 or cfg.structural_line_output_count < 1:
-        raise ValueError("confirmed/absorbed/structural line output counts must be positive")
+    if cfg.confirmed_line_output_count < 1 or cfg.absorbed_line_output_count < 1:
+        raise ValueError("confirmed/absorbed line output counts must be positive")
     if cfg.channel_output_count < 1:
         raise ValueError("channel_output_count must be positive")
     if cfg.fuzzy_zone_count < 1 or cfg.hotspot_count < 1:
@@ -2608,8 +2572,6 @@ def _validate_config(cfg: TrendlineProjectionV2Config) -> None:
         raise ValueError("min_anchor_bars must be positive")
     if cfg.max_anchor_bars < cfg.min_anchor_bars:
         raise ValueError("max_anchor_bars must be greater than or equal to min_anchor_bars")
-    if cfg.structural_max_anchor_bars < cfg.max_anchor_bars:
-        raise ValueError("structural_max_anchor_bars must be greater than or equal to max_anchor_bars")
     if cfg.min_pivot_prominence_atr < 0.0:
         raise ValueError("min_pivot_prominence_atr must be non-negative")
     if cfg.min_confirmation_pivot_prominence_atr < 0.0:
@@ -2618,8 +2580,6 @@ def _validate_config(cfg: TrendlineProjectionV2Config) -> None:
         raise ValueError("max_slope_pct_per_bar must be positive")
     if cfg.max_projection_bars < 1:
         raise ValueError("max_projection_bars must be positive")
-    if cfg.structural_max_projection_bars < cfg.max_projection_bars:
-        raise ValueError("structural_max_projection_bars must be greater than or equal to max_projection_bars")
     if cfg.channel_source_line_count < 2:
         raise ValueError("channel_source_line_count must be at least 2")
     if cfg.channel_candidate_pool_size < cfg.channel_source_line_count:
@@ -2642,6 +2602,8 @@ def _validate_config(cfg: TrendlineProjectionV2Config) -> None:
         raise ValueError("channel width relation settings are invalid")
     if cfg.channel_min_width_pct <= 0.0 or cfg.channel_max_width_pct <= cfg.channel_min_width_pct:
         raise ValueError("channel width settings are invalid")
+    if cfg.channel_preferred_width_pct <= 0.0:
+        raise ValueError("channel_preferred_width_pct must be positive")
     if not 0.0 <= cfg.channel_min_containment_ratio <= 1.0:
         raise ValueError("channel_min_containment_ratio must be between 0 and 1")
     if cfg.channel_touch_tolerance_pct <= 0.0 or cfg.channel_touch_atr_mult < 0.0:
@@ -2660,6 +2622,8 @@ def _validate_config(cfg: TrendlineProjectionV2Config) -> None:
         raise ValueError("channel_duplicate_overlap_pct must be between 0 and 1")
     if cfg.channel_duplicate_mid_width_mult <= 0.0:
         raise ValueError("channel_duplicate_mid_width_mult must be positive")
+    if cfg.channel_duplicate_width_tolerance_pct <= 0.0:
+        raise ValueError("channel_duplicate_width_tolerance_pct must be positive")
     if cfg.channel_duplicate_slope_tolerance_pct <= 0.0:
         raise ValueError("channel_duplicate_slope_tolerance_pct must be positive")
     if cfg.channel_breakout_grace_bars < 0:
