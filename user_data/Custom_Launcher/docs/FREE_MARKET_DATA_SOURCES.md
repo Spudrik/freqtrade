@@ -1,0 +1,63 @@
+# Free Market Data Inventory
+
+## Implemented in Order Book Lab
+
+- Binance spot order book partial-depth streams: public WebSocket, no key required.
+- Binance USD-M futures order book partial-depth streams: public WebSocket, no key required.
+- Bybit spot order book streams: public V5 WebSocket, no key required.
+- Bybit linear futures order book streams: public V5 WebSocket, no key required.
+- Live order book metric ticks and bars are the default storage path for later dataframe/backtest use. Raw depth snapshots are optional and default off because they increase storage quickly and are not required for metric-based dataframe features.
+- Binance USD-M context: funding, open interest, global long/short account ratio, and taker long/short volume from public REST endpoints.
+- Bybit linear context: funding, open interest, account ratio, and recent-trade taker volume approximation from public REST endpoints. The shared `5m` context period is translated to Bybit's `5min` parameter format at request time.
+
+## Implemented in Global Context
+
+- Alternative.me Fear & Greed index: stored as a source-provided 0-100 sentiment score with Fear/Neutral/Greed labeling.
+- CoinGecko global market endpoint: total crypto market cap, volume, BTC dominance, and 24h market-cap change. BTC dominance is also stored as its own `btc_dominance_pct` metric row.
+- CoinGecko BTC/ETH markets endpoint: BTC/ETH price and short-term price-change context.
+- DeFiLlama stablecoins endpoint: stablecoin supply trend as a crypto-liquidity proxy. Current supply is stored as `stablecoin_supply_usd`, with change rows for later analysis.
+- DeFiLlama chains endpoint: aggregate DeFi TVL and weighted chain TVL change.
+- Stooq no-key quote CSV: US equity, global equity, and safe-haven/rates proxy headline baskets for broad risk context.
+- FRED optional keyed API: disabled by default until `FRED_API_KEY` is set, with starter baskets for US equity indices, VIX, rates, and broad USD.
+
+## Global Context Scoring
+
+- `score` is the effective 0-100 score used by the UI summary and remains backward-compatible for existing queries.
+- `source_score` is populated only when the source supplies an actual score, such as Alternative.me Fear & Greed.
+- `calc_score` is populated when the launcher normalizes raw source data into a comparable risk score.
+- Fear/Neutral/Greed labels are used for broad market mood/liquidity scores. BTC dominance uses Weak/Balanced/Strong because its score describes BTC share strength, not market fear.
+- `btc_dominance_pct` gets a calculated dominance-strength score. `stablecoin_supply_change_1d` gets a calculated liquidity-change score. Raw `stablecoin_supply_usd` intentionally stays unscored because the absolute supply level is not meaningful without a historical baseline.
+
+## FRED Key File
+
+The Global Context UI can point at an external JSON key file instead of storing secrets in the committed source config. The default JSON path is `fred.api_key`.
+
+```json
+{
+  "fred": {
+    "api_key": "PASTE_FRED_API_KEY_HERE"
+  }
+}
+```
+
+## Good Next Candidates
+
+- OKX public order book, funding, open interest, long/short ratio, and taker flow. This is the most natural next exchange because the public market-data API is broad and derivatives context is strong.
+- Coinbase public spot order book and trades. Useful as a US spot venue reference, but it does not provide perp context.
+- Kraken public spot order book and trades. Useful as a second non-Binance spot venue reference.
+- Deribit public BTC/ETH options and futures data. Useful for volatility, funding, and options positioning context rather than broad altcoin coverage.
+- Exchange announcement RSS/API sources for listings, delistings, launches, maintenance, and leverage/margin changes.
+- Official macro RSS feeds: Federal Reserve, Treasury, BLS, BEA, ECB, BOE, and economic calendar sources with permissive terms.
+
+## Rules For Adding Sources
+
+- Prefer official public API, WebSocket, or RSS endpoints before HTML scraping.
+- Store every source with `market_key`, `canonical_pair`, `symbol`, and timestamp fields so it can join to order book bars later.
+- Keep this layer data-only. Strategy use belongs in a separate research card after the data has enough history to validate.
+- For global context sources without pair identity, store source-group, source-id, score, signal, value, unit, and notes in `global_context_ticks`.
+
+## Official References Checked
+
+- Binance USD-M Futures market data REST docs: [funding rate](https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Get-Funding-Rate-History), [open interest](https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Open-Interest), [long/short ratio](https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Long-Short-Ratio), and [taker buy/sell volume](https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Taker-BuySell-Volume).
+- Bybit V5 market data docs: [funding history](https://bybit-exchange.github.io/docs/v5/market/history-fund-rate), [open interest](https://bybit-exchange.github.io/docs/v5/market/open-interest), [long/short ratio](https://bybit-exchange.github.io/docs/v5/market/long-short-ratio), and [recent public trades](https://bybit-exchange.github.io/docs/v5/market/recent-trade).
+- FRED API docs: [series observations](https://fred.stlouisfed.org/docs/api/fred/series_observations.html) and [API key](https://fred.stlouisfed.org/docs/api/fred/v2/api_key.html).

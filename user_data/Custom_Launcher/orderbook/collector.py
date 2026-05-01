@@ -10,17 +10,29 @@ import time
 from pathlib import Path
 from typing import Any
 
+from orderbook.market_context import fetch_market_context
+from orderbook.markets import (
+    MARKET_PROFILES,
+    normalize_market_profile_keys,
+    normalize_pairs_for_profiles,
+)
 from orderbook.metrics import (
     aggregate_metric_ticks,
     calculate_orderbook_metrics,
     estimate_storage_usage,
-    normalize_whitelist_pairs,
-    parse_book_side,
+)
+from orderbook.streams import (
+    apply_book_update,
+    build_stream_url,
+    build_subscribe_message,
+    parse_stream_message,
+    stream_records_by_profile,
 )
 from orderbook.store import (
     connect_db,
     init_db,
     insert_capacity_alert,
+    insert_market_context,
     insert_metric_bar,
     insert_metric_tick,
     insert_snapshot,
@@ -46,8 +58,8 @@ DEFAULT_PID_PATH = DEFAULT_DATA_DIR / "collector.pid"
 DEFAULT_STOP_PATH = DEFAULT_DATA_DIR / "collector.stop"
 DEFAULT_LOG_PATH = DEFAULT_DATA_DIR / "logs" / "orderbook_collector.log"
 
-VALID_DEPTH_LEVELS = {5, 10, 20}
-VALID_STREAM_UPDATE_MS = {100, 250, 500}
+VALID_DEPTH_LEVELS = {depth for profile in MARKET_PROFILES.values() for depth in profile.supported_depths}
+VALID_STREAM_UPDATE_MS = {interval for profile in MARKET_PROFILES.values() for interval in profile.supported_update_ms}
 
 
 def utc_now() -> str:
@@ -108,15 +120,18 @@ def read_config(path: Path) -> dict[str, Any]:
     if isinstance(defaults, dict):
         for key, value in defaults.items():
             payload.setdefault(key, value)
-    payload.setdefault("exchange", "binance_usdm_futures")
-    payload.setdefault("market_type", "futures")
+    payload.setdefault("market_profiles", ["binance_spot", "binance_usdm_futures", "bybit_spot", "bybit_linear"])
+    payload.setdefault("exchange", "multi_market")
+    payload.setdefault("market_type", "multi")
     payload.setdefault("stream_mode", "partial_depth")
     payload.setdefault("depth_levels", 20)
     payload.setdefault("stream_update_ms", 500)
     payload.setdefault("metric_interval_seconds", 1)
+    payload.setdefault("context_poll_seconds", 300)
+    payload.setdefault("context_period", "5m")
     payload.setdefault("bar_intervals_seconds", [60, 300, 3600])
     payload.setdefault("snapshot_interval_seconds", 60)
-    payload.setdefault("store_snapshots", True)
+    payload.setdefault("store_snapshots", False)
     payload.setdefault("store_raw_events", False)
     payload.setdefault("max_symbols", 12)
     payload.setdefault("capacity_warning_mb", 500)
@@ -129,7 +144,7 @@ def read_config(path: Path) -> dict[str, Any]:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Standalone Binance order book collector")
+    parser = argparse.ArgumentParser(description="Standalone multi-market order book collector")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
     parser.add_argument("--db", type=Path, default=DEFAULT_DB_PATH)
@@ -142,14 +157,9 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def parse_pairs_arg(raw_pairs: str, max_symbols: int) -> list[dict[str, str]]:
+def parse_pair_tokens(raw_pairs: str) -> list[str]:
     tokens = [part.strip() for part in str(raw_pairs or "").replace("\n", ",").split(",") if part.strip()]
-    return normalize_whitelist_pairs(tokens, max_symbols=max_symbols)
-
-
-def build_stream_url(symbols: list[str], depth_levels: int, stream_update_ms: int) -> str:
-    streams = [f"{symbol.lower()}@depth{depth_levels}@{stream_update_ms}ms" for symbol in symbols]
-    return "wss://fstream.binance.com/stream?streams=" + "/".join(streams)
+    return tokens
 
 
 def main() -> int:
@@ -172,7 +182,18 @@ def main() -> int:
     if stream_update_ms not in VALID_STREAM_UPDATE_MS:
         raise ValueError(f"Unsupported stream_update_ms={stream_update_ms}. Supported: {sorted(VALID_STREAM_UPDATE_MS)}")
 
-    pair_records = parse_pairs_arg(args.pairs, max_symbols=int(config.get("max_symbols", 12)))
+    profile_keys = normalize_market_profile_keys(config.get("market_profiles"))
+    if not profile_keys:
+        status_payload = {"status": "error", "last_error": "No supported market profiles configured."}
+        save_json(args.status_file, status_payload)
+        return 1
+    pair_records = normalize_pairs_for_profiles(
+        parse_pair_tokens(args.pairs),
+        profile_keys,
+        max_symbols=int(config.get("max_symbols", 12)),
+        depth_levels=depth_levels,
+        stream_update_ms=stream_update_ms,
+    )
     if not pair_records:
         status_payload = {"status": "error", "last_error": "No usable whitelist pairs found. Add pairs on the Pairs tab first."}
         save_json(args.status_file, status_payload)
@@ -180,10 +201,21 @@ def main() -> int:
 
     stream_state: dict[str, dict[str, Any]] = {}
     for record in pair_records:
-        symbol = record["symbol"]
-        stream_state[symbol] = {
+        stream_id = record["stream_id"]
+        retained_depth = min(depth_levels, int(record["stream_depth"]))
+        stream_state[stream_id] = {
             "pair": record["pair"],
-            "symbol": symbol,
+            "canonical_pair": record["canonical_pair"],
+            "symbol": record["symbol"],
+            "stream_id": stream_id,
+            "market_key": record["market_key"],
+            "venue": record["venue"],
+            "market_type": record["market_type"],
+            "margin_type": record["margin_type"],
+            "quote_asset": record["quote_asset"],
+            "stream_depth": record["stream_depth"],
+            "stream_update_ms": record["stream_update_ms"],
+            "retained_depth": retained_depth,
             "bids": [],
             "asks": [],
             "last_message_at": None,
@@ -217,11 +249,15 @@ def main() -> int:
 
     metric_interval = max(1, int(config.get("metric_interval_seconds", 1)))
     snapshot_interval = max(1, int(config.get("snapshot_interval_seconds", 60)))
+    context_poll_seconds = max(30, int(config.get("context_poll_seconds", 300)))
+    context_period = str(config.get("context_period") or "5m")
     bar_intervals = [int(v) for v in config.get("bar_intervals_seconds", [60, 300, 3600]) if int(v) > 0]
     store_snapshots = bool(config.get("store_snapshots", True))
     symbols = [item["symbol"] for item in pair_records]
-    pairs = [item["pair"] for item in pair_records]
-    stream_url = build_stream_url(symbols, depth_levels, stream_update_ms)
+    pairs = sorted({item["pair"] for item in pair_records})
+    canonical_pairs = sorted({item["canonical_pair"] for item in pair_records})
+    market_profile_labels = [MARKET_PROFILES[key].label for key in profile_keys]
+    max_retained_depth = max(int(state["retained_depth"]) for state in stream_state.values())
 
     status_payload: dict[str, Any] = {
         "run_id": run_id,
@@ -231,20 +267,26 @@ def main() -> int:
         "heartbeat_at": utc_now(),
         "last_message_at": None,
         "last_metric_at": None,
-        "exchange": "binance_usdm_futures",
-        "market_type": "futures",
+        "exchange": "multi_market",
+        "market_type": "multi",
+        "market_profiles": profile_keys,
+        "market_profile_labels": market_profile_labels,
         "stream_mode": "partial_depth",
         "depth_levels": depth_levels,
         "stream_update_ms": stream_update_ms,
         "metric_interval_seconds": metric_interval,
         "snapshot_interval_seconds": snapshot_interval,
+        "context_poll_seconds": context_poll_seconds,
+        "context_period": context_period,
         "pair_count": len(pairs),
         "pairs": pairs,
+        "canonical_pairs": canonical_pairs,
         "symbols": symbols,
-        "active_streams": len(symbols),
+        "active_streams": len(pair_records),
         "message_count_total": 0,
         "metric_count_total": 0,
         "snapshot_count_total": 0,
+        "context_count_total": 0,
         "reconnect_count_total": 0,
         "last_error": None,
         "db_path": str(args.db),
@@ -260,17 +302,22 @@ def main() -> int:
     save_json(args.status_file, status_payload)
     conn = connect_db(args.db)
     try:
-        for symbol in symbols:
-            state = stream_state[symbol]
+        for stream_id in sorted(stream_state):
+            state = stream_state[stream_id]
             update_stream_status(
                 conn,
                 {
-                    "stream_id": symbol,
-                    "exchange": "binance_usdm_futures",
-                    "market_type": "futures",
+                    "stream_id": stream_id,
+                    "market_key": state["market_key"],
+                    "venue": state["venue"],
+                    "exchange": state["market_key"],
+                    "market_type": state["market_type"],
+                    "margin_type": state["margin_type"],
+                    "quote_asset": state["quote_asset"],
+                    "canonical_pair": state["canonical_pair"],
                     "pair": state["pair"],
-                    "symbol": symbol,
-                    "depth_levels": depth_levels,
+                    "symbol": state["symbol"],
+                    "depth_levels": state["retained_depth"],
                     "stream_mode": "partial_depth",
                     "status": "running",
                     "started_at": state["started_at"],
@@ -300,84 +347,87 @@ def main() -> int:
 
     stop_event = threading.Event()
     books_lock = threading.Lock()
-    ws_holder: dict[str, Any] = {"app": None}
-    reconnect_delay = 5
+    ws_holders: dict[str, Any] = {}
+    grouped_records = stream_records_by_profile(pair_records)
 
-    def on_message(_ws: Any, message: str) -> None:
-        nonlocal reconnect_delay
+    def ws_runner(profile_key: str, records: list[dict[str, Any]]) -> None:
+        profile = MARKET_PROFILES[profile_key]
         reconnect_delay = 5
-        try:
-            payload = json.loads(message)
-            stream = str(payload.get("stream") or "")
-            data = payload.get("data") or {}
-            symbol = stream.split("@", 1)[0].upper()
-            if symbol not in stream_state:
-                return
-            bids_raw = data.get("b") if isinstance(data, dict) else None
-            asks_raw = data.get("a") if isinstance(data, dict) else None
-            if bids_raw is None and isinstance(data, dict):
-                bids_raw = data.get("bids")
-            if asks_raw is None and isinstance(data, dict):
-                asks_raw = data.get("asks")
-            bids = parse_book_side(bids_raw or [], reverse=True)[:depth_levels]
-            asks = parse_book_side(asks_raw or [], reverse=False)[:depth_levels]
-            now = utc_now()
+        stream_by_symbol = {str(record["symbol"]).upper(): str(record["stream_id"]) for record in records}
+        stream_url = build_stream_url(profile, records)
+
+        def on_message(_ws: Any, message: str) -> None:
+            nonlocal reconnect_delay
+            reconnect_delay = 5
+            try:
+                symbol, bids, asks, update_type = parse_stream_message(profile, message)
+                if not symbol:
+                    return
+                stream_id = stream_by_symbol.get(symbol.upper())
+                if not stream_id:
+                    return
+                now = utc_now()
+                with books_lock:
+                    state = stream_state[stream_id]
+                    apply_book_update(state, profile_key, bids, asks, update_type, int(state["retained_depth"]))
+                    state["last_message_at"] = now
+                    state["message_count"] += 1
+                    state["message_count_interval"] += 1
+                    state["status"] = "running"
+                    status_payload["last_message_at"] = now
+                    status_payload["message_count_total"] = int(status_payload.get("message_count_total", 0)) + 1
+            except Exception as exc:
+                logging.exception("Could not parse %s websocket message", profile_key)
+                status_payload["last_error"] = str(exc)
+
+        def on_error(_ws: Any, error: Any) -> None:
+            text = str(error)
+            logging.error("%s websocket error: %s", profile_key, text)
+            status_payload["last_error"] = text
             with books_lock:
-                state = stream_state[symbol]
-                if bids:
-                    state["bids"] = bids
-                if asks:
-                    state["asks"] = asks
-                state["last_message_at"] = now
-                state["message_count"] += 1
-                state["message_count_interval"] += 1
-                state["status"] = "running"
-                status_payload["last_message_at"] = now
-                status_payload["message_count_total"] = int(status_payload.get("message_count_total", 0)) + 1
-        except Exception as exc:
-            logging.exception("Could not parse websocket message")
-            status_payload["last_error"] = str(exc)
+                for record in records:
+                    state = stream_state[str(record["stream_id"])]
+                    state["error_count"] += 1
+                    state["last_error"] = text
+                    state["status"] = "error"
 
-    def on_error(_ws: Any, error: Any) -> None:
-        text = str(error)
-        logging.error("Websocket error: %s", text)
-        status_payload["last_error"] = text
-        with books_lock:
-            for state in stream_state.values():
-                state["error_count"] += 1
-                state["last_error"] = text
-                state["status"] = "error"
+        def on_close(_ws: Any, _status_code: Any, _msg: Any) -> None:
+            logging.warning("%s websocket closed", profile_key)
 
-    def on_close(_ws: Any, _status_code: Any, _msg: Any) -> None:
-        logging.warning("Websocket closed")
+        def on_open(ws: Any) -> None:
+            logging.info("%s websocket connected", profile_key)
+            subscribe = build_subscribe_message(profile, records)
+            if subscribe:
+                ws.send(subscribe)
 
-    def on_open(_ws: Any) -> None:
-        logging.info("Websocket connected")
-
-    def ws_runner() -> None:
-        nonlocal reconnect_delay
         while not stop_event.is_set():
             try:
                 ws_app = websocket.WebSocketApp(stream_url, on_message=on_message, on_error=on_error, on_close=on_close, on_open=on_open)
-                ws_holder["app"] = ws_app
+                ws_holders[profile_key] = ws_app
                 ws_app.run_forever(ping_interval=20, ping_timeout=10)
             except Exception as exc:
-                logging.exception("Websocket runner failure")
+                logging.exception("%s websocket runner failure", profile_key)
                 status_payload["last_error"] = str(exc)
             if stop_event.is_set():
                 break
             with books_lock:
-                for state in stream_state.values():
+                for record in records:
+                    state = stream_state[str(record["stream_id"])]
                     state["reconnect_count"] += 1
             status_payload["reconnect_count_total"] = int(status_payload.get("reconnect_count_total", 0)) + 1
             time.sleep(reconnect_delay)
             reconnect_delay = min(30, reconnect_delay * 2)
 
-    ws_thread = threading.Thread(target=ws_runner, daemon=True)
-    ws_thread.start()
+    ws_threads = [
+        threading.Thread(target=ws_runner, args=(profile_key, records), daemon=True)
+        for profile_key, records in grouped_records.items()
+    ]
+    for ws_thread in ws_threads:
+        ws_thread.start()
 
     last_metric_ts = 0.0
     last_snapshot_ts = 0.0
+    last_context_ts = 0.0
     bar_last_run = {interval: 0.0 for interval in bar_intervals}
     last_capacity_ts = 0.0
     terminal_status = "stopped"
@@ -395,20 +445,28 @@ def main() -> int:
                 try:
                     inserted_any_metric = False
                     with books_lock:
-                        for symbol, state in stream_state.items():
+                        for stream_id, state in stream_state.items():
                             if not state["bids"] or not state["asks"]:
                                 continue
+                            metric_config = dict(config)
+                            metric_config["depth_levels"] = state["retained_depth"]
                             metrics = calculate_orderbook_metrics(
                                 state["pair"],
-                                symbol,
+                                state["symbol"],
                                 state["bids"],
                                 state["asks"],
-                                config,
+                                metric_config,
                                 state["message_count_interval"],
                             )
                             metrics["ts"] = now_iso
-                            metrics["exchange"] = "binance_usdm_futures"
-                            metrics["market_type"] = "futures"
+                            metrics["stream_id"] = stream_id
+                            metrics["market_key"] = state["market_key"]
+                            metrics["venue"] = state["venue"]
+                            metrics["exchange"] = state["market_key"]
+                            metrics["market_type"] = state["market_type"]
+                            metrics["margin_type"] = state["margin_type"]
+                            metrics["quote_asset"] = state["quote_asset"]
+                            metrics["canonical_pair"] = state["canonical_pair"]
                             insert_metric_tick(conn, metrics)
                             inserted_any_metric = True
                             state["last_metric_at"] = now_iso
@@ -452,12 +510,17 @@ def main() -> int:
                             update_stream_status(
                                 conn,
                                 {
-                                    "stream_id": symbol,
-                                    "exchange": "binance_usdm_futures",
-                                    "market_type": "futures",
+                                    "stream_id": stream_id,
+                                    "market_key": state["market_key"],
+                                    "venue": state["venue"],
+                                    "exchange": state["market_key"],
+                                    "market_type": state["market_type"],
+                                    "margin_type": state["margin_type"],
+                                    "quote_asset": state["quote_asset"],
+                                    "canonical_pair": state["canonical_pair"],
                                     "pair": state["pair"],
-                                    "symbol": symbol,
-                                    "depth_levels": depth_levels,
+                                    "symbol": state["symbol"],
+                                    "depth_levels": state["retained_depth"],
                                     "stream_mode": "partial_depth",
                                     "status": state["status"],
                                     "started_at": state["started_at"],
@@ -501,7 +564,7 @@ def main() -> int:
                 conn = connect_db(args.db)
                 try:
                     with books_lock:
-                        for symbol, state in stream_state.items():
+                        for stream_id, state in stream_state.items():
                             if not state["bids"] or not state["asks"]:
                                 continue
                             best_bid = state["bids"][0][0]
@@ -510,16 +573,22 @@ def main() -> int:
                                 conn,
                                 {
                                     "ts": now_iso,
-                                    "exchange": "binance_usdm_futures",
-                                    "market_type": "futures",
+                                    "stream_id": stream_id,
+                                    "market_key": state["market_key"],
+                                    "venue": state["venue"],
+                                    "exchange": state["market_key"],
+                                    "market_type": state["market_type"],
+                                    "margin_type": state["margin_type"],
+                                    "quote_asset": state["quote_asset"],
+                                    "canonical_pair": state["canonical_pair"],
                                     "pair": state["pair"],
-                                    "symbol": symbol,
-                                    "depth_levels": depth_levels,
+                                    "symbol": state["symbol"],
+                                    "depth_levels": state["retained_depth"],
                                     "best_bid": best_bid,
                                     "best_ask": best_ask,
                                     "mid_price": (best_bid + best_ask) / 2.0,
-                                    "bids": state["bids"][:20],
-                                    "asks": state["asks"][:20],
+                                    "bids": state["bids"][: int(state["retained_depth"])],
+                                    "asks": state["asks"][: int(state["retained_depth"])],
                                 },
                             )
                             state["snapshot_count"] += 1
@@ -535,7 +604,7 @@ def main() -> int:
                 conn = connect_db(args.db)
                 try:
                     with books_lock:
-                        for symbol, state in stream_state.items():
+                        for stream_id, state in stream_state.items():
                             cutoff = now_ts - interval - 1
                             ticks = [tick for tick in state["recent_ticks"] if _iso_to_ts(tick["ts"]) >= cutoff]
                             if not ticks:
@@ -547,10 +616,16 @@ def main() -> int:
                                     "ts_start": _ts_to_iso(now_ts - interval),
                                     "ts_end": now_iso,
                                     "timeframe_seconds": interval,
-                                    "exchange": "binance_usdm_futures",
-                                    "market_type": "futures",
+                                    "stream_id": stream_id,
+                                    "market_key": state["market_key"],
+                                    "venue": state["venue"],
+                                    "exchange": state["market_key"],
+                                    "market_type": state["market_type"],
+                                    "margin_type": state["margin_type"],
+                                    "quote_asset": state["quote_asset"],
+                                    "canonical_pair": state["canonical_pair"],
                                     "pair": state["pair"],
-                                    "symbol": symbol,
+                                    "symbol": state["symbol"],
                                     **agg,
                                 },
                             )
@@ -559,14 +634,38 @@ def main() -> int:
                     conn.close()
                 bar_last_run[interval] = now_ts
 
+            if now_ts - last_context_ts >= context_poll_seconds:
+                context_rows: list[dict[str, Any]] = []
+                for record in pair_records:
+                    try:
+                        row = fetch_market_context(record, period=context_period)
+                    except Exception as exc:
+                        logging.warning("Market context fetch failed for %s: %s", record.get("stream_id"), exc)
+                        status_payload["last_error"] = str(exc)
+                        continue
+                    if row:
+                        row["ts"] = now_iso
+                        context_rows.append(row)
+                if context_rows:
+                    conn = connect_db(args.db)
+                    try:
+                        for row in context_rows:
+                            insert_market_context(conn, row)
+                        conn.commit()
+                    finally:
+                        conn.close()
+                    status_payload["context_count_total"] = int(status_payload.get("context_count_total", 0)) + len(context_rows)
+                    save_json(args.status_file, status_payload)
+                last_context_ts = now_ts
+
             if now_ts - last_capacity_ts >= 30:
                 data_dir_mb = estimate_directory_size_mb(args.data_dir)
                 db_mb = round(args.db.stat().st_size / (1024.0 * 1024.0), 2) if args.db.exists() else 0.0
                 estimate = estimate_storage_usage(
-                    len(symbols),
+                    len(pair_records),
                     metric_interval,
                     snapshot_interval,
-                    depth_levels,
+                    max_retained_depth,
                     store_snapshots=store_snapshots,
                 )
                 warning_mb = float(config.get("capacity_warning_mb", 500))
@@ -612,12 +711,12 @@ def main() -> int:
         return 1
     finally:
         stop_event.set()
-        ws_app = ws_holder.get("app")
-        if ws_app is not None:
-            try:
-                ws_app.close()
-            except Exception:
-                pass
+        for ws_app in list(ws_holders.values()):
+            if ws_app is not None:
+                try:
+                    ws_app.close()
+                except Exception:
+                    pass
         status_payload["status"] = terminal_status
         status_payload["pid"] = None
         status_payload["heartbeat_at"] = utc_now()

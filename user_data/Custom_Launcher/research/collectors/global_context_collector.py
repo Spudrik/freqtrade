@@ -1,0 +1,322 @@
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import logging
+import os
+from pathlib import Path
+from typing import Any
+from urllib.request import Request, urlopen
+
+from .global_context_sources import (
+    fetch_source_payload as fetch_global_source_payload,
+    normalize_source_payload as normalize_global_source_payload,
+)
+from .global_context_store import (
+    connect_db,
+    fetch_storage_summary,
+    init_db,
+    insert_context_tick,
+    update_collector_run,
+    upsert_collector_run,
+    upsert_source_status,
+)
+from .research_collector_common import configure_logging, evaluate_startup_stop_file, load_json, save_json, sleep_with_stop, utc_now
+
+
+THIS_DIR = Path(__file__).resolve().parent
+DEFAULT_CONFIG_PATH = THIS_DIR.parents[0] / "config" / "global_context_sources.json"
+DEFAULT_DATA_DIR = THIS_DIR.parents[2] / "research_news_data" / "global_context"
+DEFAULT_DB_PATH = DEFAULT_DATA_DIR / "global_context.sqlite"
+DEFAULT_STATUS_PATH = DEFAULT_DATA_DIR / "collector_status.json"
+DEFAULT_PID_PATH = DEFAULT_DATA_DIR / "collector.pid"
+DEFAULT_STOP_PATH = DEFAULT_DATA_DIR / "collector.stop"
+DEFAULT_LOG_PATH = DEFAULT_DATA_DIR / "logs" / "global_context_collector.log"
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Standalone global market context API collector")
+    parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
+    parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
+    parser.add_argument("--db", type=Path, default=DEFAULT_DB_PATH)
+    parser.add_argument("--status-file", type=Path, default=DEFAULT_STATUS_PATH)
+    parser.add_argument("--pid-file", type=Path, default=DEFAULT_PID_PATH)
+    parser.add_argument("--stop-file", type=Path, default=DEFAULT_STOP_PATH)
+    parser.add_argument("--log-file", type=Path, default=DEFAULT_LOG_PATH)
+    parser.add_argument("--key-file", type=Path, default=None)
+    parser.add_argument("--fred-key-json-path", default="")
+    parser.add_argument("--enable-fred", action="store_true")
+    parser.add_argument("--interval-seconds", type=int, default=1800)
+    parser.add_argument("--once", action="store_true")
+    return parser.parse_args()
+
+
+def ensure_dirs(data_dir: Path) -> None:
+    for path in [data_dir, data_dir / "logs", data_dir / "exports", data_dir / "raw"]:
+        path.mkdir(parents=True, exist_ok=True)
+
+
+def read_config(path: Path, *, key_file: Path | None = None, fred_key_json_path: str = "") -> dict[str, Any]:
+    payload = load_json(path, {})
+    if not isinstance(payload, dict):
+        payload = {}
+    defaults = load_json(DEFAULT_CONFIG_PATH, {})
+    if isinstance(defaults, dict):
+        for key, value in defaults.items():
+            payload.setdefault(key, value)
+    payload.setdefault("poll_interval_seconds", 1800)
+    payload.setdefault("request_timeout_seconds", 20)
+    payload.setdefault("store_raw_payloads", True)
+    payload.setdefault("user_agent", "FreQ-GlobalContextCollector/1.0")
+    payload.setdefault("sources", [])
+    fred_json_path = fred_key_json_path or str(payload.get("fred_api_key_json_path") or "")
+    fred_key = load_fred_api_key_from_file(key_file, fred_json_path) if key_file else ""
+    if fred_key:
+        payload["fred_api_key"] = fred_key
+    return payload
+
+
+def load_fred_api_key_from_file(key_file: Path | None, json_path: str = "") -> str:
+    if not key_file:
+        return ""
+    payload = load_json(key_file, {})
+    if not isinstance(payload, dict):
+        return ""
+    candidates = [json_path, "fred.api_key", "fred.FRED_API_KEY", "fred_api_key", "FRED_API_KEY"]
+    for candidate in candidates:
+        value = _extract_json_path(payload, str(candidate or "").strip())
+        if value:
+            return str(value).strip()
+    return ""
+
+
+def _extract_json_path(payload: dict[str, Any], json_path: str) -> Any:
+    if not json_path:
+        return None
+    value: Any = payload
+    for part in [item for item in json_path.split(".") if item]:
+        if not isinstance(value, dict):
+            return None
+        value = value.get(part)
+    return value
+
+
+def fetch_public_json(url: str, *, timeout_seconds: int, user_agent: str) -> Any:
+    request = Request(url, headers={"User-Agent": user_agent, "Accept": "application/json"})
+    with urlopen(request, timeout=timeout_seconds) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def fetch_source(source: dict[str, Any], config: dict[str, Any]) -> list[dict[str, Any]]:
+    source_type = str(source.get("type") or "").strip()
+    url = str(source.get("url") or "").strip()
+    timeout_seconds = int(config.get("request_timeout_seconds", 20))
+    user_agent = str(config.get("user_agent") or "FreQ-GlobalContextCollector/1.0")
+    payload = fetch_global_source_payload(source, config)
+    if payload is None:
+        payload = fetch_public_json(url, timeout_seconds=timeout_seconds, user_agent=user_agent)
+    normalized = normalize_global_source_payload(source, payload, store_raw=bool(config.get("store_raw_payloads", True)))
+    if isinstance(normalized, list):
+        rows = [row for row in normalized if isinstance(row, dict)]
+    elif isinstance(normalized, dict):
+        rows = [normalized]
+    else:
+        rows = []
+    if not rows:
+        raise ValueError(f"Source returned no normalized rows: {source.get('id')}")
+    return rows
+
+
+def main() -> int:
+    args = parse_args()
+    ensure_dirs(args.data_dir)
+    configure_logging(args.log_file)
+    init_db(args.db)
+    config = read_config(args.config, key_file=args.key_file, fred_key_json_path=str(args.fred_key_json_path or ""))
+    if args.enable_fred:
+        for source in config.get("sources", []):
+            if isinstance(source, dict) and str(source.get("type") or "") == "fred_series_basket":
+                source["enabled"] = True
+    sources = [source for source in config.get("sources", []) if isinstance(source, dict)]
+    enabled_sources = [source for source in sources if bool(source.get("enabled", True))]
+    interval_seconds = max(60, int(args.interval_seconds or config.get("poll_interval_seconds", 1800)))
+
+    startup = evaluate_startup_stop_file(args.stop_file)
+    if startup.get("fresh_stop_requested"):
+        save_json(args.status_file, {"status": "stopped", "last_error": "Fresh stop file found at startup."})
+        return 0
+
+    run_id = hashlib.sha256(f"{os.getpid()}|{utc_now()}|global_context".encode("utf-8")).hexdigest()
+    args.pid_file.parent.mkdir(parents=True, exist_ok=True)
+    args.pid_file.write_text(str(os.getpid()), encoding="utf-8")
+    status_payload: dict[str, Any] = {
+        "run_id": run_id,
+        "status": "running",
+        "pid": os.getpid(),
+        "started_at": utc_now(),
+        "heartbeat_at": utc_now(),
+        "last_fetch_at": None,
+        "sources_total": len(sources),
+        "sources_enabled": len(enabled_sources),
+        "success_count_total": 0,
+        "failure_count_total": 0,
+        "ticks_total": 0,
+        "new_ticks_last_cycle": 0,
+        "last_error": None,
+        "db_path": str(args.db),
+        "config_path": str(args.config),
+        "key_file": str(args.key_file) if args.key_file else "",
+        "fred_enabled_override": bool(args.enable_fred),
+        "data_dir": str(args.data_dir),
+    }
+    save_json(args.status_file, status_payload)
+
+    conn = connect_db(args.db)
+    try:
+        upsert_collector_run(
+            conn,
+            run_id=run_id,
+            started_at=str(status_payload["started_at"]),
+            status="running",
+            pid=os.getpid(),
+            config_path=str(args.config),
+            db_path=str(args.db),
+        )
+        for source in sources:
+            upsert_source_status(conn, _source_status_payload(source, enabled=bool(source.get("enabled", True))))
+        conn.commit()
+    finally:
+        conn.close()
+
+    terminal_status = "stopped"
+    try:
+        while True:
+            if args.stop_file.exists():
+                terminal_status = "stopped"
+                break
+            new_ticks, failures = run_collection_cycle(args.db, enabled_sources, config)
+            status_payload["last_fetch_at"] = utc_now()
+            status_payload["heartbeat_at"] = utc_now()
+            status_payload["ticks_total"] = int(status_payload.get("ticks_total", 0)) + new_ticks
+            status_payload["success_count_total"] = int(status_payload.get("success_count_total", 0)) + new_ticks
+            status_payload["failure_count_total"] = int(status_payload.get("failure_count_total", 0)) + failures
+            status_payload["new_ticks_last_cycle"] = new_ticks
+            conn = connect_db(args.db)
+            try:
+                summary = fetch_storage_summary(conn)
+            finally:
+                conn.close()
+            status_payload["stored_ticks"] = summary["tick_rows"]
+            status_payload["stored_sources"] = summary["source_rows"]
+            save_json(args.status_file, status_payload)
+            if args.once:
+                break
+            if sleep_with_stop(args.stop_file, interval_seconds):
+                terminal_status = "stopped"
+                break
+    except Exception as exc:
+        logging.exception("Global context collector crashed")
+        terminal_status = "error"
+        status_payload["status"] = "error"
+        status_payload["last_error"] = str(exc)
+        save_json(args.status_file, status_payload)
+        return 1
+    finally:
+        status_payload["status"] = terminal_status
+        status_payload["pid"] = None
+        status_payload["heartbeat_at"] = utc_now()
+        save_json(args.status_file, status_payload)
+        conn = connect_db(args.db)
+        try:
+            update_collector_run(conn, run_id, terminal_status, status_payload.get("last_error"))
+            conn.commit()
+        finally:
+            conn.close()
+        try:
+            args.pid_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+        try:
+            if args.stop_file.exists():
+                args.stop_file.unlink()
+        except Exception:
+            pass
+    return 0
+
+
+def run_collection_cycle(db_path: Path, enabled_sources: list[dict[str, Any]], config: dict[str, Any]) -> tuple[int, int]:
+    inserted = 0
+    failures = 0
+    conn = connect_db(db_path)
+    try:
+        for source in enabled_sources:
+            try:
+                rows = fetch_source(source, config)
+                for row in rows:
+                    insert_context_tick(conn, row)
+                upsert_source_status(conn, _source_status_payload(source, enabled=True, row=_primary_status_row(rows)))
+                inserted += len(rows)
+            except Exception as exc:
+                failures += 1
+                logging.warning("Global context source failed source_id=%s error=%s", source.get("id"), exc)
+                upsert_source_status(conn, _source_status_payload(source, enabled=True, error=str(exc)))
+        conn.commit()
+    finally:
+        conn.close()
+    return inserted, failures
+
+
+def _source_status_payload(
+    source: dict[str, Any],
+    *,
+    enabled: bool,
+    row: dict[str, Any] | None = None,
+    error: str | None = None,
+) -> dict[str, Any]:
+    payload = {
+        "source_id": source.get("id"),
+        "source_group": source.get("source_group") or "",
+        "source_type": source.get("type") or "",
+        "enabled": int(bool(enabled)),
+        "market_relevance": source.get("market_relevance") or "",
+        "url": source.get("url") or "",
+        "last_success_at": None,
+        "last_failure_at": utc_now() if error else None,
+        "last_error": error,
+        "last_score": None,
+        "last_source_score": None,
+        "last_calc_score": None,
+        "last_signal": None,
+        "last_value": None,
+        "last_unit": None,
+        "last_notes": None,
+        "updated_at": utc_now(),
+    }
+    if row:
+        payload.update(
+            {
+                "last_success_at": row.get("ts"),
+                "last_failure_at": None,
+                "last_error": None,
+                "last_score": row.get("score"),
+                "last_source_score": row.get("source_score"),
+                "last_calc_score": row.get("calc_score"),
+                "last_signal": row.get("signal"),
+                "last_value": row.get("value"),
+                "last_unit": row.get("unit"),
+                "last_notes": row.get("notes"),
+            }
+        )
+    return payload
+
+
+def _primary_status_row(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for row in rows:
+        if row.get("score") is not None:
+            return row
+    return rows[0] if rows else None
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

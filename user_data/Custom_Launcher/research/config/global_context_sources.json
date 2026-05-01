@@ -1,0 +1,186 @@
+{
+  "version": 1,
+  "poll_interval_seconds": 1800,
+  "request_timeout_seconds": 20,
+  "store_raw_payloads": true,
+  "user_agent": "FreQ-GlobalContextCollector/1.0",
+  "fred_api_key_env": "FRED_API_KEY",
+  "fred_api_key_json_path": "fred.api_key",
+  "sources": [
+    {
+      "id": "alternative_fear_greed",
+      "type": "alternative_fng",
+      "enabled": true,
+      "source_group": "sentiment",
+      "market_relevance": "medium",
+      "url": "https://api.alternative.me/fng/?limit=1",
+      "notes": "0 is extreme fear; 100 is extreme greed."
+    },
+    {
+      "id": "coingecko_global",
+      "type": "coingecko_global",
+      "enabled": true,
+      "source_group": "market",
+      "market_relevance": "high",
+      "url": "https://api.coingecko.com/api/v3/global",
+      "notes": "Global crypto market cap, volume, BTC dominance, and 24h market-cap change."
+    },
+    {
+      "id": "coingecko_btc_eth",
+      "type": "coingecko_markets",
+      "enabled": true,
+      "source_group": "market",
+      "market_relevance": "high",
+      "url": "https://api.coingecko.com/api/v3/coins/markets",
+      "vs_currency": "usd",
+      "coin_ids": [
+        "bitcoin",
+        "ethereum"
+      ],
+      "notes": "BTC/ETH price, 24h change, and 7d change from the public markets endpoint."
+    },
+    {
+      "id": "defillama_stablecoins",
+      "type": "defillama_stablecoins",
+      "enabled": true,
+      "source_group": "defi",
+      "market_relevance": "medium",
+      "url": "https://stablecoins.llama.fi/stablecoins?includePrices=true",
+      "notes": "Stablecoin supply trend proxy for crypto liquidity."
+    },
+    {
+      "id": "defillama_chains",
+      "type": "defillama_chains",
+      "enabled": true,
+      "source_group": "defi",
+      "market_relevance": "medium",
+      "url": "https://api.llama.fi/v2/chains",
+      "notes": "Aggregate DeFi TVL and weighted chain TVL change."
+    },
+    {
+      "id": "stooq_us_equity_risk",
+      "type": "stooq_quotes",
+      "enabled": true,
+      "source_group": "equity_indices",
+      "market_relevance": "high",
+      "url": "https://stooq.com/q/l/",
+      "metric_key": "us_equity_risk_basket_change",
+      "symbols": [
+        "^spx",
+        "^ndq",
+        "^dji",
+        "iwm.us"
+      ],
+      "symbol_labels": {
+        "^SPX": "S&P 500",
+        "^NDQ": "Nasdaq",
+        "^DJI": "Dow",
+        "IWM.US": "Russell 2000 ETF"
+      },
+      "notes": "No-key Stooq headline basket for US equity risk."
+    },
+    {
+      "id": "stooq_global_equity_risk",
+      "type": "stooq_quotes",
+      "enabled": true,
+      "source_group": "equity_indices",
+      "market_relevance": "medium",
+      "url": "https://stooq.com/q/l/",
+      "metric_key": "global_equity_risk_basket_change",
+      "symbols": [
+        "^ukx",
+        "^dax",
+        "^cac",
+        "^nkx",
+        "^hsi",
+        "^tsx"
+      ],
+      "symbol_labels": {
+        "^UKX": "FTSE 100",
+        "^DAX": "DAX",
+        "^CAC": "CAC 40",
+        "^NKX": "Nikkei",
+        "^HSI": "Hang Seng",
+        "^TSX": "TSX"
+      },
+      "notes": "No-key Stooq headline basket for non-US equity risk."
+    },
+    {
+      "id": "stooq_safe_haven_risk",
+      "type": "stooq_quotes",
+      "enabled": true,
+      "source_group": "rates_fx",
+      "market_relevance": "medium",
+      "url": "https://stooq.com/q/l/",
+      "metric_key": "safe_haven_proxy_change",
+      "inverse_risk_score": true,
+      "symbols": [
+        "vxx.us",
+        "tlt.us",
+        "gld.us",
+        "uup.us"
+      ],
+      "symbol_labels": {
+        "VXX.US": "VIX ETF",
+        "TLT.US": "Long bonds",
+        "GLD.US": "Gold",
+        "UUP.US": "USD ETF"
+      },
+      "notes": "No-key ETF proxies for volatility, bonds, gold, and dollar pressure."
+    },
+    {
+      "id": "fred_us_equity_daily",
+      "type": "fred_series_basket",
+      "enabled": false,
+      "source_group": "equity_indices",
+      "market_relevance": "high",
+      "url": "https://api.stlouisfed.org/fred/series/observations",
+      "api_key_env": "FRED_API_KEY",
+      "metric_key": "fred_us_equity_daily_change",
+      "series_ids": [
+        "SP500",
+        "DJIA",
+        "NASDAQCOM",
+        "NASDAQ100",
+        "VIXCLS"
+      ],
+      "inverse_risk_series": [
+        "VIXCLS"
+      ],
+      "series_labels": {
+        "SP500": "S&P 500",
+        "DJIA": "Dow",
+        "NASDAQCOM": "Nasdaq Composite",
+        "NASDAQ100": "Nasdaq 100",
+        "VIXCLS": "VIX"
+      },
+      "notes": "Optional keyed FRED daily US market context. Set FRED_API_KEY or select a key file, then enable this source."
+    },
+    {
+      "id": "fred_rates_risk_daily",
+      "type": "fred_series_basket",
+      "enabled": false,
+      "source_group": "rates_fx",
+      "market_relevance": "medium",
+      "url": "https://api.stlouisfed.org/fred/series/observations",
+      "api_key_env": "FRED_API_KEY",
+      "metric_key": "fred_rates_risk_daily_change",
+      "series_ids": [
+        "DGS2",
+        "DGS10",
+        "DTWEXBGS"
+      ],
+      "inverse_risk_series": [
+        "DGS2",
+        "DGS10",
+        "DTWEXBGS"
+      ],
+      "series_labels": {
+        "DGS2": "US 2Y",
+        "DGS10": "US 10Y",
+        "DTWEXBGS": "Broad USD"
+      },
+      "notes": "Optional keyed FRED rates/dollar risk context. Set FRED_API_KEY or select a key file, then enable this source."
+    }
+  ]
+}

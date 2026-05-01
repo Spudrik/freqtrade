@@ -6,6 +6,7 @@ from tkinter import ttk
 
 from ..base_tab import BaseTab
 from .download_tab import DownloadTab
+from .global_context_tab import GlobalContextTab
 from .news_tab import NewsTab
 from .web_tab import WebTab
 from .orderbook_tab import OrderBookTab
@@ -19,6 +20,7 @@ class DataManagementTab(BaseTab):
         DownloadTab,
         NewsTab,
         WebTab,
+        GlobalContextTab,
         OrderBookTab,
     ]
 
