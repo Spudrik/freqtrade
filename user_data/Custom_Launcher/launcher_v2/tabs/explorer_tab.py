@@ -20,6 +20,55 @@ def _split_list(value: Any) -> list[str]:
     return [item.strip() for item in text.split(",") if item.strip()]
 
 
+SIEVE_RESULT_COLUMNS = (
+    "strategy",
+    "side",
+    "core_behavior",
+    "training_window",
+    "validation_window",
+    "take_profit_pct",
+    "stoploss_pct",
+    "status",
+    "analysis_read",
+    "analysis_next",
+    "hyperopt_loss",
+    "objective",
+    "best_params_count",
+    "epoch_count",
+    "profit_total_abs",
+    "profit_total",
+    "trade_count",
+    "winrate",
+    "max_drawdown_pct",
+    "backtest_file",
+    "params_file",
+)
+
+SIEVE_DEFAULT_COLUMN_ORDER = (
+    "winrate",
+    "max_drawdown_pct",
+    "profit_total_abs",
+    "profit_total",
+    "trade_count",
+    "objective",
+    "hyperopt_loss",
+    "best_params_count",
+    "epoch_count",
+    "take_profit_pct",
+    "stoploss_pct",
+    "status",
+    "strategy",
+    "side",
+    "core_behavior",
+    "training_window",
+    "validation_window",
+    "analysis_read",
+    "analysis_next",
+    "backtest_file",
+    "params_file",
+)
+
+
 class ExplorerTab(BaseTab):
     """Normal Explorer controls: family/mode target, breadth, windows, loop size."""
 
@@ -65,8 +114,8 @@ class ExplorerTab(BaseTab):
         self.sieve_result_batch_combo: ttk.Combobox | None = None
         self.sieve_results_tree: ttk.Treeview | None = None
         self.sieve_result_columns: tuple[str, ...] = ()
-        self.sieve_column_order: list[str] = []
-        self._sieve_selected_column = "strategy"
+        self.sieve_column_order: list[str] = list(SIEVE_DEFAULT_COLUMN_ORDER)
+        self._sieve_selected_column = "winrate"
         self.target_params_label_var = tk.StringVar(value="Select a target to view child params")
         self.open_support_label_var = tk.StringVar(value="Open support params appear when Search breadth = open")
         self._active_target_label = ""
@@ -255,29 +304,7 @@ class ExplorerTab(BaseTab):
         results.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 8))
         results.grid_columnconfigure(0, weight=1)
         results.grid_rowconfigure(0, weight=1)
-        columns = (
-            "strategy",
-            "side",
-            "core_behavior",
-            "training_window",
-            "validation_window",
-            "take_profit_pct",
-            "stoploss_pct",
-            "status",
-            "analysis_read",
-            "analysis_next",
-            "hyperopt_loss",
-            "objective",
-            "best_params_count",
-            "epoch_count",
-            "profit_total_abs",
-            "profit_total",
-            "trade_count",
-            "winrate",
-            "max_drawdown_pct",
-            "backtest_file",
-            "params_file",
-        )
+        columns = SIEVE_RESULT_COLUMNS
         self.sieve_results_tree = ttk.Treeview(results, columns=columns, show="headings", height=14)
         headings = {
             "strategy": "Strategy",
@@ -722,7 +749,7 @@ class ExplorerTab(BaseTab):
         self.context.emit("save_state", {"reason": "entry_sieve_column_order"})
 
     def _reset_sieve_columns(self) -> None:
-        self.sieve_column_order = list(self.sieve_result_columns)
+        self.sieve_column_order = list(SIEVE_DEFAULT_COLUMN_ORDER)
         self._apply_sieve_column_order()
         self.context.emit("save_state", {"reason": "entry_sieve_column_order_reset"})
 
@@ -734,10 +761,16 @@ class ExplorerTab(BaseTab):
 
     @staticmethod
     def _normalized_sieve_column_order(order: list[str], columns: tuple[str, ...]) -> list[str]:
+        if not order:
+            order = list(SIEVE_DEFAULT_COLUMN_ORDER)
         valid = set(columns)
         normalized = [column for column in order if column in valid]
         normalized.extend(column for column in columns if column not in normalized)
         return normalized
+
+    @staticmethod
+    def _is_legacy_sieve_column_order(order: list[str]) -> bool:
+        return order == list(SIEVE_RESULT_COLUMNS)
 
     def _sort_sieve_results(self, column: str) -> None:
         if self._sieve_sort_column == column:
@@ -920,7 +953,11 @@ class ExplorerTab(BaseTab):
         self.sieve_result_batch_var.set(str(state.get("sieve_result_batch") or ""))
         self.sieve_filter_var.set(str(state.get("sieve_result_filter") or ""))
         saved_order = state.get("sieve_column_order")
-        self.sieve_column_order = [str(column) for column in saved_order] if isinstance(saved_order, list) else []
+        if isinstance(saved_order, list):
+            order = [str(column) for column in saved_order]
+            self.sieve_column_order = list(SIEVE_DEFAULT_COLUMN_ORDER) if self._is_legacy_sieve_column_order(order) else order
+        else:
+            self.sieve_column_order = list(SIEVE_DEFAULT_COLUMN_ORDER)
         self._apply_sieve_column_order()
         self._update_epochs_mode_state()
         self.refresh()
