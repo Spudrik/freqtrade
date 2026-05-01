@@ -118,6 +118,7 @@ class Sieve1LadderLongSupReclaim(IStrategy):
         except Exception:
             return []
 
+    @staticmethod
     def _num(value: Series) -> Series:
         return pd.to_numeric(value, errors="coerce")
 

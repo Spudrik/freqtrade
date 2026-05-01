@@ -27,10 +27,10 @@ class PivotStructureConfig:
 
     Score meaning:
     - ``*_score_long`` rises when confirmed structure shows higher-high /
-      higher-low sequences, bullish continuation/reversal breaks, an upward
-      channel bias, and actionable upside target space.
+      higher-low sequences, bullish trend-aligned/trend-flip breakouts, an
+      upward channel bias, and actionable upside target space.
     - ``*_score_short`` mirrors that for lower-high / lower-low structure,
-      bearish breaks, downward channel bias, and downside target space.
+      bearish breakouts, downward channel bias, and downside target space.
     - ``*_score_abs`` is max(long, short). It measures structural clarity rather
       than direction.
     - ``*_state`` is -1/0/1 directional lean and is not normalized.
@@ -133,7 +133,7 @@ def add_pivot_structure(
     - confirmed structural pivots and horizontal structure zones
     - current/previous swing levels and swing ages
     - projected local support/resistance channel columns
-    - HH/HL/LH/LL, continuation/reversal breaks, and structure state columns
+    - HH/HL/LH/LL, trend-aligned/trend-flip breakouts, and structure state columns
     - bounded channel compression and channel width ratio columns
     - normalized ``*_score_long/short/abs`` and directional ``*_state``
     """
@@ -541,13 +541,18 @@ def _market_structure_columns(
     prior_state = break_direction.ffill().shift(1).fillna(0.0)
     structure_state = break_direction.ffill().fillna(0.0)
 
-    bullish_continuation_break = bullish_break & prior_state.ge(0.0)
-    bearish_continuation_break = bearish_break & prior_state.le(0.0)
-    bullish_reversal_break = bullish_break & prior_state.lt(0.0)
-    bearish_reversal_break = bearish_break & prior_state.gt(0.0)
+    bullish_trend_aligned_breakout = bullish_break & prior_state.ge(0.0)
+    bearish_trend_aligned_breakout = bearish_break & prior_state.le(0.0)
+    bullish_trend_flip_breakout = bullish_break & prior_state.lt(0.0)
+    bearish_trend_flip_breakout = bearish_break & prior_state.gt(0.0)
     transition = pd.Series(
         np.select(
-            [bullish_continuation_break, bullish_reversal_break, bearish_continuation_break, bearish_reversal_break],
+            [
+                bullish_trend_aligned_breakout,
+                bullish_trend_flip_breakout,
+                bearish_trend_aligned_breakout,
+                bearish_trend_flip_breakout,
+            ],
             [2.0, 1.0, -2.0, -1.0],
             default=0.0,
         ),
@@ -572,16 +577,22 @@ def _market_structure_columns(
         f"{prefix}_ms_swing_sequence_bias_{s}": swing_sequence_bias,
         f"{prefix}_ms_active_swing_high_{s}": active_swing_high,
         f"{prefix}_ms_active_swing_low_{s}": active_swing_low,
+        f"{prefix}_ms_bullish_breakout_{s}": bullish_break.fillna(False),
+        f"{prefix}_ms_bearish_breakout_{s}": bearish_break.fillna(False),
+        f"{prefix}_ms_bullish_trend_aligned_breakout_{s}": bullish_trend_aligned_breakout.fillna(False),
+        f"{prefix}_ms_bearish_trend_aligned_breakout_{s}": bearish_trend_aligned_breakout.fillna(False),
+        f"{prefix}_ms_bullish_trend_flip_breakout_{s}": bullish_trend_flip_breakout.fillna(False),
+        f"{prefix}_ms_bearish_trend_flip_breakout_{s}": bearish_trend_flip_breakout.fillna(False),
         f"{prefix}_ms_bullish_break_{s}": bullish_break.fillna(False),
         f"{prefix}_ms_bearish_break_{s}": bearish_break.fillna(False),
-        f"{prefix}_ms_bullish_continuation_break_{s}": bullish_continuation_break.fillna(False),
-        f"{prefix}_ms_bearish_continuation_break_{s}": bearish_continuation_break.fillna(False),
-        f"{prefix}_ms_bullish_reversal_break_{s}": bullish_reversal_break.fillna(False),
-        f"{prefix}_ms_bearish_reversal_break_{s}": bearish_reversal_break.fillna(False),
-        f"{prefix}_ms_bullish_bos_{s}": bullish_continuation_break.fillna(False),
-        f"{prefix}_ms_bearish_bos_{s}": bearish_continuation_break.fillna(False),
-        f"{prefix}_ms_bullish_choch_{s}": bullish_reversal_break.fillna(False),
-        f"{prefix}_ms_bearish_choch_{s}": bearish_reversal_break.fillna(False),
+        f"{prefix}_ms_bullish_continuation_break_{s}": bullish_trend_aligned_breakout.fillna(False),
+        f"{prefix}_ms_bearish_continuation_break_{s}": bearish_trend_aligned_breakout.fillna(False),
+        f"{prefix}_ms_bullish_reversal_break_{s}": bullish_trend_flip_breakout.fillna(False),
+        f"{prefix}_ms_bearish_reversal_break_{s}": bearish_trend_flip_breakout.fillna(False),
+        f"{prefix}_ms_bullish_bos_{s}": bullish_trend_aligned_breakout.fillna(False),
+        f"{prefix}_ms_bearish_bos_{s}": bearish_trend_aligned_breakout.fillna(False),
+        f"{prefix}_ms_bullish_choch_{s}": bullish_trend_flip_breakout.fillna(False),
+        f"{prefix}_ms_bearish_choch_{s}": bearish_trend_flip_breakout.fillna(False),
         f"{prefix}_ms_state_{s}": structure_state,
         f"{prefix}_ms_prior_state_{s}": prior_state,
         f"{prefix}_ms_transition_{s}": transition,
@@ -847,8 +858,8 @@ def _score_columns(
     up_sequence = market_structure[f"{prefix}_ms_up_sequence_score_{s}"]
     down_sequence = market_structure[f"{prefix}_ms_down_sequence_score_{s}"]
     state = market_structure[f"{prefix}_ms_state_{s}"]
-    bullish_breaks = _rolling_count(market_structure[f"{prefix}_ms_bullish_break_{s}"], score_window)
-    bearish_breaks = _rolling_count(market_structure[f"{prefix}_ms_bearish_break_{s}"], score_window)
+    bullish_breaks = _rolling_count(market_structure[f"{prefix}_ms_bullish_breakout_{s}"], score_window)
+    bearish_breaks = _rolling_count(market_structure[f"{prefix}_ms_bearish_breakout_{s}"], score_window)
     break_norm = max(float(score_window) / 3.0, 1.0)
 
     long_score = _clip01(
@@ -873,14 +884,14 @@ def _score_columns(
         index=long_score.index,
     )
     suggested_entry_long = (
-        market_structure[f"{prefix}_ms_bullish_break_{s}"]
-        | market_structure[f"{prefix}_ms_bullish_continuation_break_{s}"]
-        | market_structure[f"{prefix}_ms_bullish_reversal_break_{s}"]
+        market_structure[f"{prefix}_ms_bullish_breakout_{s}"]
+        | market_structure[f"{prefix}_ms_bullish_trend_aligned_breakout_{s}"]
+        | market_structure[f"{prefix}_ms_bullish_trend_flip_breakout_{s}"]
     ) & long_score.ge(short_score) & long_target_actionable
     suggested_entry_short = (
-        market_structure[f"{prefix}_ms_bearish_break_{s}"]
-        | market_structure[f"{prefix}_ms_bearish_continuation_break_{s}"]
-        | market_structure[f"{prefix}_ms_bearish_reversal_break_{s}"]
+        market_structure[f"{prefix}_ms_bearish_breakout_{s}"]
+        | market_structure[f"{prefix}_ms_bearish_trend_aligned_breakout_{s}"]
+        | market_structure[f"{prefix}_ms_bearish_trend_flip_breakout_{s}"]
     ) & short_score.ge(long_score) & short_target_actionable
     return {
         f"{prefix}_suggested_entry_long_{s}": suggested_entry_long,
@@ -910,24 +921,24 @@ def _pivot_diagnostic_columns(
     structural_support_break = _bool_column(columns, f"{prefix}_structural_support_break", index)
     structural_resistance_reject = _bool_column(columns, f"{prefix}_structural_resistance_reject", index)
     structural_support_reclaim = _bool_column(columns, f"{prefix}_structural_support_reclaim", index)
-    bullish_continuation_break = _bool_column(columns, f"{prefix}_ms_bullish_continuation_break", index)
-    bearish_continuation_break = _bool_column(columns, f"{prefix}_ms_bearish_continuation_break", index)
-    bullish_reversal_break = _bool_column(columns, f"{prefix}_ms_bullish_reversal_break", index)
-    bearish_reversal_break = _bool_column(columns, f"{prefix}_ms_bearish_reversal_break", index)
-    bullish_break = _bool_column(columns, f"{prefix}_ms_bullish_break", index)
-    bearish_break = _bool_column(columns, f"{prefix}_ms_bearish_break", index)
+    bullish_trend_aligned_breakout = _bool_column(columns, f"{prefix}_ms_bullish_trend_aligned_breakout", index)
+    bearish_trend_aligned_breakout = _bool_column(columns, f"{prefix}_ms_bearish_trend_aligned_breakout", index)
+    bullish_trend_flip_breakout = _bool_column(columns, f"{prefix}_ms_bullish_trend_flip_breakout", index)
+    bearish_trend_flip_breakout = _bool_column(columns, f"{prefix}_ms_bearish_trend_flip_breakout", index)
+    bullish_breakout = _bool_column(columns, f"{prefix}_ms_bullish_breakout", index)
+    bearish_breakout = _bool_column(columns, f"{prefix}_ms_bearish_breakout", index)
 
     bull_events = (
         structural_resistance_break
         | structural_support_reclaim
-        | bullish_continuation_break
-        | bullish_reversal_break
+        | bullish_trend_aligned_breakout
+        | bullish_trend_flip_breakout
     )
     bear_events = (
         structural_support_break
         | structural_resistance_reject
-        | bearish_continuation_break
-        | bearish_reversal_break
+        | bearish_trend_aligned_breakout
+        | bearish_trend_flip_breakout
     )
     context_window = max(6, int(cfg.structure_score_window) * 2)
     recent_bull_structure_event = _rolling_count(structural_resistance_break | structural_support_reclaim, context_window).ge(1.0)
@@ -1026,18 +1037,18 @@ def _pivot_diagnostic_columns(
 
     long_breakout = structural_resistance_break & score_long_ok
     long_reclaim = structural_support_reclaim & context_not_full_bear
-    long_reversal_break = (
-        bullish_reversal_break
+    long_trend_flip_breakout = (
+        bullish_trend_flip_breakout
         & context_not_full_bear
         & range_position.le(0.65)
     )
-    long_continuation_break = (
-        bullish_continuation_break
+    long_trend_aligned_breakout = (
+        bullish_trend_aligned_breakout
         & context_bullish
         & score_long_ok
     )
     long_compression = (
-        (structural_resistance_break | bullish_break)
+        (structural_resistance_break | bullish_breakout)
         & recent_compression
         & score_long_ok
     )
@@ -1050,18 +1061,18 @@ def _pivot_diagnostic_columns(
 
     short_breakdown = structural_support_break & score_short_ok
     short_reject = structural_resistance_reject & context_not_full_bull
-    short_reversal_break = (
-        bearish_reversal_break
+    short_trend_flip_breakout = (
+        bearish_trend_flip_breakout
         & context_not_full_bull
         & range_position.ge(0.35)
     )
-    short_continuation_break = (
-        bearish_continuation_break
+    short_trend_aligned_breakout = (
+        bearish_trend_aligned_breakout
         & context_bearish
         & score_short_ok
     )
     short_compression = (
-        (structural_support_break | bearish_break)
+        (structural_support_break | bearish_breakout)
         & recent_compression
         & score_short_ok
     )
@@ -1076,22 +1087,42 @@ def _pivot_diagnostic_columns(
     primary_entries = {
         f"{prefix}_entry_resistance_breakout_long": _dedupe_events(long_breakout, cooldown),
         f"{prefix}_entry_support_reclaim_long": _dedupe_events(long_reclaim, cooldown),
-        f"{prefix}_entry_bullish_reversal_break_long": _dedupe_events(long_reversal_break, cooldown),
-        f"{prefix}_entry_bullish_continuation_break_long": _dedupe_events(long_continuation_break, cooldown),
+        f"{prefix}_entry_bullish_trend_flip_breakout_long": _dedupe_events(long_trend_flip_breakout, cooldown),
+        f"{prefix}_entry_bullish_trend_aligned_breakout_long": _dedupe_events(long_trend_aligned_breakout, cooldown),
         f"{prefix}_entry_compression_breakout_long": _dedupe_events(long_compression, cooldown),
         f"{prefix}_entry_range_support_long": _dedupe_events(long_range_support, cooldown),
         f"{prefix}_entry_support_breakdown_short": _dedupe_events(short_breakdown, cooldown),
         f"{prefix}_entry_resistance_reject_short": _dedupe_events(short_reject, cooldown),
-        f"{prefix}_entry_bearish_reversal_break_short": _dedupe_events(short_reversal_break, cooldown),
-        f"{prefix}_entry_bearish_continuation_break_short": _dedupe_events(short_continuation_break, cooldown),
+        f"{prefix}_entry_bearish_trend_flip_breakout_short": _dedupe_events(short_trend_flip_breakout, cooldown),
+        f"{prefix}_entry_bearish_trend_aligned_breakout_short": _dedupe_events(short_trend_aligned_breakout, cooldown),
         f"{prefix}_entry_compression_breakdown_short": _dedupe_events(short_compression, cooldown),
         f"{prefix}_entry_range_resistance_short": _dedupe_events(short_range_resistance, cooldown),
     }
     legacy_entries = {
-        f"{prefix}_entry_bullish_choch_reversal_long": primary_entries[f"{prefix}_entry_bullish_reversal_break_long"],
-        f"{prefix}_entry_bullish_bos_continuation_long": primary_entries[f"{prefix}_entry_bullish_continuation_break_long"],
-        f"{prefix}_entry_bearish_choch_reversal_short": primary_entries[f"{prefix}_entry_bearish_reversal_break_short"],
-        f"{prefix}_entry_bearish_bos_continuation_short": primary_entries[f"{prefix}_entry_bearish_continuation_break_short"],
+        f"{prefix}_entry_bullish_reversal_break_long": primary_entries[
+            f"{prefix}_entry_bullish_trend_flip_breakout_long"
+        ],
+        f"{prefix}_entry_bullish_continuation_break_long": primary_entries[
+            f"{prefix}_entry_bullish_trend_aligned_breakout_long"
+        ],
+        f"{prefix}_entry_bearish_reversal_break_short": primary_entries[
+            f"{prefix}_entry_bearish_trend_flip_breakout_short"
+        ],
+        f"{prefix}_entry_bearish_continuation_break_short": primary_entries[
+            f"{prefix}_entry_bearish_trend_aligned_breakout_short"
+        ],
+        f"{prefix}_entry_bullish_choch_reversal_long": primary_entries[
+            f"{prefix}_entry_bullish_trend_flip_breakout_long"
+        ],
+        f"{prefix}_entry_bullish_bos_continuation_long": primary_entries[
+            f"{prefix}_entry_bullish_trend_aligned_breakout_long"
+        ],
+        f"{prefix}_entry_bearish_choch_reversal_short": primary_entries[
+            f"{prefix}_entry_bearish_trend_flip_breakout_short"
+        ],
+        f"{prefix}_entry_bearish_bos_continuation_short": primary_entries[
+            f"{prefix}_entry_bearish_trend_aligned_breakout_short"
+        ],
     }
     entries = {**primary_entries, **legacy_entries}
     entry_any_long = pd.concat(
@@ -1229,6 +1260,12 @@ def _active_alias_columns(columns: dict[str, Series], prefix: str, strength: int
         "ms_swing_sequence_bias",
         "ms_active_swing_high",
         "ms_active_swing_low",
+        "ms_bullish_breakout",
+        "ms_bearish_breakout",
+        "ms_bullish_trend_aligned_breakout",
+        "ms_bearish_trend_aligned_breakout",
+        "ms_bullish_trend_flip_breakout",
+        "ms_bearish_trend_flip_breakout",
         "ms_bullish_break",
         "ms_bearish_break",
         "ms_bullish_continuation_break",

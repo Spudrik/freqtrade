@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import argparse
-from concurrent.futures import Future, ThreadPoolExecutor, as_completed
+from concurrent.futures import Future, ThreadPoolExecutor
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
 import json
 import os
 from pathlib import Path
+from queue import Empty, Queue
 import sys
 import time
 from typing import Any
@@ -219,7 +220,18 @@ def _append_result(runtime_dir: Path, row: dict[str, Any]) -> None:
             "rows": rows,
         },
     )
-    save_json(runtime_dir / "latest.json", {"job_id": job_id, "path": str(results_file), "updated_at": updated_at})
+    status = payload.get("status", "running") if isinstance(payload, dict) else "running"
+    phase = payload.get("phase", "backtest") if isinstance(payload, dict) else "backtest"
+    save_json(
+        runtime_dir / "latest.json",
+        {
+            "job_id": job_id,
+            "path": str(results_file),
+            "updated_at": updated_at,
+            "status": status,
+            "phase": phase,
+        },
+    )
 
 
 def _result_file(runtime_dir: Path, job_id: str) -> Path:
@@ -383,16 +395,37 @@ def _error_rows_for_batch(batch: PendingBacktests, error: str) -> list[dict[str,
     ]
 
 
-def _finish_pending(runtime_dir: Path, pending: PendingBacktests | None) -> int:
+def _finish_pending(
+    runtime_dir: Path,
+    pending: PendingBacktests | None,
+    *,
+    job_id: str,
+    completed_backtests: int,
+    total_backtests: int,
+) -> int:
     if pending is None or pending.future is None:
         return 0
     try:
         rows = pending.future.result()
     except Exception as exc:
         rows = _error_rows_for_batch(pending, str(exc))
+    written = 0
     for row in rows:
         _append_result(runtime_dir, row)
-    return len(rows)
+        written += 1
+        done = completed_backtests + written
+        _write_run_status(
+            runtime_dir,
+            job_id,
+            status="running",
+            phase="backtest",
+            completed_backtests=done,
+            total_backtests=total_backtests,
+            current_strategy=str(row.get("strategy") or pending.strategy.get("name") or pending.strategy.get("strategy_class") or ""),
+            current_training_window=str(row.get("training_window") or window_label(pending.training_window)),
+            message=f"Backtests {done}/{total_backtests}: {row.get('strategy') or pending.strategy.get('name')}",
+        )
+    return written
 
 
 def _prepare_strategy_window(
@@ -581,8 +614,9 @@ def _run_backtest_lane(
     lane_index: int,
     python_exe: str,
     work_items: list[tuple[PendingBacktests, BacktestTask]],
-) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
+    result_queue: Queue[dict[str, Any]],
+) -> int:
+    completed = 0
     total = len(work_items)
     for index, (batch, task) in enumerate(work_items, start=1):
         print(
@@ -591,10 +625,12 @@ def _run_backtest_lane(
             f"{window_label(task.validation_window)} | TP/SL={task.take_profit_pct}/{task.stoploss_pct}"
         )
         try:
-            rows.append(_run_backtest_task(batch, task, python_exe))
+            row = _run_backtest_task(batch, task, python_exe)
         except Exception as exc:
-            rows.append(_error_row_for_task(batch, task, str(exc)))
-    return rows
+            row = _error_row_for_task(batch, task, str(exc))
+        result_queue.put(row)
+        completed += 1
+    return completed
 
 
 def _run_target_sweep_backtests(
@@ -613,18 +649,32 @@ def _run_target_sweep_backtests(
     for index, item in enumerate(work_items):
         assigned[index % lane_count].append(item)
     print(f"\nEntry Sieve target-sweep backtests: {len(work_items)} tasks across {lane_count} lane(s)")
+    result_queue: Queue[dict[str, Any]] = Queue()
     with ThreadPoolExecutor(max_workers=lane_count, thread_name_prefix="entry-sieve-target-sweep") as executor:
         futures = [
-            executor.submit(_run_backtest_lane, lane_index=index + 1, python_exe=lanes[index], work_items=items)
+            executor.submit(
+                _run_backtest_lane,
+                lane_index=index + 1,
+                python_exe=lanes[index],
+                work_items=items,
+                result_queue=result_queue,
+            )
             for index, items in enumerate(assigned)
             if items
         ]
         completed_backtests = 0
-        for future in as_completed(futures):
-            rows = future.result()
-            for row in rows:
-                _append_result(runtime_dir, row)
-            completed_backtests += len(rows)
+        while completed_backtests < len(work_items):
+            try:
+                row = result_queue.get(timeout=1.0)
+            except Empty:
+                for future in futures:
+                    if future.done() and future.exception() is not None:
+                        raise future.exception()
+                if all(future.done() for future in futures):
+                    break
+                continue
+            _append_result(runtime_dir, row)
+            completed_backtests += 1
             _write_run_status(
                 runtime_dir,
                 job_id,
@@ -632,8 +682,14 @@ def _run_target_sweep_backtests(
                 phase="target_sweep_backtest",
                 completed_backtests=completed_backtests,
                 total_backtests=total_backtests,
-                message=f"Target-sweep backtests {completed_backtests}/{total_backtests}",
+                current_strategy=str(row.get("strategy") or ""),
+                current_training_window=str(row.get("training_window") or ""),
+                message=f"Target-sweep backtests {completed_backtests}/{total_backtests}: {row.get('strategy')}",
             )
+        for future in futures:
+            future.result()
+        if completed_backtests < len(work_items):
+            raise RuntimeError("Target-sweep backtests finished before all result rows were reported.")
     return completed_backtests
 
 
@@ -832,7 +888,13 @@ def main(argv: list[str] | None = None) -> int:
                             validation_windows=validation_windows,
                         )
                         if split_venv_pipeline:
-                            completed_backtests += _finish_pending(runtime_dir, pending)
+                            completed_backtests += _finish_pending(
+                                runtime_dir,
+                                pending,
+                                job_id=job_id,
+                                completed_backtests=completed_backtests,
+                                total_backtests=total_backtests,
+                            )
                             batch.future = executor.submit(_run_backtest_batch, batch, backtest_python_exe)
                             pending = batch
                         else:
@@ -885,7 +947,13 @@ def main(argv: list[str] | None = None) -> int:
                             current_training_window=window_label(training_window),
                             message=f"Run failed {run_index}/{total_runs}: {strategy_name}",
                         )
-            completed_backtests += _finish_pending(runtime_dir, pending)
+            completed_backtests += _finish_pending(
+                runtime_dir,
+                pending,
+                job_id=job_id,
+                completed_backtests=completed_backtests,
+                total_backtests=total_backtests,
+            )
         final_completed_backtests = completed_backtests
     _write_run_status(
         runtime_dir,

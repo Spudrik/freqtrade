@@ -67,6 +67,14 @@ def entry_sieve_stoploss(default: float = -0.02) -> float:
     return -_pct_env(ENTRY_SIEVE_STOPLOSS_ENV, abs(default))
 
 
+def _num(frame: DataFrame, column: str, default: float | Series = 0.0) -> Series:
+    if column not in frame.columns:
+        if isinstance(default, Series):
+            return pd.to_numeric(default, errors="coerce")
+        return pd.Series(float(default), index=frame.index, dtype="float64")
+    return pd.to_numeric(frame[column], errors="coerce").replace([np.inf, -np.inf], np.nan)
+
+
 
 def tagged_parameter(param: Any, *tags: str) -> Any:
     family_map = {

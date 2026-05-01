@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 import fnmatch
 import json
+import os
 from pathlib import Path
 import sys
 from typing import Any
@@ -39,7 +40,7 @@ class EntrySieveSettings:
     split_venv_pipeline: bool = False
     backtest_python_exe: str = ""
     pipeline_handoff_dir: str = ""
-    strategy_filter: str = "*.py"
+    strategy_filter: str = "sieve1_*.py"
     take_profit_pct: str = "2"
     stoploss_pct: str = "2"
     target_sweep_enabled: bool = False
@@ -180,7 +181,92 @@ class EntrySieveService:
             status_data = json.loads(status_file.read_text(encoding="utf-8"))
         except Exception:
             return active_data if isinstance(active_data, dict) else {}
-        return status_data if isinstance(status_data, dict) else {}
+        if not isinstance(status_data, dict):
+            return {}
+        return self._reconcile_run_status(job_id, status_data)
+
+    def _reconcile_run_status(self, job_id: str, status_data: dict[str, Any]) -> dict[str, Any]:
+        if str(status_data.get("status") or "").lower() != "running":
+            return status_data
+        try:
+            pid = int(status_data.get("pid") or 0)
+        except (TypeError, ValueError):
+            pid = 0
+        if pid > 0 and self._process_is_running(pid):
+            return status_data
+
+        now = datetime.now().astimezone().isoformat()
+        reconciled = dict(status_data)
+        reconciled.update(
+            {
+                "status": "stopped",
+                "phase": "stale",
+                "updated_at": now,
+                "message": "Entry Sieve runner process is not running; marked stale.",
+            }
+        )
+        self._save_json(self.status_dir / f"{Path(job_id).name}.json", reconciled)
+        self._mark_result_batch_status(job_id, "stopped", "stale", now)
+        self._mark_pointer_status(self.runtime_dir / "active.json", job_id, "stopped", "stale", now)
+        self._mark_pointer_status(self.runtime_dir / "latest.json", job_id, "stopped", "stale", now)
+        return reconciled
+
+    @staticmethod
+    def _process_is_running(pid: int) -> bool:
+        if pid <= 0:
+            return False
+        if sys.platform == "win32":
+            import ctypes
+
+            synchronize = 0x00100000
+            wait_timeout = 0x00000102
+            kernel32 = ctypes.windll.kernel32
+            handle = kernel32.OpenProcess(synchronize, False, pid)
+            if not handle:
+                return False
+            try:
+                return kernel32.WaitForSingleObject(handle, 0) == wait_timeout
+            finally:
+                kernel32.CloseHandle(handle)
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return False
+        return True
+
+    @staticmethod
+    def _save_json(path: Path, payload: dict[str, Any]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    def _mark_result_batch_status(self, job_id: str, status: str, phase: str, updated_at: str) -> None:
+        path = self.results_dir / f"{Path(job_id).name}.json"
+        if not path.exists():
+            return
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return
+        if not isinstance(data, dict):
+            return
+        data["status"] = status
+        data["phase"] = phase
+        data["updated_at"] = updated_at
+        self._save_json(path, data)
+
+    def _mark_pointer_status(self, path: Path, job_id: str, status: str, phase: str, updated_at: str) -> None:
+        if not path.exists():
+            return
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return
+        if not isinstance(data, dict) or str(data.get("job_id") or "") != job_id:
+            return
+        data["status"] = status
+        data["phase"] = phase
+        data["updated_at"] = updated_at
+        self._save_json(path, data)
 
     def _archive_legacy_results(self) -> None:
         legacy = self.runtime_dir / "results.json"

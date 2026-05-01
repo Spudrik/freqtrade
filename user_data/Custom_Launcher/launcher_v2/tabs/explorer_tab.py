@@ -7,6 +7,7 @@ from tkinter import messagebox, ttk
 from typing import Any
 
 from ..base_tab import BaseTab
+from ..services.collector_service import open_path
 from ..services.entry_sieve_service import EntrySieveService, EntrySieveSettings
 from ..services.explorer_service import ExplorerRunSettings, ExplorerService
 from ..ui_helpers import labeled_entry, set_tree_rows
@@ -44,7 +45,7 @@ class ExplorerTab(BaseTab):
         self.split_venv_pipeline_var = tk.BooleanVar(value=False)
         self.backtest_python_exe_var = tk.StringVar(value=default_settings.backtest_python_exe)
         self.pipeline_handoff_dir_var = tk.StringVar(value=default_settings.pipeline_handoff_dir)
-        self.sieve_strategy_filter_var = tk.StringVar(value="*.py")
+        self.sieve_strategy_filter_var = tk.StringVar(value="sieve1_*.py")
         self.sieve_take_profit_var = tk.StringVar(value="2")
         self.sieve_stoploss_var = tk.StringVar(value="2")
         self.sieve_target_sweep_var = tk.BooleanVar(value=False)
@@ -63,6 +64,9 @@ class ExplorerTab(BaseTab):
         self.open_support_params_tree: ttk.Treeview | None = None
         self.sieve_result_batch_combo: ttk.Combobox | None = None
         self.sieve_results_tree: ttk.Treeview | None = None
+        self.sieve_result_columns: tuple[str, ...] = ()
+        self.sieve_column_order: list[str] = []
+        self._sieve_selected_column = "strategy"
         self.target_params_label_var = tk.StringVar(value="Select a target to view child params")
         self.open_support_label_var = tk.StringVar(value="Open support params appear when Search breadth = open")
         self._active_target_label = ""
@@ -241,6 +245,10 @@ class ExplorerTab(BaseTab):
         self._editable_entry(controls, 2, 2, "TP/SL grid", self.sieve_target_pairs_var)
         ttk.Button(controls, text="Run Entry Sieve", command=self._run_entry_sieve).grid(row=3, column=0, sticky="w", padx=8, pady=4)
         ttk.Button(controls, text="Refresh results", command=self._refresh_sieve_results).grid(row=3, column=1, sticky="w", padx=8, pady=4)
+        ttk.Button(controls, text="Move column left", command=lambda: self._move_sieve_column(-1)).grid(row=3, column=2, sticky="w", padx=8, pady=4)
+        ttk.Button(controls, text="Move column right", command=lambda: self._move_sieve_column(1)).grid(row=3, column=3, sticky="w", padx=8, pady=4)
+        ttk.Button(controls, text="Reset columns", command=self._reset_sieve_columns).grid(row=3, column=4, sticky="w", padx=8, pady=4)
+        ttk.Button(controls, text="Open results folder", command=self._open_sieve_results_folder).grid(row=3, column=5, sticky="w", padx=8, pady=4)
         ttk.Label(controls, textvariable=self.sieve_status_var).grid(row=4, column=0, columnspan=6, sticky="w", padx=8, pady=4)
 
         results = ttk.LabelFrame(sieve_tab, text="Runtime results")
@@ -256,6 +264,8 @@ class ExplorerTab(BaseTab):
             "take_profit_pct",
             "stoploss_pct",
             "status",
+            "analysis_read",
+            "analysis_next",
             "hyperopt_loss",
             "objective",
             "best_params_count",
@@ -278,20 +288,24 @@ class ExplorerTab(BaseTab):
             "take_profit_pct": "TP %",
             "stoploss_pct": "SL %",
             "status": "Status",
+            "analysis_read": "Read",
+            "analysis_next": "Next",
             "hyperopt_loss": "Hyperopt loss",
             "objective": "Objective",
             "best_params_count": "Params",
             "epoch_count": "Epochs",
             "profit_total_abs": "Profit abs",
-            "profit_total": "Profit",
+            "profit_total": "Profit %",
             "trade_count": "Trades",
             "winrate": "Winrate",
             "max_drawdown_pct": "Max DD",
             "backtest_file": "Backtest file",
             "params_file": "Params file",
         }
+        self.sieve_result_columns = columns
+        self.sieve_column_order = self._normalized_sieve_column_order(self.sieve_column_order, columns)
         for column in columns:
-            self.sieve_results_tree.heading(column, text=headings[column], command=lambda col=column: self._sort_sieve_results(col))
+            self.sieve_results_tree.heading(column, text=headings[column], command=lambda col=column: self._sieve_heading_clicked(col))
             width = 95
             minwidth = 80
             stretch = False
@@ -307,6 +321,9 @@ class ExplorerTab(BaseTab):
             elif column in {"take_profit_pct", "stoploss_pct"}:
                 width = 70
                 minwidth = 60
+            elif column in {"analysis_read", "analysis_next"}:
+                width = 110
+                minwidth = 90
             elif column in {"backtest_file", "params_file"}:
                 width = 360
                 minwidth = 220
@@ -321,6 +338,7 @@ class ExplorerTab(BaseTab):
         scroll_x = ttk.Scrollbar(results, orient="horizontal", command=self.sieve_results_tree.xview)
         scroll_x.grid(row=1, column=0, sticky="ew", padx=(8, 0), pady=(4, 8))
         self.sieve_results_tree.configure(yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
+        self._apply_sieve_column_order()
 
     def _editable_entry(self, parent: tk.Misc, row: int, column: int, label: str, variable: tk.StringVar) -> ttk.Entry:
         _, entry = labeled_entry(parent, row, column, label, variable)
@@ -627,6 +645,13 @@ class ExplorerTab(BaseTab):
         self.context.shared.status.set("Entry Sieve running")
         self.sieve_status_var.set("Run status: starting")
 
+    def _open_sieve_results_folder(self) -> None:
+        try:
+            self.sieve_service.results_dir.mkdir(parents=True, exist_ok=True)
+            open_path(self.sieve_service.results_dir)
+        except Exception as exc:
+            messagebox.showerror("Entry Sieve results", f"Could not open results folder:\n{exc}", parent=self)
+
     def _refresh_sieve_results(self) -> None:
         if self.sieve_results_tree is None:
             return
@@ -660,12 +685,13 @@ class ExplorerTab(BaseTab):
                 row.get("take_profit_pct", ""),
                 row.get("stoploss_pct", ""),
                 row.get("status", ""),
+                *self._sieve_analysis(row),
                 self._fmt_result(row.get("hyperopt_loss")),
                 self._fmt_result(row.get("objective")),
                 row.get("best_params_count", ""),
                 row.get("epoch_count", ""),
                 self._fmt_result(row.get("profit_total_abs")),
-                self._fmt_result(row.get("profit_total")),
+                self._fmt_percent(row.get("profit_total")),
                 row.get("trade_count", ""),
                 self._fmt_percent(row.get("winrate")),
                 self._fmt_percent(row.get("max_drawdown_pct")),
@@ -675,6 +701,43 @@ class ExplorerTab(BaseTab):
             for row in rows
         ]
         set_tree_rows(self.sieve_results_tree, rendered)
+
+    def _sieve_heading_clicked(self, column: str) -> None:
+        self._sieve_selected_column = column
+        self._sort_sieve_results(column)
+
+    def _move_sieve_column(self, offset: int) -> None:
+        if not self.sieve_result_columns:
+            return
+        order = self._normalized_sieve_column_order(self.sieve_column_order, self.sieve_result_columns)
+        selected = self._sieve_selected_column if self._sieve_selected_column in order else order[0]
+        index = order.index(selected)
+        target = max(0, min(len(order) - 1, index + offset))
+        if target == index:
+            return
+        order.pop(index)
+        order.insert(target, selected)
+        self.sieve_column_order = order
+        self._apply_sieve_column_order()
+        self.context.emit("save_state", {"reason": "entry_sieve_column_order"})
+
+    def _reset_sieve_columns(self) -> None:
+        self.sieve_column_order = list(self.sieve_result_columns)
+        self._apply_sieve_column_order()
+        self.context.emit("save_state", {"reason": "entry_sieve_column_order_reset"})
+
+    def _apply_sieve_column_order(self) -> None:
+        if self.sieve_results_tree is None or not self.sieve_result_columns:
+            return
+        self.sieve_column_order = self._normalized_sieve_column_order(self.sieve_column_order, self.sieve_result_columns)
+        self.sieve_results_tree.configure(displaycolumns=tuple(self.sieve_column_order))
+
+    @staticmethod
+    def _normalized_sieve_column_order(order: list[str], columns: tuple[str, ...]) -> list[str]:
+        valid = set(columns)
+        normalized = [column for column in order if column in valid]
+        normalized.extend(column for column in columns if column not in normalized)
+        return normalized
 
     def _sort_sieve_results(self, column: str) -> None:
         if self._sieve_sort_column == column:
@@ -686,6 +749,9 @@ class ExplorerTab(BaseTab):
 
     @staticmethod
     def _sieve_sort_key(row: dict[str, Any], column: str) -> tuple[int, Any]:
+        if column in {"analysis_read", "analysis_next"}:
+            value = ExplorerTab._sieve_analysis(row)[0 if column == "analysis_read" else 1]
+            return (1, value.lower())
         value = row.get(column)
         if value in (None, ""):
             return (0, 0)
@@ -695,6 +761,42 @@ class ExplorerTab(BaseTab):
             return (1, float(str(value)))
         except (TypeError, ValueError):
             return (1, str(value).lower())
+
+    @staticmethod
+    def _sieve_analysis(row: dict[str, Any]) -> tuple[str, str]:
+        status = str(row.get("status") or "").strip().lower()
+        error_text = json.dumps(row, sort_keys=True, default=str).lower()
+        trades = ExplorerTab._to_float(row.get("trade_count"))
+        profit = ExplorerTab._to_float(row.get("profit_total"))
+        profit_factor = ExplorerTab._to_float(row.get("profit_factor"))
+        drawdown = ExplorerTab._to_float(row.get("max_drawdown_pct"))
+
+        if status and status != "ok":
+            if "dry_rvol" in error_text or "expansion_rvol" in error_text:
+                return "volume config", "fix rvol order"
+            return "run error", "inspect log"
+        if trades <= 0:
+            return "no trades", "relax trigger"
+        if trades < 20:
+            return "too sparse", "relax gates"
+        if profit > 0 and profit_factor >= 1.2 and drawdown <= 0.03:
+            return "clean edge", "freeze/test"
+        if profit > 0:
+            return "mild edge", "refine gates"
+        if profit < -0.02 and trades >= 50:
+            return "overtrades", "tighten gates"
+        if profit < 0:
+            return "weak entry", "rethink gate"
+        return "flat/noisy", "add context"
+
+    @staticmethod
+    def _to_float(value: Any) -> float:
+        if value in (None, ""):
+            return 0.0
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0
 
     @staticmethod
     def _fmt_result(value: Any) -> str:
@@ -791,6 +893,7 @@ class ExplorerTab(BaseTab):
             "sieve_target_pairs": self.sieve_target_pairs_var.get(),
             "sieve_result_batch": self.sieve_result_batch_var.get(),
             "sieve_result_filter": self.sieve_filter_var.get(),
+            "sieve_column_order": list(self.sieve_column_order),
         }
 
     def set_state(self, state: dict[str, Any]) -> None:
@@ -809,13 +912,16 @@ class ExplorerTab(BaseTab):
         self.split_venv_pipeline_var.set(bool(settings.split_venv_pipeline))
         self.backtest_python_exe_var.set(settings.backtest_python_exe)
         self.pipeline_handoff_dir_var.set(settings.pipeline_handoff_dir)
-        self.sieve_strategy_filter_var.set(str(state.get("sieve_strategy_filter") or "*.py"))
+        self.sieve_strategy_filter_var.set(str(state.get("sieve_strategy_filter") or "sieve1_*.py"))
         self.sieve_take_profit_var.set(str(state.get("sieve_take_profit_pct") or "2"))
         self.sieve_stoploss_var.set(str(state.get("sieve_stoploss_pct") or "2"))
         self.sieve_target_sweep_var.set(bool(state.get("sieve_target_sweep")))
         self.sieve_target_pairs_var.set(str(state.get("sieve_target_pairs") or "1/1, 1.5/1.5, 2/2, 3/2, 4/2, 2/3, 3/3"))
         self.sieve_result_batch_var.set(str(state.get("sieve_result_batch") or ""))
         self.sieve_filter_var.set(str(state.get("sieve_result_filter") or ""))
+        saved_order = state.get("sieve_column_order")
+        self.sieve_column_order = [str(column) for column in saved_order] if isinstance(saved_order, list) else []
+        self._apply_sieve_column_order()
         self._update_epochs_mode_state()
         self.refresh()
         if self.training_listbox is not None:

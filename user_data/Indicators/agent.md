@@ -12,6 +12,9 @@ Core principles:
 - Expose tuning knobs on every indicator so Freqtrade hyperopt can optimize the feature logic and thresholds.
 - Indicator modules are for Freqtrade strategy consumption only; they should produce dataframes, evidence columns, and confidence scores, not final trading decisions.
 - Indicators can expose market intent, contextual state, entry triggers, hold evidence, and exit evidence, but the strategy owns the final entry, exit, sizing, and risk decision.
+- Market regime and relative strength are risk, exit, stake, filter, and ranking inputs first. Entry suggestions from them are optional diagnostics only and must have a clear market rationale.
+- Volume and volatility are guard and risk-modifier inputs first. Entry suggestions from them are optional diagnostics only and should usually be paired with structure, price action, or regime context.
+- Simple confluence may generate entry triggers, but only when it combines indicator families that logically belong together. Do not treat raw signal count as a trade setup.
 - Volume Profile market context should be directional, not a standalone chop detector: `+2` bull, `+1` bullish chop, `0` undefined, `-1` bearish chop, and `-2` bear.
 - Score market state, not just single events.
 - Combine signals across timeframes into a confluence score.
@@ -92,7 +95,7 @@ VP tuning levers that strategies may expose to hyperopt:
 
 ## Complex Volume Strategy Outputs
 
-Complex Volume (`vol`) should infer volume intent from OHLCV only. It does not have true order-flow delta, so CVD, pressure, absorption, and sweep outputs are proxy evidence derived from candle body, close location, range, and relative volume.
+Complex Volume (`vol`) should infer volume intent from OHLCV only. It is primarily a guard, confirmation, and risk-modifier layer. It does not have true order-flow delta, so CVD, pressure, absorption, and sweep outputs are proxy evidence derived from candle body, close location, range, and relative volume.
 
 Expected behaviour:
 - High-quality bullish readings should cluster around springs, low sweeps with reclaim, bullish absorption, anchored VWAP reclaim, and volume-confirmed upside breaks.
@@ -118,7 +121,7 @@ VOL tuning levers that strategies may expose to hyperopt:
 
 ## Volatility Cycle Strategy Outputs
 
-Volatility Cycles (`vc`) should describe transitions between compression, expansion, and exhaustion. It should not mark ordinary candles as expansion; expansion means ATR/range and participation are above their recent baseline.
+Volatility Cycles (`vc`) should describe transitions between compression, expansion, and exhaustion. It is primarily a guard, timing, and risk-modifier layer. It should not mark ordinary candles as expansion; expansion means ATR/range and participation are above their recent baseline.
 
 Expected behaviour:
 - `vc_compression_score` should rise during tight ranges, low ATR ratio, and dry participation.
@@ -142,12 +145,12 @@ VC tuning levers that strategies may expose to hyperopt:
 
 ## Relative Strength Strategy Outputs
 
-Relative Strength (`rs`) should compare the traded asset against a benchmark such as BTC, ETH, or a market index. It is cross-asset context only; it does not decide trades alone.
+Relative Strength (`rs`) should compare the traded asset against a benchmark such as BTC, ETH, a market index, or a selected basket. It is cross-asset risk, filter, ranking, stake, and exit context first; it does not decide trades alone.
 
 Expected behaviour:
 - Strong bullish RS should persist while the asset is outperforming the benchmark across short/medium/long windows and the RS line is high in its own range.
 - Strong bearish RS should persist while the asset is underperforming the benchmark across those windows and the RS line is low in its own range.
-- Rotation diagnostics should be fresh events around transitions, not every candle in an existing outperformance state.
+- Rotation diagnostics should be fresh events around transitions, not every candle in an existing outperformance state. They are useful for investigation, but RS entries need an additional structure/trigger rationale before they should be strategy entries.
 
 Strategy-facing RS concepts:
 - Core relative evidence: `rs_line`, `rs_slope`, `rs_ret_short`, `rs_ret_medium`, `rs_ret_long`, `rs_percentile`, and `rs_benchmark_close`.
@@ -165,11 +168,11 @@ RS tuning levers that strategies may expose to hyperopt:
 
 ## Market Regime Strategy Outputs
 
-Market Regime (`regime`) should identify broad risk-on/risk-off conditions from OHLCV behaviour. Its hardest and most important job is early bear/drawdown warning. It should be treated as a higher-timeframe context layer, not an entry system.
+Market Regime (`regime`) should identify broad risk-on/risk-off conditions from OHLCV behaviour. Its hardest and most important job is early bear/drawdown warning. It should be treated as a higher-timeframe risk, exit, stake, and filter layer, not an entry system.
 
 Expected behaviour:
-- Bull regime should persist when price is above a rising EMA stack with supportive DMI/trend pressure.
-- Bear or crash regime should appear when downside trend pressure, drawdown from recent highs, negative slope, and volatility expansion combine.
+- Bull regime should persist when the tested evidence reliably captures durable risk-on conditions. EMA stacks, DMI, slope, drawdown, volatility, and volume can be inputs, but none of them are mandatory definitions.
+- Bear or crash regime should appear as early as practical before or during larger drawdown conditions, using whichever evidence proves useful without becoming curve-fit noise.
 - Neutral/chop should be the default valid state when no directional regime has sufficient evidence.
 - `REGIME_CODE_UNKNOWN` should mostly be warmup/invalid data, not normal live-market uncertainty.
 
@@ -180,8 +183,8 @@ Strategy-facing regime concepts:
 - Shared context: `regime_market_context` uses `+2`, `+1`, `0`, `-1`, `-2`; this is the preferred strategy-facing directional context.
 - Early warnings: `regime_bear_warning` and `regime_crash_warning` are risk-off context flags intended to appear before or during larger drawdown conditions.
 - Recovery context: `regime_bull_recovery` marks improving trend pressure after risk-off or neutral conditions.
-- Entry diagnostics: `regime_entry_risk_on_long` and `regime_entry_risk_off_short` are sparse regime-transition diagnostics, not direct strategy entries.
-- Composite triggers: `regime_suggested_entry_long/short` mirror the risk-on/risk-off diagnostics for plotting and broad tests.
+- Entry diagnostics: `regime_entry_risk_on_long` and `regime_entry_risk_off_short` are sparse regime-transition diagnostics only. They should not be treated as primary entries unless a later strategy proves a rational use case.
+- Composite triggers: `regime_suggested_entry_long/short` mirror the risk-on/risk-off diagnostics for plotting and broad tests only.
 - Position evidence: `regime_hold_long`, `regime_hold_short`, `regime_exit_long`, and `regime_exit_short` expose whether the broad regime supports or warns against a direction.
 - Legacy response columns from `add_regime_response_columns` are compatibility-only. New strategies should avoid treating regime as stake/risk/exit authority; strategies own final stake, risk, exit, add, and peel decisions.
 
@@ -233,8 +236,10 @@ Strategy-facing pivot concepts:
 - Channel compression: `pa_channel_width_ratio` is current channel width divided by recent median width. `pa_channel_compression` is a bounded `0..1` score, where higher means the local pivot channel is unusually tight versus its own recent history.
 - Structural state: `pa_structural_state` is `1` for confirmed higher-high/higher-low structural bias, `-1` for lower-high/lower-low structural bias, and `0` when mixed or undefined.
 - Pivot market context: `pa_market_context` uses the shared directional context convention: `+2` bull, `+1` bullish chop, `0` undefined, `-1` bearish chop, and `-2` bear. Full `+2/-2` states should require stronger structural evidence than `+1/-1`; the lower-intensity states mean directional bias exists but conditions are still messy.
-- Entry diagnostics: `pa_entry_*_long` and `pa_entry_*_short` columns are separated by plain-English reasons, such as structural breakouts, support reclaims, continuation breaks, reversal breaks, compression breaks, and range support/resistance reactions. They are diagnostic triggers for testing, not final strategy entries.
-- Compatibility aliases: older `*_bos_*` and `*_choch_*` columns may exist for backwards compatibility only. Prefer `*_continuation_break_*` and `*_reversal_break_*` in new code and plots.
+- Trend-aligned breakouts: `pa_ms_bullish_trend_aligned_breakout` and `pa_ms_bearish_trend_aligned_breakout` mean price has crossed the active swing level in the same direction as the prior structure. A `0` value means the event is absent, not that the opposite event happened.
+- Trend-flip breakouts: `pa_ms_bullish_trend_flip_breakout` and `pa_ms_bearish_trend_flip_breakout` mean price has crossed the active swing level against the prior structure, suggesting a possible structural direction change. A `0` value means the event is absent.
+- Entry diagnostics: `pa_entry_*_long` and `pa_entry_*_short` columns are separated by plain-English reasons, such as structural breakouts, support reclaims, trend-aligned breakouts, trend-flip breakouts, compression breakouts/breakdowns, and range support/resistance reactions. They are diagnostic triggers for testing, not final strategy entries.
+- Compatibility aliases: older `*_break_*`, `*_continuation_break_*`, `*_reversal_break_*`, `*_bos_*`, and `*_choch_*` columns may exist for backwards compatibility only. Prefer `*_breakout_*`, `*_trend_aligned_breakout_*`, and `*_trend_flip_breakout_*` in new code and plots.
 
 Pivot tuning levers that strategies may expose to hyperopt:
 - Local pivot sensitivity: `strength`, `strengths`, `min_prominence_atr`, `min_prominence_pct`, `min_pivot_spacing_bars`, `min_pivot_distance_atr`, `min_pivot_distance_pct`.
@@ -280,16 +285,23 @@ TL tuning levers that strategies may expose to hyperopt:
 
 ## Pattern Structure Strategy Outputs
 
-Pattern Structure (`pat`) should identify impulse-then-consolidation behaviour such as flags and pennants. Ongoing setup state is separate from fresh trigger events so plots and strategies do not treat every setup candle as a new signal.
+Pattern Structure (`pat`) should identify geometry-backed chart patterns from confirmed pivot sequences first, with tactical/structural trendlines used as supporting diagnostics. Broad impulse-then-consolidation evidence is diagnostic only; named patterns such as flags, pennants, wedges, triangles, double tops/bottoms, and head-and-shoulders require ordered pivot geometry.
 
 Strategy-facing PAT concepts:
-- Setup state: `pat_flag_state_long/short` and `pat_pennant_state_long/short` describe ongoing flag/pennant conditions.
-- Fresh setup events: `pat_flag_long/short` and `pat_pennant_long/short` are de-duplicated setup starts for visual review and trigger testing.
-- Breakout context: `pat_raw_breakout_long/short` is the raw consolidation break; `pat_breakout_long/short` requires a recent flag/pennant setup and is de-duplicated.
-- Directional context: `pat_market_context` uses `+2`, `+1`, `0`, `-1`, `-2` based on score direction plus recent setup/breakout evidence.
-- Entry diagnostics: `pat_entry_flag_breakout_long`, `pat_entry_pennant_breakout_long`, `pat_entry_flag_breakdown_short`, and `pat_entry_pennant_breakdown_short` are reason-specific trigger evidence.
-- Position evidence: `pat_hold_long`, `pat_hold_short`, `pat_exit_long`, and `pat_exit_short` expose whether the pattern still supports holding or has produced opposite-pattern/breakout warning evidence.
+- Broad diagnostics: `pat_consolidation_setup_long/short`, `pat_consolidation_breakout_long`, `pat_consolidation_breakdown_short`, and `pat_consolidation_quality_long/short` describe impulse plus contained consolidation, but they are not named chart patterns by themselves.
+- Line geometry: `pat_line_source`, `pat_resistance_line`, `pat_support_line`, `pat_line_quality`, touch/respect columns, and `pat_channel_compression_score` expose the selected tactical/structural line context. Source `1` means tactical `tl`; source `2` means structural `stl`. Generic `pat_line_breakout_long` and `pat_line_breakdown_short` are line-structure diagnostics, not named pattern proof.
+- Pivot-sequence geometry: `pat_sequence_upper_line`, `pat_sequence_lower_line`, `pat_sequence_high_direction`, `pat_sequence_low_direction`, `pat_sequence_touch_count`, `pat_sequence_containment_ratio`, `pat_sequence_compression_score`, `pat_sequence_parallel_score`, and `pat_sequence_converging_score` expose the ordered pivot evidence used by named flag/pennant/triangle/wedge patterns.
+- Named pattern setup: `pat_<pattern>_setup_long/short` columns describe active geometry-backed setups. Patterns include `flag`, `pennant`, `ascending_triangle`, `descending_triangle`, `symmetric_triangle`, `rising_wedge`, `falling_wedge`, `double_top`, `double_bottom`, `head_shoulders`, and `inverse_head_shoulders`.
+- Named pattern triggers: `pat_<pattern>_breakout_long` and `pat_<pattern>_breakdown_short` are fresh de-duplicated boundary breaks after a recent matching setup. Flag, pennant, triangle, and wedge triggers use pivot-sequence boundaries; touch/respect uses the wider fuzzy line zone while breakouts use the smaller breakout width.
+- Invalidation: `pat_<pattern>_invalid_long/short` means the wrong boundary broke for that setup and strategies should treat existing pattern intent as failed.
+- Compatibility aliases: `pat_flag_state_*`, `pat_pennant_state_*`, `pat_flag_*`, `pat_pennant_*`, `pat_breakout_long/short`, and `pat_entry_*` remain for old strategies, but new work should prefer the explicit named pattern columns.
+- Directional context: `pat_market_context` uses `+2`, `+1`, `0`, `-1`, `-2` based on geometry-backed pattern quality plus recent setup/trigger evidence.
+- Position evidence: `pat_hold_long`, `pat_hold_short`, `pat_exit_long`, and `pat_exit_short` expose whether pattern geometry still supports holding or has failed/opposed the position.
+- Composite suggestions: `pat_suggested_entry_long/short` are diagnostics built from named pattern triggers only. Generic `pat_line_breakout_long` and `pat_line_breakdown_short` remain useful boundary-break diagnostics, but they are deliberately excluded from the composite because a line break alone is not a named chart pattern.
 
 PAT tuning levers that strategies may expose to hyperopt:
-- Shape: `impulse_window`, `consolidation_window`, `impulse_atr_min`, `impulse_pct_min`, `max_retrace_pct`, `min_range_contraction`.
-- Participation/compression: `dry_volume_rvol_max`, `breakout_buffer_pct`, `pivot_prefix`, `trendline_prefix`.
+- Shape windows: `impulse_window`, `consolidation_window`, `atr_period`, `pattern_memory_window`, and `entry_cooldown_bars`.
+- Impulse/consolidation: `impulse_atr_min`, `impulse_pct_min`, `impulse_close_location_min`, `max_retrace_pct`, `max_consolidation_extension_pct`, `max_consolidation_drift_atr`, `min_range_contraction`, and `dry_volume_rvol_max`.
+- Line geometry: `line_zone_atr_mult`, `line_zone_pct`, `breakout_buffer_pct`, `breakout_zone_fraction`, `min_line_score`, `min_line_touch_count`, `min_line_respect_ratio`, `line_respect_window`, `structural_line_score_margin`, `flat_slope_pct_per_bar`, `parallel_slope_tolerance_pct`, `min_converging_slope_gap_pct`, `min_channel_compression`, `min_sequence_containment_ratio`, `min_sequence_touch_count`, `max_flag_forward_slope_pct`, and `max_wedge_parallel_error_pct`.
+- Pivot patterns: `pivot_similarity_pct`, `shoulder_similarity_pct`, `head_prominence_pct`, `max_neckline_slope_pct_per_bar`, `min_pivot_pattern_depth_pct`, `min_sequence_span_bars`, `max_sequence_span_bars`, and `max_pivot_pattern_age_bars`.
+- Inputs: `pivot_prefix`, `trendline_prefix`, `structural_trendline_prefix`, and `output_prefix`.

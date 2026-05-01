@@ -72,6 +72,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--profile-window", type=int, default=96, help="Volume profile rolling window.")
     parser.add_argument("--profile-bins", type=int, default=48, help="Volume profile price bins.")
     parser.add_argument("--profile-chunk-size", type=int, default=512, help="Volume profile chunk size.")
+    parser.add_argument("--pa-view", choices=("all", "entry-context"), default="all", help="Pivot-structure plot set.")
     parser.add_argument("--vp-view", choices=("all", "market-context", "node-actions"), default="all", help="Volume profile plot set.")
     return parser.parse_args()
 
@@ -97,7 +98,7 @@ def main() -> int:
     if args.indicator == "stl":
         outputs = plot_structural_trendlines(frame, context)
     elif args.indicator == "pa":
-        outputs = plot_pivot_structure(frame, context)
+        outputs = plot_pivot_structure(frame, context, pa_view=str(args.pa_view))
     elif args.indicator == "tl":
         outputs = plot_trendline_projection(frame, context)
     elif args.indicator == "vol":
@@ -158,28 +159,80 @@ def plot_structural_trendlines(frame: DataFrame, context: PlotContext) -> list[P
     return [output]
 
 
-def plot_pivot_structure(frame: DataFrame, context: PlotContext) -> list[Path]:
+def plot_pivot_structure(frame: DataFrame, context: PlotContext, *, pa_view: str = "all") -> list[Path]:
     data = add_pivot_structure(frame, PivotStructureConfig(strength=5, strengths=(3, 5, 8, 13), prefix="pa"))
+    if pa_view == "entry-context":
+        return [plot_pivot_entry_context(data, context)]
     view = data.tail(context.tail).copy()
     fig, ax = plt.subplots(figsize=(15, 8), dpi=140)
+    draw_band_series(ax, view, "pa_structural_resistance_zone_lower", "pa_structural_resistance_zone_upper", "#fed7aa", "structural resistance zone", alpha=0.22)
+    draw_band_series(ax, view, "pa_structural_support_zone_lower", "pa_structural_support_zone_upper", "#bfdbfe", "structural support zone", alpha=0.22)
     draw_candles(ax, view)
-    draw_line_series(ax, view, "pa_resistance_line", "#d97706", "resistance", 1.4)
-    draw_line_series(ax, view, "pa_support_line", "#2563eb", "support", 1.4)
-    for strength, alpha in ((5, 0.90), (13, 0.60)):
-        draw_price_markers(ax, view, f"pa_pivot_high_{strength}", "#dc2626", "v", f"pivot high {strength}", alpha=alpha)
-        draw_price_markers(ax, view, f"pa_pivot_low_{strength}", "#16a34a", "^", f"pivot low {strength}", alpha=alpha)
-    draw_event_markers(ax, view, "pa_ms_bullish_bos", "high", "#15803d", "^", "bull BOS")
-    draw_event_markers(ax, view, "pa_ms_bearish_bos", "low", "#b91c1c", "v", "bear BOS")
-    draw_event_markers(ax, view, "pa_ms_bullish_choch", "high", "#22c55e", "^", "bull CHoCH")
-    draw_event_markers(ax, view, "pa_ms_bearish_choch", "low", "#f43f5e", "v", "bear CHoCH")
-    draw_event_markers(ax, view, "pa_suggested_entry_long", "low", "#84cc16", "^", "suggest long")
-    draw_event_markers(ax, view, "pa_suggested_entry_short", "high", "#e11d48", "v", "suggest short")
-    ax.set_title(f"{context.pair_label} {context.timeframe} pivot structure")
+    draw_line_series(ax, view, "pa_structural_resistance", "#c2410c", "structural resistance", 2.0, alpha=0.88)
+    draw_line_series(ax, view, "pa_structural_support", "#1d4ed8", "structural support", 2.0, alpha=0.88)
+    draw_line_series(ax, view, "pa_resistance_line", "#d97706", "local resistance projection", 0.9, alpha=0.42)
+    draw_line_series(ax, view, "pa_support_line", "#2563eb", "local support projection", 0.9, alpha=0.42)
+    for strength, alpha in ((5, 0.72), (13, 0.55)):
+        draw_pivot_event_markers(ax, data, view, f"pa_pivot_high_{strength}", f"pa_pivot_high_index_{strength}", "#dc2626", "v", f"local pivot high {strength}", alpha=alpha, size=24)
+        draw_pivot_event_markers(ax, data, view, f"pa_pivot_low_{strength}", f"pa_pivot_low_index_{strength}", "#16a34a", "^", f"local pivot low {strength}", alpha=alpha, size=24)
+    draw_pivot_event_markers(ax, data, view, "pa_structural_pivot_high", "pa_structural_pivot_high_index", "#7c2d12", "v", "structural pivot high", alpha=0.96, size=58, edgecolor="#ffffff")
+    draw_pivot_event_markers(ax, data, view, "pa_structural_pivot_low", "pa_structural_pivot_low_index", "#1e3a8a", "^", "structural pivot low", alpha=0.96, size=58, edgecolor="#ffffff")
+    draw_event_markers(ax, view, "pa_structural_resistance_break", "high", "#15803d", "D", "structural res break", size=45)
+    draw_event_markers(ax, view, "pa_structural_support_break", "low", "#b91c1c", "D", "structural sup break", size=45)
+    draw_event_markers(ax, view, "pa_structural_resistance_reject", "high", "#f97316", "v", "structural res reject", size=42)
+    draw_event_markers(ax, view, "pa_structural_support_reclaim", "low", "#0ea5e9", "^", "structural sup reclaim", size=42)
+    draw_event_markers(ax, view, "pa_ms_bullish_continuation_break", "high", "#15803d", "^", "bull continuation break")
+    draw_event_markers(ax, view, "pa_ms_bearish_continuation_break", "low", "#b91c1c", "v", "bear continuation break")
+    draw_event_markers(ax, view, "pa_ms_bullish_reversal_break", "high", "#22c55e", "^", "bull reversal break")
+    draw_event_markers(ax, view, "pa_ms_bearish_reversal_break", "low", "#f43f5e", "v", "bear reversal break")
+    ax.set_title(f"{context.pair_label} {context.timeframe} pivot structure | local pivots + structural zones")
     finish_axes(ax, view)
     output = context.output_dir / f"{context.pair_key}_{context.timeframe}_pa_structure.png"
     fig.savefig(output)
     plt.close(fig)
-    return [output, plot_score_panel(data, context, "pa", "pivot structure scores", ("pa_ms_up_sequence_score", "pa_ms_down_sequence_score", "pa_channel_compression"))]
+    return [
+        output,
+        plot_score_panel(
+            data,
+            context,
+            "pa",
+            "pivot structure scores",
+            (
+                "pa_ms_up_sequence_score",
+                "pa_ms_down_sequence_score",
+                "pa_channel_compression",
+                "pa_structural_state",
+                "pa_structural_range_position",
+            ),
+        ),
+    ]
+
+
+def plot_pivot_entry_context(data: DataFrame, context: PlotContext) -> Path:
+    view = data.tail(context.tail).copy()
+    fig, axes = plt.subplots(
+        3,
+        1,
+        figsize=(15, 10),
+        dpi=140,
+        sharex=True,
+        gridspec_kw={"height_ratios": [4.0, 1.15, 1.65]},
+    )
+    ax = axes[0]
+    context_ax = axes[1]
+    lane_ax = axes[2]
+    shade_pa_market_context_regions(ax, view)
+    draw_candles(ax, view)
+    for column, price_column, color, marker, label, size in pivot_entry_marker_styles():
+        draw_event_markers(ax, view, column, price_column, color, marker, label, size=size)
+    draw_pa_market_context(context_ax, view)
+    draw_pa_entry_lanes(lane_ax, view)
+    ax.set_title(f"{context.pair_label} {context.timeframe} pivot entry diagnostics + market context")
+    finish_panel_axes(fig, axes, view)
+    output = context.output_dir / f"{context.pair_key}_{context.timeframe}_pa_entry_context.png"
+    fig.savefig(output)
+    plt.close(fig)
+    return output
 
 
 def plot_trendline_projection(frame: DataFrame, context: PlotContext) -> list[Path]:
@@ -695,6 +748,71 @@ def draw_line_series(ax: plt.Axes, view: DataFrame, column: str, color: str, lab
     ax.plot(np.arange(len(view)), values, color=color, linewidth=linewidth, alpha=alpha, label=label)
 
 
+def draw_band_series(
+    ax: plt.Axes,
+    view: DataFrame,
+    lower_column: str,
+    upper_column: str,
+    color: str,
+    label: str,
+    *,
+    alpha: float = 0.18,
+) -> None:
+    if lower_column not in view.columns or upper_column not in view.columns:
+        return
+    lower = pd.to_numeric(view[lower_column], errors="coerce")
+    upper = pd.to_numeric(view[upper_column], errors="coerce")
+    mask = lower.notna() & upper.notna() & upper.gt(lower)
+    if not mask.any():
+        return
+    xs = np.arange(len(view))
+    ax.fill_between(xs, lower, upper, where=mask.to_numpy(), color=color, alpha=alpha, label=label, step="post")
+
+
+def draw_pivot_event_markers(
+    ax: plt.Axes,
+    data: DataFrame,
+    view: DataFrame,
+    price_column: str,
+    pivot_index_column: str,
+    color: str,
+    marker: str,
+    label: str,
+    *,
+    alpha: float = 0.85,
+    size: float = 32,
+    edgecolor: str | None = None,
+) -> None:
+    if price_column not in data.columns or pivot_index_column not in data.columns or "pa_bar_index" not in view.columns:
+        return
+    prices = pd.to_numeric(data[price_column], errors="coerce")
+    pivot_bars = pd.to_numeric(data[pivot_index_column], errors="coerce")
+    mask = prices.notna() & pivot_bars.notna()
+    if not mask.any():
+        return
+    view_start = float(pd.to_numeric(view["pa_bar_index"], errors="coerce").iloc[0])
+    view_end = float(pd.to_numeric(view["pa_bar_index"], errors="coerce").iloc[-1])
+    events = pd.DataFrame({"price": prices[mask], "bar": pivot_bars[mask]})
+    events = events[(events["bar"] >= view_start) & (events["bar"] <= view_end)]
+    if events.empty:
+        return
+    xs = (events["bar"] - view_start).round().astype("int64")
+    valid = xs.ge(0) & xs.lt(len(view))
+    if not valid.any():
+        return
+    ax.scatter(
+        xs[valid].to_numpy(),
+        events.loc[valid, "price"].to_numpy(),
+        color=color,
+        marker=marker,
+        s=size,
+        label=label,
+        alpha=alpha,
+        zorder=7,
+        edgecolors=edgecolor,
+    )
+
+
 def draw_conditional_line_series(
     ax: plt.Axes,
     view: DataFrame,
@@ -785,6 +903,114 @@ def draw_vp_node_action_lanes(ax: plt.Axes, view: DataFrame) -> None:
     ax.set_ylabel("VP node action")
     if plotted:
         ax.legend(loc="upper left", ncol=3)
+
+
+def pivot_entry_marker_styles() -> tuple[tuple[str, str, str, str, str, float], ...]:
+    return (
+        ("pa_entry_resistance_breakout_long", "high", "#15803d", "D", "res breakout long", 58),
+        ("pa_entry_support_reclaim_long", "low", "#0ea5e9", "^", "support reclaim long", 58),
+        ("pa_entry_bullish_reversal_break_long", "low", "#84cc16", "*", "bull reversal break long", 82),
+        ("pa_entry_bullish_continuation_break_long", "high", "#22c55e", "^", "bull continuation break long", 48),
+        ("pa_entry_compression_breakout_long", "high", "#facc15", "P", "compression break long", 62),
+        ("pa_entry_range_support_long", "low", "#14b8a6", "o", "range support long", 44),
+        ("pa_entry_support_breakdown_short", "low", "#b91c1c", "D", "support breakdown short", 58),
+        ("pa_entry_resistance_reject_short", "high", "#f97316", "v", "res reject short", 58),
+        ("pa_entry_bearish_reversal_break_short", "high", "#ff00d4", "X", "bear reversal break short", 62),
+        ("pa_entry_bearish_continuation_break_short", "low", "#dc2626", "v", "bear continuation break short", 48),
+        ("pa_entry_compression_breakdown_short", "low", "#7c3aed", "P", "compression break short", 62),
+        ("pa_entry_range_resistance_short", "high", "#92400e", "o", "range resistance short", 44),
+    )
+
+
+def draw_pa_entry_lanes(ax: plt.Axes, view: DataFrame) -> None:
+    xs = np.arange(len(view))
+    plotted = False
+    lanes = (
+        ("pa_entry_resistance_breakout_long", "#15803d", "res break L", 3.0),
+        ("pa_entry_support_reclaim_long", "#0ea5e9", "sup reclaim L", 2.4),
+        ("pa_entry_bullish_reversal_break_long", "#84cc16", "reversal L", 1.8),
+        ("pa_entry_bullish_continuation_break_long", "#22c55e", "continuation L", 1.2),
+        ("pa_entry_compression_breakout_long", "#facc15", "compress L", 0.6),
+        ("pa_entry_range_support_long", "#14b8a6", "range sup L", 0.2),
+        ("pa_entry_range_resistance_short", "#92400e", "range res S", -0.2),
+        ("pa_entry_compression_breakdown_short", "#7c3aed", "compress S", -0.6),
+        ("pa_entry_bearish_continuation_break_short", "#dc2626", "continuation S", -1.2),
+        ("pa_entry_bearish_reversal_break_short", "#ff00d4", "reversal S", -1.8),
+        ("pa_entry_resistance_reject_short", "#f97316", "res reject S", -2.4),
+        ("pa_entry_support_breakdown_short", "#b91c1c", "sup break S", -3.0),
+    )
+    for column, color, label, lane in lanes:
+        active = bool_array(view, column)
+        if not active.any():
+            continue
+        y_values = np.where(active, lane, np.nan)
+        ax.fill_between(xs, lane - 0.18, lane + 0.18, where=active, step="post", color=color, alpha=0.20)
+        ax.step(xs, y_values, where="post", color=color, linewidth=1.8, label=label)
+        plotted = True
+    ax.axhline(0.0, color="#111111", linewidth=0.8, alpha=0.35)
+    ax.set_ylim(-3.35, 3.35)
+    ax.set_yticks([-3.0, -2.4, -1.8, -1.2, -0.6, -0.2, 0.2, 0.6, 1.2, 1.8, 2.4, 3.0])
+    ax.set_yticklabels(
+        [
+            "sup break S",
+            "res reject S",
+            "reversal S",
+            "continuation S",
+            "compress S",
+            "range res S",
+            "range sup L",
+            "compress L",
+            "continuation L",
+            "reversal L",
+            "sup reclaim L",
+            "res break L",
+        ]
+    )
+    ax.set_ylabel("Pivot entries")
+    if plotted:
+        ax.legend(loc="upper left", ncol=4)
+
+
+def draw_pa_market_context(ax: plt.Axes, view: DataFrame) -> None:
+    xs = np.arange(len(view))
+    plotted = False
+    if "pa_market_context" not in view.columns:
+        return
+    context = pd.to_numeric(view["pa_market_context"], errors="coerce").fillna(0).astype("int8")
+    for value, color, label in pa_market_context_styles():
+        active = context.eq(value).to_numpy()
+        if not active.any():
+            continue
+        lane = float(value)
+        y_values = np.where(active, lane, np.nan)
+        ax.fill_between(xs, lane - 0.32, lane + 0.32, where=active, step="post", color=color, alpha=0.20)
+        ax.step(xs, y_values, where="post", color=color, linewidth=2.0, label=label)
+        plotted = True
+    ax.axhline(0.0, color="#111111", linewidth=0.8, alpha=0.35)
+    ax.set_ylim(-2.65, 2.65)
+    ax.set_yticks([-2.0, -1.0, 0.0, 1.0, 2.0])
+    ax.set_yticklabels(["bear", "bearish chop", "undefined", "bullish chop", "bull"])
+    ax.set_ylabel("Pivot context")
+    if plotted:
+        ax.legend(loc="upper left", ncol=4)
+
+
+def shade_pa_market_context_regions(ax: plt.Axes, view: DataFrame) -> None:
+    if "pa_market_context" not in view.columns:
+        return
+    context = pd.to_numeric(view["pa_market_context"], errors="coerce").fillna(0).astype("int8")
+    for value, color, label in pa_market_context_styles():
+        mask = context.eq(value).to_numpy()
+        shade_regions(ax, mask, color, label)
+
+
+def pa_market_context_styles() -> tuple[tuple[int, str, str], ...]:
+    return (
+        (2, "#00a5ff", "bull +2"),
+        (1, "#22c55e", "bullish chop +1"),
+        (-1, "#f59e0b", "bearish chop -1"),
+        (-2, "#ff00b8", "bear -2"),
+    )
 
 
 def bool_array(view: DataFrame, column: str) -> np.ndarray:

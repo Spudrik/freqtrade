@@ -81,6 +81,17 @@ proxy. Long scores rise when the pair is outperforming the benchmark across
 multiple windows and the relative-strength line is high in its rolling range.
 Short scores rise when it underperforms.
 
+`simple_confluence_indicator.py`
+
+Broad textbook TA confluence: RSI, MACD/PPO, Bollinger, EMA/SMA/DEMA/TEMA/WMA/HMA,
+stochastic, StochRSI, ADX/DMI, CCI, MFI, CMO, ROC, Williams %R, Aroon, TRIX,
+Ultimate Oscillator, Awesome Oscillator, KST, ATR/Keltner/Donchian, VWAP, OBV,
+CMF, ADL, Elder Force Index, Ichimoku, z-score, volume breakouts, and common
+candlestick patterns. It emits paired 0/1 `*_long` and `*_short` flags for each
+rule, unbounded long/short signal counts, normalized count-based scores, and a
+directional state. Treat it as a research sieve for simple TA confluence, not as
+a refined edge model.
+
 ## Validation Priority
 
 Before confluence, validate each score independently:
