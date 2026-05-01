@@ -35,7 +35,7 @@ class OrderBookTab(BaseTab):
         self.max_symbols_var = tk.StringVar(value="12")
         self.store_snapshots_var = tk.BooleanVar(value=False)
         self.collector_preview_var = tk.StringVar(value="")
-        self.status_vars = {key: tk.StringVar(value="-") for key in ("status", "pid", "started_at", "heartbeat_at", "last_message_at", "last_metric_at", "pair_count", "active_streams", "messages", "metrics", "contexts", "db_mb", "data_dir_mb", "capacity", "last_error")}
+        self.status_vars = {key: tk.StringVar(value="-") for key in ("status", "pid", "started_at", "heartbeat_at", "last_message_at", "last_metric_at", "pair_count", "active_streams", "messages", "metrics", "contexts", "db_mb", "data_dir_mb", "drive_free_total", "drive_used", "capacity", "last_error")}
         self.estimate_vars = {key: tk.StringVar(value="-") for key in ("metric_rows", "snapshot_rows", "mb_per_day", "days_to_warning", "pair_count", "symbol_count")}
         self.pair_warning_var = tk.StringVar(value="")
 
@@ -112,7 +112,7 @@ class OrderBookTab(BaseTab):
 
         status = ttk.LabelFrame(root, text="Status")
         status.grid(row=3, column=0, sticky="ew", padx=8, pady=(0, 8))
-        items = [("Status", "status"), ("PID", "pid"), ("Started at", "started_at"), ("Heartbeat at", "heartbeat_at"), ("Last message at", "last_message_at"), ("Last metric at", "last_metric_at"), ("Pair count", "pair_count"), ("Active streams", "active_streams"), ("Messages", "messages"), ("Metrics", "metrics"), ("Contexts", "contexts"), ("DB MB", "db_mb"), ("Data dir MB", "data_dir_mb"), ("Capacity", "capacity"), ("Last error", "last_error")]
+        items = [("Status", "status"), ("PID", "pid"), ("Started at", "started_at"), ("Heartbeat at", "heartbeat_at"), ("Last message at", "last_message_at"), ("Last metric at", "last_metric_at"), ("Pair count", "pair_count"), ("Active streams", "active_streams"), ("Messages", "messages"), ("Metrics", "metrics"), ("Contexts", "contexts"), ("DB MB", "db_mb"), ("Data dir MB", "data_dir_mb"), ("Drive free/total", "drive_free_total"), ("Drive used", "drive_used"), ("Capacity", "capacity"), ("Last error", "last_error")]
         for index, (label, key) in enumerate(items):
             row = index // 2
             col = (index % 2) * 2
@@ -353,6 +353,8 @@ class OrderBookTab(BaseTab):
             "contexts": status.get("context_count_total") if status.get("context_count_total") is not None else "-",
             "db_mb": status.get("db_mb") if status.get("db_mb") is not None else "-",
             "data_dir_mb": status.get("data_dir_mb") if status.get("data_dir_mb") is not None else "-",
+            "drive_free_total": status.get("drive_free_total") or "-",
+            "drive_used": status.get("drive_used") or "-",
             "capacity": status.get("capacity_level") or "-",
             "last_error": status.get("last_error") or "-",
         }

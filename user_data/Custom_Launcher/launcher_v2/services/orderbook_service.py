@@ -6,6 +6,7 @@ from typing import Any
 import csv
 import json
 import os
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -276,6 +277,29 @@ class OrderBookService:
         paths["stop"].write_text(utc_now() + "\n", encoding="utf-8")
         return paths["stop"]
 
+    def _drive_usage_status(self, path: Path) -> dict[str, Any]:
+        target = path.expanduser()
+        if not target.is_absolute():
+            target = self.app_dir / target
+        target = target.resolve(strict=False)
+        existing = next((candidate for candidate in (target, *target.parents) if candidate.exists()), target)
+        usage = shutil.disk_usage(existing)
+        total_gb = usage.total / (1024 ** 3)
+        used_gb = usage.used / (1024 ** 3)
+        free_gb = usage.free / (1024 ** 3)
+        used_pct = (usage.used / usage.total * 100.0) if usage.total else 0.0
+        free_pct = (usage.free / usage.total * 100.0) if usage.total else 0.0
+        return {
+            "drive_path": str(existing),
+            "drive_total_gb": round(total_gb, 2),
+            "drive_used_gb": round(used_gb, 2),
+            "drive_free_gb": round(free_gb, 2),
+            "drive_used_pct": round(used_pct, 1),
+            "drive_free_pct": round(free_pct, 1),
+            "drive_free_total": f"{free_gb:.1f} GB free / {total_gb:.1f} GB total",
+            "drive_used": f"{used_gb:.1f} GB used ({used_pct:.1f}%)",
+        }
+
     def read_status(self, state: dict[str, Any]) -> dict[str, Any]:
         paths = self.paths(state)
         status: dict[str, Any] = {}
@@ -294,6 +318,11 @@ class OrderBookService:
                     status["status"] = "stale/unknown"
             except Exception:
                 pass
+        try:
+            status.update(self._drive_usage_status(paths["data_dir"]))
+        except OSError as exc:
+            status["drive_free_total"] = f"unavailable: {exc}"
+            status["drive_used"] = "-"
         return status
 
     def latest_metric_rows(self, state: dict[str, Any]) -> list[tuple[Any, ...]]:
