@@ -7,8 +7,10 @@ import pandas as pd
 from pandas import DataFrame, Series
 
 from pattern_common import _num
+from pattern_channel import _channel_pattern_columns
 from pattern_continuation import _flag_pennant_columns
 from pattern_geometry import _triangle_wedge_columns
+from pattern_multi_peak import _triple_reversal_columns
 from pattern_range import _rectangle_range_columns
 from pattern_reversal import _double_reversal_columns, _head_shoulders_columns
 
@@ -110,8 +112,8 @@ class PatternStructureConfig:
     # TODO_DELETE_CHECK: compatibility alias for older configs. Prefer
     # min_converging_pattern_quality in new work.
     min_converging_structure_quality: float | None = None
-    min_triangle_quality: float = 0.80
-    min_wedge_quality: float = 0.80
+    min_triangle_quality: float = 0.86
+    min_wedge_quality: float = 0.86
     include_converging_patterns: bool = False
     # TODO_DELETE_CHECK: compatibility alias for older configs. Prefer
     # include_converging_patterns in new work.
@@ -133,14 +135,18 @@ class PatternStructureConfig:
     head_shoulders_window: int = 100
     min_head_shoulders_bars: int = 12
     max_head_shoulders_bars: int = 90
-    shoulder_tolerance_pct: float = 0.045
-    min_head_prominence_pct: float = 0.035
-    min_head_shoulders_neckline_depth_pct: float = 0.025
+    shoulder_tolerance_pct: float = 0.060
+    min_head_prominence_pct: float = 0.025
+    min_head_shoulders_neckline_depth_pct: float = 0.018
     min_head_shoulders_prior_move_pct: float = 0.055
-    min_head_shoulders_quality: float = 0.70
+    min_head_shoulders_quality: float = 0.78
+    min_head_shoulders_shoulder_score: float = 0.45
+    min_head_shoulders_time_balance_score: float = 0.45
     min_head_shoulders_neckline_score: float = 0.35
+    min_head_shoulders_neckline_position_score: float = 0.25
     min_head_shoulders_head_position_score: float = 0.20
     min_head_shoulders_neckline_clearance_score: float = 0.22
+    min_head_shoulders_neckline_body_respect_ratio: float = 0.70
     head_shoulders_max_neckline_slope_pct_per_bar: float = 0.0030
     min_head_shoulders_right_reaction_score: float = 0.10
     head_shoulders_setup_monitor_bars: int = 16
@@ -156,6 +162,38 @@ class PatternStructureConfig:
     min_rectangle_containment_ratio: float = 0.74
     min_rectangle_quality: float = 0.84
     include_rectangle_patterns: bool = False
+    triple_pattern_window: int = 110
+    min_triple_pattern_bars: int = 18
+    max_triple_pattern_bars: int = 96
+    min_triple_spacing_bars: int = 5
+    triple_max_candidate_pivots: int = 16
+    triple_peak_tolerance_pct: float = 0.030
+    min_triple_neckline_depth_pct: float = 0.016
+    min_triple_prior_move_pct: float = 0.020
+    min_triple_reaction_score: float = 0.10
+    min_triple_quality: float = 0.76
+    include_triple_reversal_patterns: bool = False
+    channel_pattern_window: int = 120
+    broadening_pattern_window: int = 180
+    min_channel_pattern_bars: int = 18
+    channel_pattern_min_side_pivots: int = 3
+    channel_pattern_min_width_pct: float = 0.010
+    channel_pattern_max_width_pct: float = 0.24
+    min_channel_pattern_slope_pct_per_bar: float = 0.00020
+    channel_parallel_slope_tolerance_pct_per_bar: float = 0.00045
+    max_channel_pattern_fit_error_pct: float = 0.16
+    min_channel_pattern_containment_ratio: float = 0.58
+    channel_pattern_boundary_tolerance_pct: float = 0.006
+    channel_pattern_management_buffer_pct: float = 0.002
+    min_channel_pattern_quality: float = 0.70
+    include_channel_patterns: bool = False
+    min_broadening_expansion_pct: float = 0.08
+    min_broadening_slope_gap_pct_per_bar: float = 0.00015
+    min_broadening_prior_move_pct: float = 0.0
+    min_broadening_quality: float = 0.70
+    include_broadening_patterns: bool = False
+    pattern_lifecycle_mature_bars: int = 12
+    pattern_lifecycle_stale_bars: int = 12
     # TODO_DELETE_CHECK: keep this default False. The old triangle/wedge path is
     # retained only for visual comparison while developing the replacement.
     include_unvalidated_geometric_patterns: bool = False
@@ -187,7 +225,9 @@ def add_pattern_structure(
         **_flag_pennant_columns(frame, sequence, channel, cfg),
         **_triangle_wedge_columns(frame, sequence, cfg),
         **_rectangle_range_columns(frame, cfg),
+        **_channel_pattern_columns(frame, cfg),
         **_double_reversal_columns(frame, cfg),
+        **_triple_reversal_columns(frame, cfg),
         **_head_shoulders_columns(frame, cfg),
     }
     context = _context_columns(sequence, channel, prototypes, frame.index, cfg)
@@ -379,12 +419,24 @@ def _context_columns(
     rectangle_setup = prototypes[f"{p}_rectangle_setup"]
     rectangle_go_long = prototypes[f"{p}_rectangle_go_long"]
     rectangle_go_short = prototypes[f"{p}_rectangle_go_short"]
+    ascending_channel = prototypes[f"{p}_ascending_channel_setup"]
+    descending_channel = prototypes[f"{p}_descending_channel_setup"]
+    ascending_channel_go_long = prototypes[f"{p}_ascending_channel_go_long"]
+    ascending_channel_go_short = prototypes[f"{p}_ascending_channel_go_short"]
+    descending_channel_go_long = prototypes[f"{p}_descending_channel_go_long"]
+    descending_channel_go_short = prototypes[f"{p}_descending_channel_go_short"]
+    broadening_top = prototypes[f"{p}_broadening_top_setup_short"]
+    broadening_bottom = prototypes[f"{p}_broadening_bottom_setup_long"]
+    broadening_top_go_short = prototypes[f"{p}_broadening_top_go_short"]
+    broadening_bottom_go_long = prototypes[f"{p}_broadening_bottom_go_long"]
     double_setup_long = prototypes[f"{p}_double_bottom_setup_long"]
     double_setup_short = prototypes[f"{p}_double_top_setup_short"]
     double_clean_long = prototypes[f"{p}_double_bottom_clean_long"]
     double_clean_short = prototypes[f"{p}_double_top_clean_short"]
     double_range_long = prototypes[f"{p}_double_bottom_range_retest_long"]
     double_range_short = prototypes[f"{p}_double_top_range_retest_short"]
+    triple_setup_long = prototypes[f"{p}_triple_bottom_setup_long"]
+    triple_setup_short = prototypes[f"{p}_triple_top_setup_short"]
     head_shoulders_setup_long = prototypes[f"{p}_inverse_head_shoulders_setup_long"]
     head_shoulders_setup_short = prototypes[f"{p}_head_shoulders_setup_short"]
     if bool(cfg.include_triangle_wedge_patterns) or bool(cfg.include_unvalidated_geometric_patterns):
@@ -408,6 +460,24 @@ def _context_columns(
     else:
         rectangle_setup_long = pd.Series(False, index=index)
         rectangle_setup_short = pd.Series(False, index=index)
+    if bool(cfg.include_channel_patterns):
+        channel_pattern_long = ascending_channel_go_long | descending_channel_go_long
+        channel_pattern_short = ascending_channel_go_short | descending_channel_go_short
+    else:
+        channel_pattern_long = pd.Series(False, index=index)
+        channel_pattern_short = pd.Series(False, index=index)
+    if bool(cfg.include_broadening_patterns):
+        broadening_pattern_long = broadening_bottom
+        broadening_pattern_short = broadening_top
+    else:
+        broadening_pattern_long = pd.Series(False, index=index)
+        broadening_pattern_short = pd.Series(False, index=index)
+    if bool(cfg.include_triple_reversal_patterns):
+        triple_reversal_long = triple_setup_long
+        triple_reversal_short = triple_setup_short
+    else:
+        triple_reversal_long = pd.Series(False, index=index)
+        triple_reversal_short = pd.Series(False, index=index)
     if bool(cfg.include_head_shoulders_patterns):
         head_shoulders_long = head_shoulders_setup_long
         head_shoulders_short = head_shoulders_setup_short
@@ -438,7 +508,10 @@ def _context_columns(
         | pennant_setup_long
         | geometric_setup_long
         | rectangle_setup_long
+        | channel_pattern_long
+        | broadening_pattern_long
         | reversal_setup_long
+        | triple_reversal_long
         | head_shoulders_long
         | channel_sequence_long
     )
@@ -447,7 +520,10 @@ def _context_columns(
         | pennant_setup_short
         | geometric_setup_short
         | rectangle_setup_short
+        | channel_pattern_short
+        | broadening_pattern_short
         | reversal_setup_short
+        | triple_reversal_short
         | head_shoulders_short
         | channel_sequence_short
     )
@@ -462,25 +538,49 @@ def _context_columns(
                 geometric_setup_short,
                 rectangle_setup_long,
                 rectangle_setup_short,
+                channel_pattern_long,
+                channel_pattern_short,
+                broadening_pattern_long,
+                broadening_pattern_short,
                 reversal_setup_long,
                 reversal_setup_short,
+                triple_reversal_long,
+                triple_reversal_short,
                 head_shoulders_long,
                 head_shoulders_short,
                 long_setup | sequence_bias.gt(0),
                 short_setup | sequence_bias.lt(0),
             ],
-            [2, -2, 1, -1, 1, -1, 1, -1, 1, -1, 1, -1],
+            [2, -2, 1, -1, 1, -1, 1, -1, 1, -1, 1, -1, 1, -1, 1, -1, 1, -1],
             default=0,
         ),
         index=index,
         dtype="int8",
     )
     entry_long = _dedupe_events(
-        flag_setup_long | pennant_setup_long | geometric_setup_long | rectangle_setup_long | reversal_setup_long | head_shoulders_long | (near_lower & long_setup),
+        flag_setup_long
+        | pennant_setup_long
+        | geometric_setup_long
+        | rectangle_setup_long
+        | channel_pattern_long
+        | broadening_pattern_long
+        | reversal_setup_long
+        | triple_reversal_long
+        | head_shoulders_long
+        | (near_lower & long_setup),
         cfg.entry_cooldown_bars,
     )
     entry_short = _dedupe_events(
-        flag_setup_short | pennant_setup_short | geometric_setup_short | rectangle_setup_short | reversal_setup_short | head_shoulders_short | (near_upper & short_setup),
+        flag_setup_short
+        | pennant_setup_short
+        | geometric_setup_short
+        | rectangle_setup_short
+        | channel_pattern_short
+        | broadening_pattern_short
+        | reversal_setup_short
+        | triple_reversal_short
+        | head_shoulders_short
+        | (near_upper & short_setup),
         cfg.entry_cooldown_bars,
     )
     long_setup_event = (
@@ -490,7 +590,10 @@ def _context_columns(
         | _dedupe_events(geometric_setup_long & wedge_setup_long, cfg.entry_cooldown_bars)
         | _dedupe_events(geometric_setup_long & converging_pattern_long, cfg.entry_cooldown_bars)
         | _dedupe_events(rectangle_setup_long, cfg.entry_cooldown_bars)
+        | _dedupe_events(channel_pattern_long, cfg.entry_cooldown_bars)
+        | _dedupe_events(broadening_pattern_long, cfg.entry_cooldown_bars)
         | _dedupe_events(reversal_setup_long & double_setup_long, cfg.entry_cooldown_bars)
+        | _dedupe_events(triple_reversal_long, cfg.entry_cooldown_bars)
         | _dedupe_events(head_shoulders_long, cfg.entry_cooldown_bars)
         | _dedupe_events(near_lower & long_setup, cfg.entry_cooldown_bars)
     )
@@ -501,7 +604,10 @@ def _context_columns(
         | _dedupe_events(geometric_setup_short & wedge_setup_short, cfg.entry_cooldown_bars)
         | _dedupe_events(geometric_setup_short & converging_pattern_short, cfg.entry_cooldown_bars)
         | _dedupe_events(rectangle_setup_short, cfg.entry_cooldown_bars)
+        | _dedupe_events(channel_pattern_short, cfg.entry_cooldown_bars)
+        | _dedupe_events(broadening_pattern_short, cfg.entry_cooldown_bars)
         | _dedupe_events(reversal_setup_short & double_setup_short, cfg.entry_cooldown_bars)
+        | _dedupe_events(triple_reversal_short, cfg.entry_cooldown_bars)
         | _dedupe_events(head_shoulders_short, cfg.entry_cooldown_bars)
         | _dedupe_events(near_upper & short_setup, cfg.entry_cooldown_bars)
     )
@@ -527,6 +633,24 @@ def _context_columns(
         f"{p}_entry_converging_pattern_setup_short": _dedupe_events(geometric_setup_short & converging_pattern_short, cfg.entry_cooldown_bars),
         f"{p}_entry_rectangle_go_long": _dedupe_events(rectangle_setup_long, cfg.entry_cooldown_bars),
         f"{p}_entry_rectangle_go_short": _dedupe_events(rectangle_setup_short, cfg.entry_cooldown_bars),
+        f"{p}_entry_ascending_channel_go_long": _dedupe_events(
+            channel_pattern_long & ascending_channel_go_long, cfg.entry_cooldown_bars
+        ),
+        f"{p}_entry_ascending_channel_go_short": _dedupe_events(
+            channel_pattern_short & ascending_channel_go_short, cfg.entry_cooldown_bars
+        ),
+        f"{p}_entry_descending_channel_go_long": _dedupe_events(
+            channel_pattern_long & descending_channel_go_long, cfg.entry_cooldown_bars
+        ),
+        f"{p}_entry_descending_channel_go_short": _dedupe_events(
+            channel_pattern_short & descending_channel_go_short, cfg.entry_cooldown_bars
+        ),
+        f"{p}_entry_broadening_bottom_go_long": _dedupe_events(
+            broadening_pattern_long & broadening_bottom_go_long, cfg.entry_cooldown_bars
+        ),
+        f"{p}_entry_broadening_top_go_short": _dedupe_events(
+            broadening_pattern_short & broadening_top_go_short, cfg.entry_cooldown_bars
+        ),
         # TODO_DELETE_CHECK: compatibility aliases. Prefer converging_pattern.
         f"{p}_entry_converging_structure_setup_long": _dedupe_events(geometric_setup_long & converging_pattern_long, cfg.entry_cooldown_bars),
         f"{p}_entry_converging_structure_setup_short": _dedupe_events(geometric_setup_short & converging_pattern_short, cfg.entry_cooldown_bars),
@@ -536,6 +660,8 @@ def _context_columns(
         f"{p}_entry_double_top_clean_short": _dedupe_events(reversal_setup_short & double_clean_short, cfg.entry_cooldown_bars),
         f"{p}_entry_double_bottom_range_retest_long": _dedupe_events(reversal_setup_long & double_range_long, cfg.entry_cooldown_bars),
         f"{p}_entry_double_top_range_retest_short": _dedupe_events(reversal_setup_short & double_range_short, cfg.entry_cooldown_bars),
+        f"{p}_entry_triple_bottom_setup_long": _dedupe_events(triple_reversal_long, cfg.entry_cooldown_bars),
+        f"{p}_entry_triple_top_setup_short": _dedupe_events(triple_reversal_short, cfg.entry_cooldown_bars),
         f"{p}_entry_inverse_head_shoulders_setup_long": _dedupe_events(head_shoulders_long, cfg.entry_cooldown_bars),
         f"{p}_entry_head_shoulders_setup_short": _dedupe_events(head_shoulders_short, cfg.entry_cooldown_bars),
         f"{p}_attention_flag_long": _dedupe_events(flag_setup_long, cfg.entry_cooldown_bars),
@@ -554,6 +680,24 @@ def _context_columns(
         ),
         f"{p}_attention_rectangle_long": _dedupe_events(rectangle_setup_long, cfg.entry_cooldown_bars),
         f"{p}_attention_rectangle_short": _dedupe_events(rectangle_setup_short, cfg.entry_cooldown_bars),
+        f"{p}_attention_ascending_channel_long": _dedupe_events(
+            channel_pattern_long & ascending_channel_go_long, cfg.entry_cooldown_bars
+        ),
+        f"{p}_attention_ascending_channel_short": _dedupe_events(
+            channel_pattern_short & ascending_channel_go_short, cfg.entry_cooldown_bars
+        ),
+        f"{p}_attention_descending_channel_long": _dedupe_events(
+            channel_pattern_long & descending_channel_go_long, cfg.entry_cooldown_bars
+        ),
+        f"{p}_attention_descending_channel_short": _dedupe_events(
+            channel_pattern_short & descending_channel_go_short, cfg.entry_cooldown_bars
+        ),
+        f"{p}_attention_broadening_bottom_long": _dedupe_events(
+            broadening_pattern_long, cfg.entry_cooldown_bars
+        ),
+        f"{p}_attention_broadening_top_short": _dedupe_events(
+            broadening_pattern_short, cfg.entry_cooldown_bars
+        ),
         # TODO_DELETE_CHECK: compatibility aliases. Prefer converging_pattern.
         f"{p}_attention_converging_structure_long": _dedupe_events(
             geometric_setup_long & converging_pattern_long, cfg.entry_cooldown_bars
@@ -567,6 +711,8 @@ def _context_columns(
         f"{p}_attention_double_top_clean_short": _dedupe_events(reversal_setup_short & double_clean_short, cfg.entry_cooldown_bars),
         f"{p}_attention_double_bottom_range_retest_long": _dedupe_events(reversal_setup_long & double_range_long, cfg.entry_cooldown_bars),
         f"{p}_attention_double_top_range_retest_short": _dedupe_events(reversal_setup_short & double_range_short, cfg.entry_cooldown_bars),
+        f"{p}_attention_triple_bottom_long": _dedupe_events(triple_reversal_long, cfg.entry_cooldown_bars),
+        f"{p}_attention_triple_top_short": _dedupe_events(triple_reversal_short, cfg.entry_cooldown_bars),
         f"{p}_attention_inverse_head_shoulders_long": _dedupe_events(head_shoulders_long, cfg.entry_cooldown_bars),
         f"{p}_attention_head_shoulders_short": _dedupe_events(head_shoulders_short, cfg.entry_cooldown_bars),
         f"{p}_long_setup": long_setup_event.fillna(False),
@@ -608,8 +754,14 @@ def _strongest_pattern_columns(
         (701, 1, prototypes[f"{p}_rectangle_quality"], prototypes[f"{p}_rectangle_go_long"]),
         (-701, -1, prototypes[f"{p}_rectangle_quality"], prototypes[f"{p}_rectangle_go_short"]),
         (700, 0, prototypes[f"{p}_rectangle_quality"], prototypes[f"{p}_rectangle_setup"]),
+        (801, 1, prototypes[f"{p}_ascending_channel_quality"], prototypes[f"{p}_ascending_channel_setup"]),
+        (-802, -1, prototypes[f"{p}_descending_channel_quality"], prototypes[f"{p}_descending_channel_setup"]),
+        (-803, -1, prototypes[f"{p}_broadening_top_quality"], prototypes[f"{p}_broadening_top_setup_short"]),
+        (804, 1, prototypes[f"{p}_broadening_bottom_quality"], prototypes[f"{p}_broadening_bottom_setup_long"]),
         (501, 1, prototypes[f"{p}_double_bottom_quality"], prototypes[f"{p}_double_bottom_setup_long"]),
         (-501, -1, prototypes[f"{p}_double_top_quality"], prototypes[f"{p}_double_top_setup_short"]),
+        (502, 1, prototypes[f"{p}_triple_bottom_quality"], prototypes[f"{p}_triple_bottom_setup_long"]),
+        (-502, -1, prototypes[f"{p}_triple_top_quality"], prototypes[f"{p}_triple_top_setup_short"]),
         (601, 1, prototypes[f"{p}_inverse_head_shoulders_quality"], prototypes[f"{p}_inverse_head_shoulders_setup_long"]),
         (-601, -1, prototypes[f"{p}_head_shoulders_quality"], prototypes[f"{p}_head_shoulders_setup_short"]),
     ]
@@ -936,12 +1088,20 @@ def _validate_config(cfg: PatternStructureConfig) -> None:
         raise ValueError("min_head_shoulders_prior_move_pct must be non-negative")
     if not 0.0 <= float(cfg.min_head_shoulders_quality) <= 1.0:
         raise ValueError("min_head_shoulders_quality must be between 0 and 1")
+    if not 0.0 <= float(cfg.min_head_shoulders_shoulder_score) <= 1.0:
+        raise ValueError("min_head_shoulders_shoulder_score must be between 0 and 1")
+    if not 0.0 <= float(cfg.min_head_shoulders_time_balance_score) <= 1.0:
+        raise ValueError("min_head_shoulders_time_balance_score must be between 0 and 1")
     if not 0.0 <= float(cfg.min_head_shoulders_neckline_score) <= 1.0:
         raise ValueError("min_head_shoulders_neckline_score must be between 0 and 1")
+    if not 0.0 <= float(cfg.min_head_shoulders_neckline_position_score) <= 1.0:
+        raise ValueError("min_head_shoulders_neckline_position_score must be between 0 and 1")
     if not 0.0 <= float(cfg.min_head_shoulders_head_position_score) <= 1.0:
         raise ValueError("min_head_shoulders_head_position_score must be between 0 and 1")
     if not 0.0 <= float(cfg.min_head_shoulders_neckline_clearance_score) <= 1.0:
         raise ValueError("min_head_shoulders_neckline_clearance_score must be between 0 and 1")
+    if not 0.0 <= float(cfg.min_head_shoulders_neckline_body_respect_ratio) <= 1.0:
+        raise ValueError("min_head_shoulders_neckline_body_respect_ratio must be between 0 and 1")
     if float(cfg.head_shoulders_max_neckline_slope_pct_per_bar) <= 0.0:
         raise ValueError("head_shoulders_max_neckline_slope_pct_per_bar must be positive")
     if not 0.0 <= float(cfg.min_head_shoulders_right_reaction_score) <= 1.0:
@@ -968,6 +1128,68 @@ def _validate_config(cfg: PatternStructureConfig) -> None:
         raise ValueError("min_rectangle_containment_ratio must be between 0 and 1")
     if not 0.0 <= float(cfg.min_rectangle_quality) <= 1.0:
         raise ValueError("min_rectangle_quality must be between 0 and 1")
+    if int(cfg.triple_pattern_window) < 12:
+        raise ValueError("triple_pattern_window must be at least 12")
+    if int(cfg.min_triple_pattern_bars) < 6:
+        raise ValueError("min_triple_pattern_bars must be at least 6")
+    if int(cfg.max_triple_pattern_bars) <= int(cfg.min_triple_pattern_bars):
+        raise ValueError("max_triple_pattern_bars must be greater than min_triple_pattern_bars")
+    if int(cfg.triple_pattern_window) < int(cfg.max_triple_pattern_bars):
+        raise ValueError("triple_pattern_window must be at least max_triple_pattern_bars")
+    if int(cfg.min_triple_spacing_bars) < 1:
+        raise ValueError("min_triple_spacing_bars must be at least 1")
+    if int(cfg.triple_max_candidate_pivots) < 3:
+        raise ValueError("triple_max_candidate_pivots must be at least 3")
+    if float(cfg.triple_peak_tolerance_pct) <= 0.0:
+        raise ValueError("triple_peak_tolerance_pct must be positive")
+    if float(cfg.min_triple_neckline_depth_pct) < 0.0:
+        raise ValueError("min_triple_neckline_depth_pct must be non-negative")
+    if float(cfg.min_triple_prior_move_pct) < 0.0:
+        raise ValueError("min_triple_prior_move_pct must be non-negative")
+    if not 0.0 <= float(cfg.min_triple_reaction_score) <= 1.0:
+        raise ValueError("min_triple_reaction_score must be between 0 and 1")
+    if not 0.0 <= float(cfg.min_triple_quality) <= 1.0:
+        raise ValueError("min_triple_quality must be between 0 and 1")
+    if int(cfg.channel_pattern_window) < 12:
+        raise ValueError("channel_pattern_window must be at least 12")
+    if int(cfg.broadening_pattern_window) < 12:
+        raise ValueError("broadening_pattern_window must be at least 12")
+    if int(cfg.min_channel_pattern_bars) < 6:
+        raise ValueError("min_channel_pattern_bars must be at least 6")
+    if int(cfg.min_channel_pattern_bars) >= int(cfg.channel_pattern_window):
+        raise ValueError("min_channel_pattern_bars must be lower than channel_pattern_window")
+    if int(cfg.min_channel_pattern_bars) >= int(cfg.broadening_pattern_window):
+        raise ValueError("min_channel_pattern_bars must be lower than broadening_pattern_window")
+    if int(cfg.channel_pattern_min_side_pivots) < 2:
+        raise ValueError("channel_pattern_min_side_pivots must be at least 2")
+    if not 0.0 < float(cfg.channel_pattern_min_width_pct) < float(cfg.channel_pattern_max_width_pct):
+        raise ValueError("channel_pattern_min_width_pct must be lower than channel_pattern_max_width_pct")
+    if float(cfg.min_channel_pattern_slope_pct_per_bar) <= 0.0:
+        raise ValueError("min_channel_pattern_slope_pct_per_bar must be positive")
+    if float(cfg.channel_parallel_slope_tolerance_pct_per_bar) <= 0.0:
+        raise ValueError("channel_parallel_slope_tolerance_pct_per_bar must be positive")
+    if float(cfg.max_channel_pattern_fit_error_pct) <= 0.0:
+        raise ValueError("max_channel_pattern_fit_error_pct must be positive")
+    if not 0.0 <= float(cfg.min_channel_pattern_containment_ratio) <= 1.0:
+        raise ValueError("min_channel_pattern_containment_ratio must be between 0 and 1")
+    if float(cfg.channel_pattern_boundary_tolerance_pct) <= 0.0:
+        raise ValueError("channel_pattern_boundary_tolerance_pct must be positive")
+    if float(cfg.channel_pattern_management_buffer_pct) < 0.0:
+        raise ValueError("channel_pattern_management_buffer_pct must be non-negative")
+    if not 0.0 <= float(cfg.min_channel_pattern_quality) <= 1.0:
+        raise ValueError("min_channel_pattern_quality must be between 0 and 1")
+    if float(cfg.min_broadening_expansion_pct) <= 0.0:
+        raise ValueError("min_broadening_expansion_pct must be positive")
+    if float(cfg.min_broadening_slope_gap_pct_per_bar) <= 0.0:
+        raise ValueError("min_broadening_slope_gap_pct_per_bar must be positive")
+    if float(cfg.min_broadening_prior_move_pct) < 0.0:
+        raise ValueError("min_broadening_prior_move_pct must be non-negative")
+    if not 0.0 <= float(cfg.min_broadening_quality) <= 1.0:
+        raise ValueError("min_broadening_quality must be between 0 and 1")
+    if int(cfg.pattern_lifecycle_mature_bars) < 1:
+        raise ValueError("pattern_lifecycle_mature_bars must be at least 1")
+    if int(cfg.pattern_lifecycle_stale_bars) < 0:
+        raise ValueError("pattern_lifecycle_stale_bars must be non-negative")
     if not 0.0 <= float(cfg.min_channel_score) <= 1.0:
         raise ValueError("min_channel_score must be between 0 and 1")
     if not 0.0 <= float(cfg.min_sequence_score) <= 1.0:

@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 from pandas import DataFrame, Series
 
-from pattern_common import _clip_value, _pattern_geometry_arrays
+from pattern_common import _clip_value, _dedupe_interval_level_events, _lifecycle_state_from_events, _pattern_geometry_arrays
 
 
 def _rectangle_range_columns(frame: DataFrame, cfg: PatternStructureConfig) -> dict[str, Series]:
@@ -19,10 +19,32 @@ def _rectangle_range_columns(frame: DataFrame, cfg: PatternStructureConfig) -> d
 
     p = cfg.output_prefix
     arrays = _rectangle_range_arrays(frame, cfg)
-    setup = pd.Series(arrays["rectangle_setup"], index=frame.index, dtype="bool").fillna(False)
+    setup = pd.Series(
+        _dedupe_interval_level_events(
+            arrays["rectangle_setup"],
+            arrays["rectangle_start_index"],
+            arrays["rectangle_end_index"],
+            arrays["rectangle_upper"],
+            arrays["rectangle_lower"],
+            int(cfg.entry_cooldown_bars),
+            float(cfg.double_duplicate_overlap_pct),
+            float(cfg.double_duplicate_neckline_tolerance_pct),
+        ),
+        index=frame.index,
+        dtype="bool",
+    ).fillna(False)
     return {
         f"{p}_rectangle_quality": pd.Series(arrays["rectangle_quality"], index=frame.index, dtype="float64").where(setup, 0.0),
         f"{p}_rectangle_setup": setup,
+        f"{p}_rectangle_state": pd.Series(
+            _lifecycle_state_from_events(
+                setup,
+                int(cfg.pattern_lifecycle_mature_bars),
+                int(cfg.pattern_lifecycle_stale_bars),
+            ),
+            index=frame.index,
+            dtype="int8",
+        ),
         f"{p}_rectangle_upper": pd.Series(arrays["rectangle_upper"], index=frame.index, dtype="float64"),
         f"{p}_rectangle_lower": pd.Series(arrays["rectangle_lower"], index=frame.index, dtype="float64"),
         f"{p}_rectangle_width_pct": pd.Series(arrays["rectangle_width_pct"], index=frame.index, dtype="float64"),
@@ -50,6 +72,8 @@ def _rectangle_range_arrays(frame: DataFrame, cfg: PatternStructureConfig) -> di
         "rectangle_lower": np.full(rows, np.nan, dtype="float64"),
         "rectangle_width_pct": np.full(rows, np.nan, dtype="float64"),
         "rectangle_position": np.full(rows, np.nan, dtype="float64"),
+        "rectangle_start_index": np.full(rows, np.nan, dtype="float64"),
+        "rectangle_end_index": np.full(rows, np.nan, dtype="float64"),
         "rectangle_upper_touch_count": np.zeros(rows, dtype="float64"),
         "rectangle_lower_touch_count": np.zeros(rows, dtype="float64"),
         "rectangle_go_long": np.zeros(rows, dtype=bool),
@@ -165,6 +189,8 @@ def _rectangle_range_arrays(frame: DataFrame, cfg: PatternStructureConfig) -> di
         out["rectangle_lower"][row] = lower
         out["rectangle_width_pct"][row] = width_pct
         out["rectangle_position"][row] = position
+        out["rectangle_start_index"][row] = float(first_touch)
+        out["rectangle_end_index"][row] = float(row)
         out["rectangle_upper_touch_count"][row] = float(upper_count)
         out["rectangle_lower_touch_count"][row] = float(lower_count)
         out["rectangle_go_long"][row] = go_long
