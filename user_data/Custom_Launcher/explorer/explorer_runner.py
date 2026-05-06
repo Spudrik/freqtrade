@@ -35,6 +35,7 @@ from .explorer_commands import (
 )
 from .explorer_metadata import emit_status, latest_summary, write_audit, write_latest_summary
 from .explorer_scoring import aggregate, compare, score_window
+from .explorer_support import metric_summary
 from .explorer_targets import choose_target, resolve_params, update_usage_counts
 from .explorer_windows import compact_window, load_window_manifest, resolve_windows, window_label
 
@@ -240,7 +241,8 @@ def backtest_snapshot(
                 "role": role,
                 "window": compact_window(window),
                 "result_file": str(result_file),
-                "metrics": metrics,
+                "params_file": str(strategy_param_file),
+                "metric_summary": metric_summary(metrics),
                 "score": scored_window.__dict__,
             }
         )

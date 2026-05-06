@@ -144,7 +144,14 @@ class EntrySieveService:
     def load_result_batches(self) -> list[dict[str, Any]]:
         batches: list[dict[str, Any]] = []
         latest_id = self._latest_result_batch_id()
+        for path in sorted(self.results_dir.glob("*.jsonl"), key=lambda item: item.stat().st_mtime, reverse=True):
+            batch_id = path.stem
+            batches.append(self._batch_summary(batch_id, path, latest_id == batch_id))
         for path in sorted(self.results_dir.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True):
+            if path.name.endswith(".summary.json"):
+                continue
+            if (self.results_dir / f"{path.stem}.jsonl").exists():
+                continue
             batch_id = path.stem
             batches.append(self._batch_summary(batch_id, path, latest_id == batch_id))
         for path in sorted(self.archive_dir.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True):
@@ -159,8 +166,27 @@ class EntrySieveService:
         path = self._resolve_result_batch(batch_id)
         if not path.exists():
             return []
+        if path.suffix.lower() == ".jsonl":
+            rows: list[dict[str, Any]] = []
+            with path.open("r", encoding="utf-8") as handle:
+                for line in handle:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        row = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(row, dict):
+                        row.pop("metrics", None)
+                        rows.append(row)
+            return rows
         data = json.loads(path.read_text(encoding="utf-8"))
         rows = data.get("rows") if isinstance(data, dict) else []
+        if isinstance(rows, list):
+            for row in rows:
+                if isinstance(row, dict):
+                    row.pop("metrics", None)
         return rows if isinstance(rows, list) else []
 
     def load_run_status(self) -> dict[str, Any]:
@@ -240,19 +266,33 @@ class EntrySieveService:
         path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
     def _mark_result_batch_status(self, job_id: str, status: str, phase: str, updated_at: str) -> None:
-        path = self.results_dir / f"{Path(job_id).name}.json"
-        if not path.exists():
+        clean_id = Path(job_id).name
+        jsonl_path = self.results_dir / f"{clean_id}.jsonl"
+        legacy_path = self.results_dir / f"{clean_id}.json"
+        result_path = jsonl_path if jsonl_path.exists() else legacy_path
+        if not result_path.exists():
             return
+        summary_path = self.results_dir / f"{clean_id}.summary.json"
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = json.loads(summary_path.read_text(encoding="utf-8")) if summary_path.exists() else {}
         except Exception:
-            return
+            data = {}
         if not isinstance(data, dict):
-            return
+            data = {}
+        row_count = data.get("row_count")
+        if row_count in (None, "") and result_path.suffix.lower() == ".jsonl":
+            row_count = self._count_jsonl_rows(result_path)
         data["status"] = status
         data["phase"] = phase
         data["updated_at"] = updated_at
-        self._save_json(path, data)
+        data.setdefault("schema_version", 3)
+        data.setdefault("storage", result_path.suffix.lower().lstrip("."))
+        data.setdefault("job_id", clean_id)
+        data.setdefault("path", str(result_path))
+        data.setdefault("summary_path", str(summary_path))
+        if row_count not in (None, ""):
+            data["row_count"] = row_count
+        self._save_json(summary_path, data)
 
     def _mark_pointer_status(self, path: Path, job_id: str, status: str, phase: str, updated_at: str) -> None:
         if not path.exists():
@@ -296,20 +336,26 @@ class EntrySieveService:
         if not clean_id:
             latest_id = self._latest_result_batch_id()
             if latest_id:
-                return self.results_dir / f"{latest_id}.json"
+                jsonl_path = self.results_dir / f"{latest_id}.jsonl"
+                return jsonl_path if jsonl_path.exists() else self.results_dir / f"{latest_id}.json"
             batches = self.load_result_batches()
             if batches:
                 return Path(str(batches[0].get("path") or ""))
             return self.results_dir / "missing.json"
-        return self.results_dir / f"{Path(clean_id).name}.json"
+        name = Path(clean_id).name
+        jsonl_path = self.results_dir / f"{name}.jsonl"
+        return jsonl_path if jsonl_path.exists() else self.results_dir / f"{name}.json"
 
     def _batch_summary(self, batch_id: str, path: Path, is_latest: bool) -> dict[str, Any]:
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            data = {}
-        rows = data.get("rows") if isinstance(data, dict) else []
-        row_count = len(rows) if isinstance(rows, list) else 0
+        data = self._summary_metadata(path)
+        if path.suffix.lower() == ".jsonl":
+            row_count = data.get("row_count")
+            if row_count in (None, ""):
+                row_count = self._count_jsonl_rows(path)
+        else:
+            row_count = data.get("row_count")
+            if row_count in (None, ""):
+                row_count = "legacy json"
         updated_at = str(data.get("updated_at") or data.get("finished_at") or "")
         status = str(data.get("status") or "")
         status_marker = f" {status}" if status else ""
@@ -324,6 +370,26 @@ class EntrySieveService:
             "status": status,
             "phase": str(data.get("phase") or ""),
         }
+
+    def _summary_metadata(self, result_path: Path) -> dict[str, Any]:
+        summary_path = result_path.with_suffix(".summary.json") if result_path.suffix.lower() == ".jsonl" else self.results_dir / f"{result_path.stem}.summary.json"
+        if summary_path.exists():
+            try:
+                data = json.loads(summary_path.read_text(encoding="utf-8"))
+            except Exception:
+                data = {}
+            if isinstance(data, dict):
+                return data
+        if result_path.suffix.lower() == ".jsonl":
+            return {"row_count": self._count_jsonl_rows(result_path), "updated_at": datetime.fromtimestamp(result_path.stat().st_mtime).astimezone().isoformat()}
+        return {"updated_at": datetime.fromtimestamp(result_path.stat().st_mtime).astimezone().isoformat()}
+
+    @staticmethod
+    def _count_jsonl_rows(path: Path) -> int:
+        if not path.exists():
+            return 0
+        with path.open("r", encoding="utf-8") as handle:
+            return sum(1 for line in handle if line.strip())
 
     def _validate(self, settings: EntrySieveSettings) -> None:
         if not settings.training_windows:

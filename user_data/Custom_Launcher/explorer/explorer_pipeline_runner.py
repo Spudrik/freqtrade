@@ -36,7 +36,7 @@ from .explorer_commands import (
 from .explorer_metadata import emit_status, latest_summary, write_audit, write_latest_summary
 from .explorer_runner import DEFAULT_STATE, _json_arg, print_score_table, print_validation_table, rejected_comparison
 from .explorer_scoring import aggregate, compare, score_window
-from .explorer_support import flatten_params
+from .explorer_support import flatten_params, metric_summary
 from .explorer_targets import choose_target, resolve_params, update_usage_counts
 from .explorer_windows import compact_window, load_window_manifest, resolve_windows, window_label
 
@@ -271,7 +271,7 @@ def _backtest_snapshot(
                 "window": compact_window(window),
                 "result_file": str(result_file),
                 "params_file": str(runtime_params),
-                "metrics": metrics,
+                "metric_summary": metric_summary(metrics),
                 "score": scored_window.__dict__,
             }
         )

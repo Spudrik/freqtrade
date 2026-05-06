@@ -664,6 +664,7 @@ def parse_backtest_metrics(result_file: Path) -> dict[str, Any]:
 def metric_summary(metrics: dict[str, Any]) -> dict[str, Any]:
     keys = [
         "total_trades",
+        "trade_count",
         "profit_total",
         "profit_total_abs",
         "profit_total_pct",
@@ -672,6 +673,7 @@ def metric_summary(metrics: dict[str, Any]) -> dict[str, Any]:
         "profit_factor",
         "max_drawdown_account",
         "max_relative_drawdown",
+        "max_drawdown_abs",
         "winrate",
         "wins",
         "draws",
@@ -681,12 +683,11 @@ def metric_summary(metrics: dict[str, Any]) -> dict[str, Any]:
         "dry_run_wallet",
         "final_balance",
         "market_change",
-        "pairlist",
-        "results_per_pair",
-        "best_pair",
-        "worst_pair",
     ]
-    return {key: metrics.get(key) for key in keys if key in metrics}
+    summary = {key: metrics.get(key) for key in keys if key in metrics}
+    pair_summary = pair_robustness_summary(metrics)
+    summary.update({key: value for key, value in pair_summary.items() if value not in ("", None)})
+    return summary
 
 
 def numeric_metric(metrics: dict[str, Any], keys: tuple[str, ...]) -> float | None:

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import Literal
 
@@ -8,138 +7,82 @@ import numpy as np
 import pandas as pd
 from pandas import DataFrame, Series
 
-# TODO: Once V2 behaviour is accepted, split or remove the diagnostic/review
-# machinery so this module ends as the strategy-facing indicator only.
-# Keep diagnostics elsewhere if future trendline research needs revisiting.
+try:
+    from .pivot_foundation import build_clean_pivot_source
+except Exception:  # pragma: no cover - optional fallback for standalone notebooks
+    from pivot_foundation import build_clean_pivot_source  # type: ignore[no-redef]
 
 LineSide = Literal["resistance", "support"]
-LineMode = Literal["raw", "confirmed", "absorbed"]
 
 
 @dataclass(frozen=True)
 class TrendlineProjectionV2Config:
-    """First-pass body-pivot trendline generator.
+    """First-pass cleaned-pivot trendline generator.
 
-    This version deliberately does less than the older prototype. It creates a
-    broad raw candidate set first, applies only basic sanity trims, and extracts
-    optional fuzzy zones / convergence hotspots before any heavy merge/refit
-    logic can delete useful evidence.
+    This version keeps the strategy-facing path fixed: generate cleaned pivot
+    pairs, remove invalid p1->p2 spans, remove extreme angles/spans, join
+    endpoint continuations, delete contained duplicate lines, absorb nearby
+    weaker lines into stronger lines, then export the strongest support and
+    resistance slots.
 
     Tunable first-pass levers:
     - ``pivot_strength``: confirmed body pivot strength. A pivot is emitted only
       after this many candles have confirmed it.
-    - ``candidate_pivot_count``: rolling strategy-facing candidate depth. The
-      diagnostic helper can still inspect all pivots in the supplied window.
+    - ``pivot_method``: ``body`` is the default because strength-2 body pivots
+      preserve enough local turning points for human-style trendline discovery.
+      ``atr_zigzag`` remains available when a sparse swing-only source is
+      explicitly wanted.
+    - ``zigzag_atr_mult``: ATR reversal size for the primary pivot source.
+    - ``candidate_pivot_count``: retained for compatibility with older callers.
+      The current fixed sequence scans the supplied dataframe window.
     - ``max_slope_pct_per_bar``: removes extreme angle lines, normalized by
       price so the same rule can work across coins/timeframes.
     - ``min_anchor_bars``: removes pivot pairs that are too close together.
     - ``max_anchor_bars``: removes seed lines whose p1->p2 span is too long to
       be a clean initial trendline definition.
     - ``max_projection_bars``: caps each line after its second anchor.
-    - ``channel_*``: optional channel detector settings. Channels pair a real
-      resistance line with a real support line and score both parallel ranges
-      and converging wedge-like ranges. Channel source lines can use weaker
-      local pivots than standalone trendlines because ranges often form from
-      smaller repeated touches.
-      Active channel outputs deliberately prefer current usable structures:
-      stale channels are suppressed after repeated body exits and duplicate
-      channels must agree on midpoint, width, and slope before both survive.
-    - ``density_proximity_pct`` / ``density_min_lines``: define same-side fuzzy
-      support/resistance bands.
-    - ``hotspot_proximity_pct`` / ``hotspot_min_lines``: define all-line
-      convergence hotspots.
-    - ``confirmation_pivot_strength``: weaker local pivots used only to confirm
-      a seed line. Seed anchors remain the stronger ``pivot_strength`` pivots.
-    - ``confirmation_tolerance_pct`` / ``confirmation_atr_mult``: how close a
-      later real pivot must be to the original p1->p2 seed line to confirm it.
-    - ``absorb_touch_tolerance_pct`` / ``absorb_angle_tolerance_pct``: optional
-      evidence-gathering mode. Nearby similar lines can add score/width, but
-      they cannot rotate the seed geometry away from real pivots.
+    - ``max_active_line_distance_*``: suppresses projected lines once price has
+      moved too far away for the line to be useful on the active timeframe.
+    - ``duplicate_*``: same-side lines with similar slope and a latest pivot
+      close to the stronger line are treated as one structure. The merge gate
+      deliberately uses the most recent pivot, not the line origin, so old
+      detail is not collapsed just because two lines started near each other.
+      Absorbed pivots can refit the surviving line, but only while the refit
+      remains anchored to real pivots and all absorbed pivots stay close to the
+      resulting straight line.
     - ``anchor_break_*``: nuanced p1->p2 body-break handling. Minor body breaks
       near either anchor, or short/shallow interior breaks, can be allowed so
       valid human-looking lines are not deleted by pivot granularity.
-    - ``max_raw_lines_plotted``: plotting safety only; it is not an indicator
-      filter.
 
     Strategy-facing outputs:
     - ``*_resistance_line_rankN`` / ``*_support_line_rankN``: compact ranked
-      local trendline slots. The default is 10 resistance + 10 support slots.
-      If more than those are simultaneously useful, the filtering/ranking is
-      probably not finished.
-    - ``*_confirmed_resistance_line_rankN`` /
-      ``*_confirmed_support_line_rankN``: seed geometry that has at least one
-      later real-pivot confirmation.
-    - ``*_absorbed_resistance_line_rankN`` /
-      ``*_absorbed_support_line_rankN``: confirmed seed geometry with nearby
-      same-side evidence absorbed into score/width. Geometry remains anchored
-      to the original seed line.
-    - ``*_local_channel_upper_rankN`` / ``*_local_channel_lower_rankN``:
-      optional paired support/resistance structures from weaker local pivots.
-      These are intended as active channel evidence.
-    - ``*_fuzzy_resistance_price_rankN`` / ``*_fuzzy_support_price_rankN``:
-      same-side dense line zones. These are extra evidence, not core
-      trendlines.
-    - ``*_hotspot_price_rankN``: places where many support/resistance candidates
-      converge around the same candle/price area.
+      local trendline slots. Channels and higher-level patterns are intentionally
+      split into separate consumers of these columns.
     """
 
     output_prefix: str = "tlv2"
-    pivot_strength: int = 5
-    confirmation_pivot_strength: int = 3
+    pivot_strength: int = 2
+    pivot_method: Literal["body", "atr_zigzag"] = "body"
+    zigzag_atr_mult: float = 1.75
+    pivot_score_touch_atr_mult: float = 0.30
+    pivot_score_touch_pct: float = 0.0015
     candidate_pivot_count: int = 36
-    raw_line_output_count: int = 10
-    confirmed_line_output_count: int = 10
-    absorbed_line_output_count: int = 10
-    channel_output_count: int = 3
-    emit_confirmed_lines: bool = False
-    emit_absorbed_lines: bool = False
-    emit_channel_lines: bool = False
-    emit_fuzzy_zones: bool = False
-    emit_hotspots: bool = False
-    fuzzy_zone_count: int = 2
-    hotspot_count: int = 2
+    raw_line_output_count: int = 3
 
     min_anchor_bars: int = 10
     max_anchor_bars: int = 50
     min_pivot_prominence_atr: float = 0.35
-    min_confirmation_pivot_prominence_atr: float = 0.18
-    max_slope_pct_per_bar: float = 0.012
+    max_slope_pct_per_bar: float = 0.004
     max_projection_bars: int = 50
+    max_active_line_distance_pct: float = 0.08
+    max_active_line_distance_atr_mult: float = 6.0
 
-    channel_source_line_count: int = 10
-    channel_candidate_pool_size: int = 320
-    channel_min_pivot_prominence_atr: float = 0.12
-    channel_min_anchor_bars: int = 6
-    channel_max_anchor_bars: int = 120
-    channel_max_projection_bars: int = 180
-    channel_min_overlap_bars: int = 10
-    channel_slope_tolerance_pct: float = 0.45
-    channel_parallel_width_change_pct: float = 0.35
-    channel_min_convergence_pct: float = 0.12
-    channel_min_width_pct: float = 0.004
-    channel_max_width_pct: float = 0.24
-    channel_preferred_width_pct: float = 0.045
-    channel_min_containment_ratio: float = 0.48
-    channel_touch_tolerance_pct: float = 0.0050
-    channel_touch_atr_mult: float = 0.55
-    channel_min_pivot_touches: int = 4
-    channel_min_rail_touches: int = 1
-    channel_min_recent_rail_touches: int = 1
-    channel_recent_touch_fraction: float = 0.45
-    channel_min_position_coverage: float = 0.14
-    channel_duplicate_overlap_pct: float = 0.60
-    channel_duplicate_mid_width_mult: float = 0.90
-    channel_duplicate_width_tolerance_pct: float = 0.70
-    channel_duplicate_slope_tolerance_pct: float = 0.32
-    channel_breakout_grace_bars: int = 3
-
-    confirmation_tolerance_pct: float = 0.0040
-    confirmation_atr_mult: float = 0.35
-    confirmation_max_bars: int = 80
-    confirmation_min_pivots: int = 3
     absorb_touch_tolerance_pct: float = 0.0045
     absorb_angle_tolerance_pct: float = 0.18
     absorb_width_scale: float = 0.30
+    duplicate_line_proximity_pct: float = 0.0060
+    duplicate_angle_tolerance_pct: float = 0.20
+    duplicate_min_overlap_bars: int = 8
     anchor_break_edge_bars: int = 3
     anchor_break_max_run: int = 2
     anchor_break_max_pct: float = 0.0035
@@ -148,37 +91,11 @@ class TrendlineProjectionV2Config:
     projection_break_tolerance_pct: float = 0.0015
     projection_break_atr_mult: float = 0.25
 
-    density_proximity_pct: float = 0.0075
-    density_min_lines: int = 8
-    hotspot_proximity_pct: float = 0.0050
-    hotspot_min_lines: int = 10
     join_angle_tolerance_pct: float = 0.15
     join_midpoint_tolerance_pct: float = 0.012
     max_joined_pivots: int = 6
     shared_pivot_merge_min: int = 2
-    nearby_merge_proximity_pcts: tuple[float, ...] = (0.01, 0.02, 0.03)
-    max_raw_lines_plotted: int = 180
-
-    plot_break_on_line_change_pct: float = 0.035
-
-
-@dataclass(frozen=True)
-class TrendlineProjectionV2Diagnostic:
-    """Diagnostic-only payload for visual review scripts."""
-
-    frame: DataFrame
-    raw_candidates: DataFrame
-    channel_source_candidates: DataFrame
-    raw_channel_candidates: DataFrame
-    channel_candidates: DataFrame
-    confirmed_candidates: DataFrame
-    absorbed_candidates: DataFrame
-    joined_candidates: DataFrame
-    shared_pivot_merged_candidates: DataFrame
-    nearby_merged_candidates: dict[float, DataFrame]
-    fuzzy_zones: DataFrame
-    hotspots: DataFrame
-    counts: dict[str, int]
+    nearby_merge_proximity_pct: float = 0.0025
 
 
 def add_trendline_projection_v2(
@@ -186,13 +103,7 @@ def add_trendline_projection_v2(
     config: TrendlineProjectionV2Config | None = None,
     **overrides: object,
 ) -> DataFrame:
-    """Append first-pass v2 trendline evidence columns.
-
-    The output intentionally keeps raw trimmed lines, fuzzy zones, and hotspots
-    separate. Strategies can later decide whether any of these concepts are
-    useful, but this module does not create entries, exits, stake, or risk
-    decisions.
-    """
+    """Append first-pass v2 trendline evidence columns."""
 
     cfg = _resolve_config(config, overrides)
     _validate_config(cfg)
@@ -200,42 +111,6 @@ def add_trendline_projection_v2(
 
     frame = dataframe.copy()
     base = _base_inputs(frame, cfg)
-    resistance = _rolling_candidate_pack(base, "resistance", cfg, mode="raw")
-    support = _rolling_candidate_pack(base, "support", cfg, mode="raw")
-    confirmed_resistance = _rolling_candidate_pack(base, "resistance", cfg, mode="confirmed") if cfg.emit_confirmed_lines else None
-    confirmed_support = _rolling_candidate_pack(base, "support", cfg, mode="confirmed") if cfg.emit_confirmed_lines else None
-    absorbed_resistance = _rolling_candidate_pack(base, "resistance", cfg, mode="absorbed") if cfg.emit_absorbed_lines else None
-    absorbed_support = _rolling_candidate_pack(base, "support", cfg, mode="absorbed") if cfg.emit_absorbed_lines else None
-    channel_source_resistance = (
-        _rolling_candidate_pack(
-            base,
-            "resistance",
-            cfg,
-            mode="raw",
-            min_anchor_bars=int(cfg.channel_min_anchor_bars),
-            max_anchor_bars=int(cfg.channel_max_anchor_bars),
-            max_projection_bars=int(cfg.channel_max_projection_bars),
-            pivot_family="confirmation",
-            min_pivot_prominence_atr=float(cfg.channel_min_pivot_prominence_atr),
-        )
-        if cfg.emit_channel_lines
-        else _empty_pack()
-    )
-    channel_source_support = (
-        _rolling_candidate_pack(
-            base,
-            "support",
-            cfg,
-            mode="raw",
-            min_anchor_bars=int(cfg.channel_min_anchor_bars),
-            max_anchor_bars=int(cfg.channel_max_anchor_bars),
-            max_projection_bars=int(cfg.channel_max_projection_bars),
-            pivot_family="confirmation",
-            min_pivot_prominence_atr=float(cfg.channel_min_pivot_prominence_atr),
-        )
-        if cfg.emit_channel_lines
-        else _empty_pack()
-    )
     p = cfg.output_prefix
 
     new_cols: dict[str, Series] = {
@@ -244,245 +119,37 @@ def add_trendline_projection_v2(
         f"{p}_body_low": base["body_low"],
         f"{p}_pivot_high": base["pivot_high"],
         f"{p}_pivot_low": base["pivot_low"],
+        f"{p}_pivot_high_index": base["pivot_high_index"],
+        f"{p}_pivot_low_index": base["pivot_low_index"],
+        f"{p}_pivot_high_available_index": base["pivot_high_available_index"],
+        f"{p}_pivot_low_available_index": base["pivot_low_available_index"],
         f"{p}_pivot_high_prominence": base["pivot_high_prominence"],
         f"{p}_pivot_low_prominence": base["pivot_low_prominence"],
-        f"{p}_confirm_pivot_high": base["confirm_pivot_high"],
-        f"{p}_confirm_pivot_low": base["confirm_pivot_low"],
-        f"{p}_confirm_pivot_high_prominence": base["confirm_pivot_high_prominence"],
-        f"{p}_confirm_pivot_low_prominence": base["confirm_pivot_low_prominence"],
+        f"{p}_pivot_high_score": base["pivot_high_score"],
+        f"{p}_pivot_low_score": base["pivot_low_score"],
     }
-    raw_resistance_cols = _rank_raw_candidate_columns(resistance, "resistance", cfg, slots=int(cfg.raw_line_output_count), index=frame.index)
-    raw_support_cols = _rank_raw_candidate_columns(support, "support", cfg, slots=int(cfg.raw_line_output_count), index=frame.index)
+    sequence_candidates = _build_sequence_candidate_table(base, cfg)
+    raw_resistance_cols = _rank_sequence_candidate_columns(
+        sequence_candidates,
+        base,
+        "resistance",
+        "resistance",
+        cfg,
+        slots=int(cfg.raw_line_output_count),
+    )
+    raw_support_cols = _rank_sequence_candidate_columns(
+        sequence_candidates,
+        base,
+        "support",
+        "support",
+        cfg,
+        slots=int(cfg.raw_line_output_count),
+    )
     new_cols.update(raw_resistance_cols)
     new_cols.update(raw_support_cols)
-    if cfg.emit_channel_lines:
-        channel_source_resistance_cols = _rank_raw_candidate_columns(
-            channel_source_resistance,
-            "channel_source_resistance",
-            cfg,
-            slots=int(cfg.channel_source_line_count),
-            index=frame.index,
-        )
-        channel_source_support_cols = _rank_raw_candidate_columns(
-            channel_source_support,
-            "channel_source_support",
-            cfg,
-            slots=int(cfg.channel_source_line_count),
-            index=frame.index,
-        )
-        local_channel_cols = _channel_columns_from_ranked(
-            {**channel_source_resistance_cols, **channel_source_support_cols},
-            base,
-            cfg,
-            source_label="channel_source",
-            output_label="local_channel",
-        )
-        new_cols.update(local_channel_cols)
-    if cfg.emit_confirmed_lines and confirmed_resistance is not None and confirmed_support is not None:
-        new_cols.update(
-            _rank_raw_candidate_columns(
-                confirmed_resistance,
-                "confirmed_resistance",
-                cfg,
-                slots=int(cfg.confirmed_line_output_count),
-                index=frame.index,
-            )
-        )
-        new_cols.update(
-            _rank_raw_candidate_columns(
-                confirmed_support,
-                "confirmed_support",
-                cfg,
-                slots=int(cfg.confirmed_line_output_count),
-                index=frame.index,
-            )
-        )
-    if cfg.emit_absorbed_lines and absorbed_resistance is not None and absorbed_support is not None:
-        new_cols.update(
-            _rank_raw_candidate_columns(
-                absorbed_resistance,
-                "absorbed_resistance",
-                cfg,
-                slots=int(cfg.absorbed_line_output_count),
-                index=frame.index,
-            )
-        )
-        new_cols.update(
-            _rank_raw_candidate_columns(
-                absorbed_support,
-                "absorbed_support",
-                cfg,
-                slots=int(cfg.absorbed_line_output_count),
-                index=frame.index,
-            )
-        )
-    if cfg.emit_fuzzy_zones:
-        new_cols.update(
-            _cluster_columns(
-                resistance,
-                label="fuzzy_resistance",
-                close=base["close"],
-                proximity_pct=float(cfg.density_proximity_pct),
-                min_lines=int(cfg.density_min_lines),
-                slots=int(cfg.fuzzy_zone_count),
-                prefix=p,
-            )
-        )
-        new_cols.update(
-            _cluster_columns(
-                support,
-                label="fuzzy_support",
-                close=base["close"],
-                proximity_pct=float(cfg.density_proximity_pct),
-                min_lines=int(cfg.density_min_lines),
-                slots=int(cfg.fuzzy_zone_count),
-                prefix=p,
-            )
-        )
-    if cfg.emit_hotspots:
-        new_cols.update(
-            _hotspot_columns(
-                resistance,
-                support,
-                close=base["close"],
-                proximity_pct=float(cfg.hotspot_proximity_pct),
-                min_lines=int(cfg.hotspot_min_lines),
-                slots=int(cfg.hotspot_count),
-                prefix=p,
-            )
-        )
-
     existing = [col for col in frame.columns if str(col).startswith(f"{p}_")]
     clean = frame.drop(columns=existing).copy() if existing else frame.copy()
     return pd.concat([clean, pd.DataFrame(new_cols, index=frame.index)], axis=1)
-
-
-def build_trendline_projection_v2_diagnostic(
-    dataframe: DataFrame,
-    config: TrendlineProjectionV2Config | None = None,
-    **overrides: object,
-) -> TrendlineProjectionV2Diagnostic:
-    """Build a static first-pass diagnostic view over the supplied dataframe.
-
-    This helper is for visual review only. It draws all eligible pivot-pair
-    candidates inside the provided window, then derives fuzzy zones and hotspots
-    from that broad trimmed set. Strategy code should use
-    ``add_trendline_projection_v2`` instead.
-    """
-
-    cfg = _resolve_config(config, overrides)
-    _validate_config(cfg)
-    _validate_dataframe(dataframe)
-
-    frame = dataframe.copy()
-    base = _base_inputs(frame, cfg)
-    candidates = pd.concat(
-        [
-            _diagnostic_candidates(base, "resistance", cfg),
-            _diagnostic_candidates(base, "support", cfg),
-        ],
-        ignore_index=True,
-    )
-    channel_source_candidates = pd.concat(
-        [
-            _diagnostic_candidates(
-                base,
-                "resistance",
-                cfg,
-                min_anchor_bars=int(cfg.channel_min_anchor_bars),
-                max_anchor_bars=int(cfg.channel_max_anchor_bars),
-                max_projection_bars=int(cfg.channel_max_projection_bars),
-                pivot_family="confirmation",
-                min_pivot_prominence_atr=float(cfg.channel_min_pivot_prominence_atr),
-                line_kind="channel_source",
-            ),
-            _diagnostic_candidates(
-                base,
-                "support",
-                cfg,
-                min_anchor_bars=int(cfg.channel_min_anchor_bars),
-                max_anchor_bars=int(cfg.channel_max_anchor_bars),
-                max_projection_bars=int(cfg.channel_max_projection_bars),
-                pivot_family="confirmation",
-                min_pivot_prominence_atr=float(cfg.channel_min_pivot_prominence_atr),
-                line_kind="channel_source",
-            ),
-        ],
-        ignore_index=True,
-    )
-    raw_channel_candidates = _diagnostic_channel_candidates(candidates, base, cfg, line_kind="raw_channel")
-    channel_candidates = _diagnostic_channel_candidates(channel_source_candidates, base, cfg, line_kind="channel")
-    confirmed_candidates = _confirm_candidate_table(candidates, base, cfg)
-    absorbed_candidates = _absorb_confirmed_keep_seed_table(confirmed_candidates, base, cfg)
-    joined_candidates = confirmed_candidates
-    shared_pivot_merged_candidates = absorbed_candidates
-    nearby_merged_candidates = {float(cfg.absorb_touch_tolerance_pct): absorbed_candidates}
-    fuzzy_res = _diagnostic_cluster_table(
-        frame=frame,
-        candidates=candidates[candidates["side"].eq("resistance")],
-        label="fuzzy_resistance",
-        proximity_pct=float(cfg.density_proximity_pct),
-        min_lines=int(cfg.density_min_lines),
-        slots=int(cfg.fuzzy_zone_count),
-    )
-    fuzzy_sup = _diagnostic_cluster_table(
-        frame=frame,
-        candidates=candidates[candidates["side"].eq("support")],
-        label="fuzzy_support",
-        proximity_pct=float(cfg.density_proximity_pct),
-        min_lines=int(cfg.density_min_lines),
-        slots=int(cfg.fuzzy_zone_count),
-    )
-    fuzzy = pd.concat([fuzzy_res, fuzzy_sup], axis=1)
-    hotspots = _diagnostic_hotspot_table(
-        frame=frame,
-        candidates=candidates,
-        proximity_pct=float(cfg.hotspot_proximity_pct),
-        min_lines=int(cfg.hotspot_min_lines),
-        slots=int(cfg.hotspot_count),
-    )
-    counts = {
-        "pivot_high": int(base["pivot_high"].notna().sum()),
-        "pivot_low": int(base["pivot_low"].notna().sum()),
-        "anchor_clear_raw_resistance": int(candidates["side"].eq("resistance").sum()),
-        "anchor_clear_raw_support": int(candidates["side"].eq("support").sum()),
-        "raw_resistance": int(candidates["side"].eq("resistance").sum()),
-        "raw_support": int(candidates["side"].eq("support").sum()),
-        "channel_source_resistance": int(channel_source_candidates["side"].eq("resistance").sum()) if not channel_source_candidates.empty else 0,
-        "channel_source_support": int(channel_source_candidates["side"].eq("support").sum()) if not channel_source_candidates.empty else 0,
-        "raw_channels": int(len(raw_channel_candidates)),
-        "channels": int(len(channel_candidates)),
-        "confirmed_resistance": int(confirmed_candidates["side"].eq("resistance").sum()) if not confirmed_candidates.empty else 0,
-        "confirmed_support": int(confirmed_candidates["side"].eq("support").sum()) if not confirmed_candidates.empty else 0,
-        "absorbed_resistance": int(absorbed_candidates["side"].eq("resistance").sum()) if not absorbed_candidates.empty else 0,
-        "absorbed_support": int(absorbed_candidates["side"].eq("support").sum()) if not absorbed_candidates.empty else 0,
-        "fuzzy_resistance_points": int(fuzzy_res.filter(like="_price_rank0").notna().sum().sum()),
-        "fuzzy_support_points": int(fuzzy_sup.filter(like="_price_rank0").notna().sum().sum()),
-        "hotspot_points": int(hotspots.filter(like="_price_rank0").notna().sum().sum()),
-    }
-    for proximity, nearby_candidates in nearby_merged_candidates.items():
-        label = f"nearby_merged_{int(round(proximity * 100))}pct"
-        counts[f"{label}_resistance"] = (
-            int(nearby_candidates["side"].eq("resistance").sum()) if not nearby_candidates.empty else 0
-        )
-        counts[f"{label}_support"] = int(nearby_candidates["side"].eq("support").sum()) if not nearby_candidates.empty else 0
-    base_columns = {key: value for key, value in base.items() if isinstance(value, Series) and key not in frame.columns}
-    enriched = pd.concat([frame, pd.DataFrame(base_columns, index=frame.index)], axis=1)
-    return TrendlineProjectionV2Diagnostic(
-        frame=enriched,
-        raw_candidates=candidates,
-        channel_source_candidates=channel_source_candidates,
-        raw_channel_candidates=raw_channel_candidates,
-        channel_candidates=channel_candidates,
-        confirmed_candidates=confirmed_candidates,
-        absorbed_candidates=absorbed_candidates,
-        joined_candidates=joined_candidates,
-        shared_pivot_merged_candidates=shared_pivot_merged_candidates,
-        nearby_merged_candidates=nearby_merged_candidates,
-        fuzzy_zones=fuzzy,
-        hotspots=hotspots,
-        counts=counts,
-    )
 
 
 def _base_inputs(frame: DataFrame, cfg: TrendlineProjectionV2Config) -> dict[str, Series]:
@@ -494,22 +161,16 @@ def _base_inputs(frame: DataFrame, cfg: TrendlineProjectionV2Config) -> dict[str
     body_low = pd.concat([open_, close], axis=1).min(axis=1)
     atr = _atr(frame, 14)
     bar_index = pd.Series(np.arange(len(frame), dtype="float64"), index=frame.index)
-    pivots = _confirmed_body_pivots(
+    pivots = build_clean_pivot_source(
         body_high=body_high,
         body_low=body_low,
         atr=atr,
         bar_index=bar_index,
         strength=int(cfg.pivot_strength),
-    )
-    confirmation_pivots = _prefixed_pivot_keys(
-        _confirmed_body_pivots(
-            body_high=body_high,
-            body_low=body_low,
-            atr=atr,
-            bar_index=bar_index,
-            strength=int(cfg.confirmation_pivot_strength),
-        ),
-        "confirm_",
+        method=cfg.pivot_method,
+        zigzag_atr_mult=float(cfg.zigzag_atr_mult),
+        touch_atr_mult=float(cfg.pivot_score_touch_atr_mult),
+        touch_pct=float(cfg.pivot_score_touch_pct),
     )
     return {
         "open": open_,
@@ -521,328 +182,168 @@ def _base_inputs(frame: DataFrame, cfg: TrendlineProjectionV2Config) -> dict[str
         "atr": atr,
         "bar_index": bar_index,
         **pivots,
-        **confirmation_pivots,
     }
 
 
-def _prefixed_pivot_keys(values: dict[str, Series], prefix: str) -> dict[str, Series]:
-    return {f"{prefix}{key}": value for key, value in values.items()}
+def _build_sequence_candidate_table(base: dict[str, Series], cfg: TrendlineProjectionV2Config) -> DataFrame:
+    """Run the fixed line sequence requested for strategy-facing output."""
+
+    raw_candidates = pd.concat(
+        [
+            _candidate_lines(base, "resistance", cfg),
+            _candidate_lines(base, "support", cfg),
+        ],
+        ignore_index=True,
+    )
+    if raw_candidates.empty:
+        return raw_candidates
+
+    joined = _join_endpoint_continuations(raw_candidates, cfg)
+    subset_clean = _absorb_shared_pivot_smaller_lines(joined, cfg)
+    merged = _absorb_nearby_weaker_lines(subset_clean, float(cfg.nearby_merge_proximity_pct), cfg)
+    return merged.reset_index(drop=True)
 
 
-def _confirmed_body_pivots(
-    *,
-    body_high: Series,
-    body_low: Series,
-    atr: Series,
-    bar_index: Series,
-    strength: int,
-) -> dict[str, Series]:
-    window = strength * 2 + 1
-    high_window_max = body_high.rolling(window, min_periods=window).max()
-    high_window_min = body_high.rolling(window, min_periods=window).min()
-    low_window_max = body_low.rolling(window, min_periods=window).max()
-    low_window_min = body_low.rolling(window, min_periods=window).min()
-
-    high_candidate = body_high.shift(strength)
-    low_candidate = body_low.shift(strength)
-    high_atr = atr.shift(strength).replace(0.0, np.nan)
-    low_atr = atr.shift(strength).replace(0.0, np.nan)
-    high_prominence = ((high_candidate - high_window_min) / high_atr).replace([np.inf, -np.inf], np.nan)
-    low_prominence = ((low_window_max - low_candidate) / low_atr).replace([np.inf, -np.inf], np.nan)
-    high_is_pivot = high_candidate.notna() & high_candidate.ge(high_window_max)
-    low_is_pivot = low_candidate.notna() & low_candidate.le(low_window_min)
-
-    return {
-        "pivot_high": high_candidate.where(high_is_pivot),
-        "pivot_low": low_candidate.where(low_is_pivot),
-        "pivot_high_index": (bar_index - float(strength)).where(high_is_pivot),
-        "pivot_low_index": (bar_index - float(strength)).where(low_is_pivot),
-        "pivot_high_prominence": high_prominence.where(high_is_pivot),
-        "pivot_low_prominence": low_prominence.where(low_is_pivot),
-    }
-
-
-def _rolling_candidate_pack(
+def _rank_sequence_candidate_columns(
+    candidates: DataFrame,
     base: dict[str, Series],
     side: LineSide,
-    cfg: TrendlineProjectionV2Config,
-    *,
-    mode: LineMode,
-    min_anchor_bars: int | None = None,
-    max_anchor_bars: int | None = None,
-    max_projection_bars: int | None = None,
-    pivot_family: Literal["primary", "confirmation"] = "primary",
-    min_pivot_prominence_atr: float | None = None,
-) -> dict[str, list[Series]]:
-    if side == "resistance":
-        event_price = base["confirm_pivot_high"] if pivot_family == "confirmation" else base["pivot_high"]
-        event_index = base["confirm_pivot_high_index"] if pivot_family == "confirmation" else base["pivot_high_index"]
-        event_prominence = (
-            base["confirm_pivot_high_prominence"] if pivot_family == "confirmation" else base["pivot_high_prominence"]
-        )
-        confirm_price = base["confirm_pivot_high"]
-        confirm_index = base["confirm_pivot_high_index"]
-        confirm_prominence = base["confirm_pivot_high_prominence"]
-    else:
-        event_price = base["confirm_pivot_low"] if pivot_family == "confirmation" else base["pivot_low"]
-        event_index = base["confirm_pivot_low_index"] if pivot_family == "confirmation" else base["pivot_low_index"]
-        event_prominence = base["confirm_pivot_low_prominence"] if pivot_family == "confirmation" else base["pivot_low_prominence"]
-        confirm_price = base["confirm_pivot_low"]
-        confirm_index = base["confirm_pivot_low_index"]
-        confirm_prominence = base["confirm_pivot_low_prominence"]
-    prominence_floor = float(cfg.min_pivot_prominence_atr if min_pivot_prominence_atr is None else min_pivot_prominence_atr)
-
-    recent = _recent_events(
-        event_price.where(event_prominence.fillna(0.0).ge(prominence_floor)),
-        event_index,
-        event_prominence,
-        base["close"].index,
-        int(cfg.candidate_pivot_count),
-    )
-    confirmation_recent = _recent_events(
-        confirm_price.where(confirm_prominence.fillna(0.0).ge(float(cfg.min_confirmation_pivot_prominence_atr))),
-        confirm_index,
-        confirm_prominence,
-        base["close"].index,
-        int(cfg.candidate_pivot_count),
-    )
-    pack = _empty_pack()
-    for newer in range(int(cfg.candidate_pivot_count) - 1):
-        for older in range(newer + 1, int(cfg.candidate_pivot_count)):
-            candidate = _rolling_candidate_from_pair(
-                base,
-                recent,
-                confirmation_recent,
-                newer,
-                older,
-                cfg,
-                mode=mode,
-                min_anchor_bars=min_anchor_bars,
-                max_anchor_bars=max_anchor_bars,
-                max_projection_bars=max_projection_bars,
-                min_pivot_prominence_atr=prominence_floor,
-            )
-            for key, value in candidate.items():
-                pack[key].append(value)
-    return pack
-
-
-def _recent_events(
-    event_price: Series,
-    event_index: Series,
-    event_prominence: Series,
-    index: pd.Index,
-    count: int,
-) -> dict[str, list[Series]]:
-    prices = event_price.dropna()
-    indexes = event_index.where(event_price.notna()).dropna()
-    prominences = event_prominence.where(event_price.notna()).dropna()
-    return {
-        "price": [prices.shift(offset).reindex(index).ffill() for offset in range(count)],
-        "index": [indexes.shift(offset).reindex(index).ffill() for offset in range(count)],
-        "prominence": [prominences.shift(offset).reindex(index).ffill() for offset in range(count)],
-    }
-
-
-def _rolling_candidate_from_pair(
-    base: dict[str, Series],
-    recent: dict[str, list[Series]],
-    confirmation_recent: dict[str, list[Series]],
-    newer: int,
-    older: int,
-    cfg: TrendlineProjectionV2Config,
-    *,
-    mode: LineMode,
-    min_anchor_bars: int | None = None,
-    max_anchor_bars: int | None = None,
-    max_projection_bars: int | None = None,
-    min_pivot_prominence_atr: float | None = None,
-) -> dict[str, Series]:
-    p_new = recent["price"][newer]
-    p_old = recent["price"][older]
-    x_new = recent["index"][newer]
-    x_old = recent["index"][older]
-    prom_new = recent["prominence"][newer]
-    prom_old = recent["prominence"][older]
-    close = base["close"]
-    bar_index = base["bar_index"]
-    anchor_min = float(cfg.min_anchor_bars if min_anchor_bars is None else min_anchor_bars)
-    anchor_cap = float(cfg.max_anchor_bars if max_anchor_bars is None else max_anchor_bars)
-    projection_cap = float(cfg.max_projection_bars if max_projection_bars is None else max_projection_bars)
-    prominence_floor = float(cfg.min_pivot_prominence_atr if min_pivot_prominence_atr is None else min_pivot_prominence_atr)
-
-    span = x_new - x_old
-    prominence = pd.concat([prom_new, prom_old], axis=1).mean(axis=1)
-    valid_anchor = (
-        p_new.notna()
-        & p_old.notna()
-        & x_new.notna()
-        & x_old.notna()
-        & span.ge(anchor_min)
-        & span.le(anchor_cap)
-    )
-    slope = _safe_div(p_new - p_old, span).where(valid_anchor)
-    intercept = p_new - slope * x_new
-    line = (intercept + slope * bar_index).clip(lower=0.0)
-    slope_pct = (slope.abs() / close.abs().replace(0.0, np.nan)).replace([np.inf, -np.inf], np.nan)
-    projection_end = x_new + projection_cap
-    pivot_count = pd.Series(2.0, index=close.index, dtype="float64")
-    absorbed_pivot_count = pivot_count.copy()
-    line_width = pd.Series(np.nan, index=close.index, dtype="float64")
-    last_confirm_index = x_new.copy()
-    if mode in {"confirmed", "absorbed"}:
-        confirmation = _rolling_line_touch_metrics(
-            base,
-            confirmation_recent,
-            x_new=x_new,
-            slope=slope,
-            intercept=intercept,
-            price_tolerance_pct=float(cfg.confirmation_tolerance_pct),
-            atr_tolerance_mult=float(cfg.confirmation_atr_mult),
-            max_confirm_bars=int(cfg.confirmation_max_bars),
-        )
-        pivot_count = pivot_count + confirmation["touch_count"]
-        absorbed_pivot_count = pivot_count.copy()
-        last_confirm_index = confirmation["last_touch_index"].where(
-            confirmation["touch_count"].gt(0.0),
-            x_new,
-        )
-        line_width = confirmation["line_width"] * float(cfg.absorb_width_scale)
-        projection_end = last_confirm_index + projection_cap
-        if mode == "absorbed":
-            absorbed = _rolling_line_touch_metrics(
-                base,
-                confirmation_recent,
-                x_new=x_new,
-                slope=slope,
-                intercept=intercept,
-                price_tolerance_pct=float(cfg.absorb_touch_tolerance_pct),
-                atr_tolerance_mult=float(cfg.confirmation_atr_mult),
-                max_confirm_bars=int(cfg.confirmation_max_bars),
-            )
-            absorbed_pivot_count = 2.0 + absorbed["touch_count"]
-            line_width = absorbed["line_width"] * float(cfg.absorb_width_scale)
-    in_segment = bar_index.ge(x_old) & bar_index.le(projection_end)
-    valid = (
-        valid_anchor
-        & prominence.fillna(0.0).ge(prominence_floor)
-        & slope_pct.le(float(cfg.max_slope_pct_per_bar))
-        & in_segment
-    ).fillna(False)
-    if mode in {"confirmed", "absorbed"}:
-        valid &= pivot_count.ge(float(cfg.confirmation_min_pivots))
-
-    span_score = _clip01(span / max(anchor_min * 8.0, 1.0))
-    slope_score = _clip01(1.0 - slope_pct / max(float(cfg.max_slope_pct_per_bar), 1e-9))
-    prom_score = _clip01(prominence / max(prominence_floor * 5.0, 1.0))
-    age_score = _clip01(1.0 - (bar_index - x_new) / max(projection_cap, 1.0))
-    confirmation_score = _clip01((pivot_count - 2.0) / 4.0)
-    absorption_score = _clip01((absorbed_pivot_count - pivot_count) / 4.0)
-    score = _clip01(
-        0.30 * span_score
-        + 0.20 * slope_score
-        + 0.22 * prom_score
-        + 0.10 * age_score
-        + 0.14 * confirmation_score
-        + 0.04 * absorption_score
-    ).where(valid)
-    line_id = (x_old * 100_000.0 + x_new).where(valid)
-    return {
-        "line": line.where(valid),
-        "score": score,
-        "slope": slope.where(valid),
-        "slope_pct": slope_pct.where(valid),
-        "anchor_old_index": x_old.where(valid),
-        "anchor_new_index": x_new.where(valid),
-        "projection_end_index": projection_end.where(valid),
-        "line_id": line_id,
-        "pivot_count": pivot_count.where(valid),
-        "absorbed_pivot_count": absorbed_pivot_count.where(valid),
-        "line_width": line_width.where(valid),
-        "last_confirm_index": last_confirm_index.where(valid),
-    }
-
-
-def _rolling_line_touch_metrics(
-    base: dict[str, Series],
-    confirmation_recent: dict[str, list[Series]],
-    *,
-    x_new: Series,
-    slope: Series,
-    intercept: Series,
-    price_tolerance_pct: float,
-    atr_tolerance_mult: float,
-    max_confirm_bars: int,
-) -> dict[str, Series]:
-    index = base["close"].index
-    touch_count = pd.Series(0.0, index=index, dtype="float64")
-    last_touch_index = x_new.copy()
-    line_width = pd.Series(0.0, index=index, dtype="float64")
-    atr_tolerance = base["atr"].fillna(0.0) * float(atr_tolerance_mult)
-    for pivot_price, pivot_index in zip(confirmation_recent["price"], confirmation_recent["index"], strict=False):
-        line_at_pivot = intercept + slope * pivot_index
-        error = (pivot_price - line_at_pivot).abs()
-        tolerance = pd.concat(
-            [
-                pivot_price.abs() * float(price_tolerance_pct),
-                atr_tolerance,
-            ],
-            axis=1,
-        ).max(axis=1)
-        touches = (
-            pivot_price.notna()
-            & pivot_index.notna()
-            & pivot_index.gt(x_new)
-            & pivot_index.le(x_new + float(max_confirm_bars))
-            & error.le(tolerance)
-        ).fillna(False)
-        touch_count = touch_count + touches.astype("float64")
-        last_touch_index = last_touch_index.where(~touches | pivot_index.le(last_touch_index), pivot_index)
-        line_width = pd.concat([line_width, error.where(touches).fillna(0.0)], axis=1).max(axis=1)
-    return {
-        "touch_count": touch_count,
-        "last_touch_index": last_touch_index,
-        "line_width": line_width.replace(0.0, np.nan),
-    }
-
-
-def _rank_raw_candidate_columns(
-    pack: dict[str, list[Series]],
-    side: str,
+    output_side: str,
     cfg: TrendlineProjectionV2Config,
     *,
     slots: int,
-    index: pd.Index | None = None,
 ) -> dict[str, Series]:
-    p = cfg.output_prefix
-    index = index if index is not None else (pack["line"][0].index if pack["line"] else pd.RangeIndex(0))
-    out: dict[str, Series] = {}
-    if not pack["line"]:
-        for rank in range(slots):
-            out.update(_empty_line_columns(index, p, side, rank))
-        return out
+    index = base["close"].index
+    rows = len(index)
+    if rows == 0 or candidates.empty:
+        return _empty_ranked_line_columns(index, cfg.output_prefix, output_side, int(slots))
 
-    score_values = _series_matrix(pack["score"])
-    score_values = np.where(np.isfinite(score_values), score_values, -np.inf)
-    metric_values = {key: _series_matrix(pack[key]) for key in pack if key != "score"}
-    remaining = score_values.copy()
-    rows = np.arange(len(index))
+    side_candidates = candidates[candidates["side"].eq(side)].copy()
+    if side_candidates.empty:
+        return _empty_ranked_line_columns(index, cfg.output_prefix, output_side, int(slots))
+
+    side_candidates = side_candidates.sort_values(
+        ["absorbed_pivot_count", "pivot_count", "score", "span"],
+        ascending=[False, False, False, False],
+    ).reset_index(drop=True)
+    top = _empty_top_line_arrays(rows, int(slots))
+    x_values = np.arange(rows, dtype="float64")
+    close_values = base["close"].to_numpy(dtype="float64")
+    atr_values = base["atr"].to_numpy(dtype="float64")
+    for candidate_index, candidate in side_candidates.iterrows():
+        live_start = int(np.ceil(float(candidate.get("live_start", candidate["x_new"]))))
+        end = int(np.floor(float(candidate["projection_end"])))
+        start = max(live_start, 0)
+        end = min(end, rows - 1)
+        if end < start:
+            continue
+        xs = x_values[start : end + 1]
+        line = float(candidate["intercept"]) + float(candidate["slope"]) * xs
+        score = np.full(rows, -np.inf, dtype="float64")
+        close_segment = close_values[start : end + 1]
+        atr_segment = atr_values[start : end + 1]
+        active_distance = np.maximum(
+            np.abs(close_segment) * float(cfg.max_active_line_distance_pct),
+            atr_segment * float(cfg.max_active_line_distance_atr_mult),
+        )
+        valid_line = np.isfinite(line) & np.isfinite(active_distance) & (np.abs(line - close_segment) <= active_distance)
+        if not np.any(valid_line):
+            continue
+        segment = slice(start, end + 1)
+        score[segment] = float(candidate["score"])
+        score[segment] = np.where(valid_line, score[segment], -np.inf)
+
+        line_values = np.full(rows, np.nan, dtype="float64")
+        line_values[segment] = np.where(valid_line, line, np.nan)
+        line_id = float(candidate_index + 1)
+        metrics = {
+            "line": line_values,
+            "slope": _constant_metric(rows, float(candidate["slope"]), start, end),
+            "slope_pct": _constant_metric(rows, float(candidate["slope_pct"]), start, end),
+            "anchor_old_index": _constant_metric(rows, float(candidate["x_old"]), start, end),
+            "anchor_new_index": _constant_metric(rows, float(candidate["x_new"]), start, end),
+            "projection_end_index": _constant_metric(rows, float(candidate["projection_end"]), start, end),
+            "line_id": _constant_metric(rows, line_id, start, end),
+            "pivot_count": _constant_metric(rows, float(candidate.get("pivot_count", 2.0)), start, end),
+            "absorbed_pivot_count": _constant_metric(
+                rows,
+                float(candidate.get("absorbed_pivot_count", candidate.get("pivot_count", 2.0))),
+                start,
+                end,
+            ),
+            "line_width": _constant_metric(rows, float(candidate.get("half_width", 0.0)), start, end),
+            "last_confirm_index": _constant_metric(
+                rows,
+                float(candidate.get("x_end", candidate["x_new"])),
+                start,
+                end,
+            ),
+        }
+        _insert_top_line_candidate(top, score, metrics)
+
+    return _top_line_arrays_to_columns(top, index, cfg.output_prefix, output_side)
+
+
+def _constant_metric(rows: int, value: float, start: int, end: int) -> np.ndarray:
+    out = np.full(rows, np.nan, dtype="float64")
+    if np.isfinite(value) and end >= start:
+        out[start : end + 1] = value
+    return out
+
+
+def _empty_top_line_arrays(rows: int, slots: int) -> dict[str, np.ndarray]:
+    top = {
+        "score": np.full((rows, slots), -np.inf, dtype="float64"),
+        "line": np.full((rows, slots), np.nan, dtype="float64"),
+        "slope": np.full((rows, slots), np.nan, dtype="float64"),
+        "slope_pct": np.full((rows, slots), np.nan, dtype="float64"),
+        "anchor_old_index": np.full((rows, slots), np.nan, dtype="float64"),
+        "anchor_new_index": np.full((rows, slots), np.nan, dtype="float64"),
+        "projection_end_index": np.full((rows, slots), np.nan, dtype="float64"),
+        "line_id": np.full((rows, slots), np.nan, dtype="float64"),
+        "pivot_count": np.full((rows, slots), np.nan, dtype="float64"),
+        "absorbed_pivot_count": np.full((rows, slots), np.nan, dtype="float64"),
+        "line_width": np.full((rows, slots), np.nan, dtype="float64"),
+        "last_confirm_index": np.full((rows, slots), np.nan, dtype="float64"),
+    }
+    return top
+
+
+def _insert_top_line_candidate(top: dict[str, np.ndarray], score: np.ndarray, metrics: dict[str, np.ndarray]) -> None:
+    inserted = np.zeros(score.shape[0], dtype=bool)
+    slots = top["score"].shape[1]
     for rank in range(slots):
-        chosen = np.argmax(remaining, axis=1)
-        chosen_score = remaining[rows, chosen]
-        valid = np.isfinite(chosen_score) & (chosen_score > -np.inf)
-        line = _select_metric(metric_values["line"], chosen, valid)
-        line_id = _select_metric(metric_values["line_id"], chosen, valid)
-        out.update(
-            {
-                f"{p}_{side}_line_rank{rank}": pd.Series(line, index=index, dtype="float64"),
-                f"{p}_{side}_plot_rank{rank}": _plot_safe_line(
-                    pd.Series(line, index=index, dtype="float64"),
-                    pd.Series(line_id, index=index, dtype="float64"),
-                    float(cfg.plot_break_on_line_change_pct),
-                ),
-                f"{p}_{side}_score_rank{rank}": pd.Series(np.where(valid, chosen_score, np.nan), index=index, dtype="float64"),
-            }
+        mask = (~inserted) & (score > top["score"][:, rank])
+        if not np.any(mask):
+            continue
+        if rank < slots - 1:
+            for key, values in top.items():
+                values[mask, rank + 1 :] = values[mask, rank:-1]
+        top["score"][mask, rank] = score[mask]
+        for key, candidate_values in metrics.items():
+            top[key][mask, rank] = candidate_values[mask]
+        inserted[mask] = True
+        if np.all(inserted):
+            break
+
+
+def _top_line_arrays_to_columns(
+    top: dict[str, np.ndarray],
+    index: pd.Index,
+    prefix: str,
+    side: str,
+) -> dict[str, Series]:
+    slots = top["score"].shape[1]
+    out: dict[str, Series] = {}
+    for rank in range(slots):
+        valid = np.isfinite(top["score"][:, rank]) & (top["score"][:, rank] > -np.inf)
+        line = np.where(valid, top["line"][:, rank], np.nan)
+        line_series = pd.Series(line, index=index, dtype="float64")
+        out[f"{prefix}_{side}_line_rank{rank}"] = line_series
+        out[f"{prefix}_{side}_score_rank{rank}"] = pd.Series(
+            np.where(valid, top["score"][:, rank], np.nan),
+            index=index,
+            dtype="float64",
         )
         for metric in (
             "slope",
@@ -856,12 +357,18 @@ def _rank_raw_candidate_columns(
             "line_width",
             "last_confirm_index",
         ):
-            out[f"{p}_{side}_{metric}_rank{rank}"] = pd.Series(
-                _select_metric(metric_values[metric], chosen, valid),
+            out[f"{prefix}_{side}_{metric}_rank{rank}"] = pd.Series(
+                np.where(valid, top[metric][:, rank], np.nan),
                 index=index,
                 dtype="float64",
             )
-        remaining[rows, chosen] = -np.inf
+    return out
+
+
+def _empty_ranked_line_columns(index: pd.Index, prefix: str, side: str, slots: int) -> dict[str, Series]:
+    out: dict[str, Series] = {}
+    for rank in range(slots):
+        out.update(_empty_line_columns(index, prefix, side, rank))
     return out
 
 
@@ -869,7 +376,6 @@ def _empty_line_columns(index: pd.Index, prefix: str, side: str, rank: int) -> d
     nan = pd.Series(np.nan, index=index, dtype="float64")
     return {
         f"{prefix}_{side}_line_rank{rank}": nan,
-        f"{prefix}_{side}_plot_rank{rank}": nan,
         f"{prefix}_{side}_score_rank{rank}": nan,
         f"{prefix}_{side}_slope_rank{rank}": nan,
         f"{prefix}_{side}_slope_pct_rank{rank}": nan,
@@ -884,541 +390,7 @@ def _empty_line_columns(index: pd.Index, prefix: str, side: str, rank: int) -> d
     }
 
 
-def _channel_columns_from_ranked(
-    line_columns: dict[str, Series],
-    base: dict[str, Series],
-    cfg: TrendlineProjectionV2Config,
-    *,
-    source_label: str,
-    output_label: str,
-    source_count: int | None = None,
-) -> dict[str, Series]:
-    pack = _empty_channel_pack()
-    count = int(cfg.channel_source_line_count if source_count is None else source_count)
-    for resistance_rank in range(count):
-        for support_rank in range(count):
-            candidate = _rolling_channel_from_ranked_pair(
-                line_columns,
-                base,
-                cfg,
-                source_label=source_label,
-                resistance_rank=resistance_rank,
-                support_rank=support_rank,
-            )
-            for key, value in candidate.items():
-                pack[key].append(value)
-    return _rank_channel_columns(pack, cfg, index=base["close"].index, label=output_label)
-
-
-def _rolling_channel_from_ranked_pair(
-    line_columns: dict[str, Series],
-    base: dict[str, Series],
-    cfg: TrendlineProjectionV2Config,
-    *,
-    source_label: str,
-    resistance_rank: int,
-    support_rank: int,
-) -> dict[str, Series]:
-    index = base["close"].index
-    p = cfg.output_prefix
-
-    def get(name: str) -> Series:
-        return line_columns.get(name, pd.Series(np.nan, index=index, dtype="float64"))
-
-    res = f"{p}_{source_label}_resistance"
-    sup = f"{p}_{source_label}_support"
-    upper = get(f"{res}_line_rank{resistance_rank}")
-    lower = get(f"{sup}_line_rank{support_rank}")
-    res_slope = get(f"{res}_slope_rank{resistance_rank}")
-    sup_slope = get(f"{sup}_slope_rank{support_rank}")
-    res_score = get(f"{res}_score_rank{resistance_rank}")
-    sup_score = get(f"{sup}_score_rank{support_rank}")
-    res_old = get(f"{res}_anchor_old_index_rank{resistance_rank}")
-    sup_old = get(f"{sup}_anchor_old_index_rank{support_rank}")
-    res_new = get(f"{res}_anchor_new_index_rank{resistance_rank}")
-    sup_new = get(f"{sup}_anchor_new_index_rank{support_rank}")
-    res_end = get(f"{res}_projection_end_index_rank{resistance_rank}")
-    sup_end = get(f"{sup}_projection_end_index_rank{support_rank}")
-    res_pivots = get(f"{res}_pivot_count_rank{resistance_rank}")
-    sup_pivots = get(f"{sup}_pivot_count_rank{support_rank}")
-
-    close = base["close"]
-    bar_index = base["bar_index"]
-    overlap_start = pd.concat([res_new, sup_new], axis=1).max(axis=1)
-    overlap_end = pd.concat([res_end, sup_end], axis=1).min(axis=1)
-    overlap_bars = overlap_end - overlap_start
-    width = upper - lower
-    width_pct = (width / close.abs().replace(0.0, np.nan)).replace([np.inf, -np.inf], np.nan)
-    slope_diff_pct = (
-        (res_slope - sup_slope).abs()
-        / pd.concat([res_slope.abs(), sup_slope.abs(), pd.Series(1e-9, index=index)], axis=1).max(axis=1)
-    ).replace([np.inf, -np.inf], np.nan)
-
-    span_start_width = _channel_width_at(overlap_start, res_slope, sup_slope, upper, lower, bar_index)
-    span_end_width = _channel_width_at(overlap_end, res_slope, sup_slope, upper, lower, bar_index)
-    width_change_pct = ((span_end_width - span_start_width) / span_start_width.abs().replace(0.0, np.nan)).replace([np.inf, -np.inf], np.nan)
-    parallel_score = _clip01(1.0 - width_change_pct.abs() / max(float(cfg.channel_parallel_width_change_pct), 1e-9))
-    convergence_score = _clip01((-width_change_pct - float(cfg.channel_min_convergence_pct)) / max(float(cfg.channel_parallel_width_change_pct), 1e-9))
-    relation_score = pd.concat([parallel_score, convergence_score], axis=1).max(axis=1)
-    channel_shape = pd.Series(0.0, index=index, dtype="float64").where(
-        convergence_score.le(parallel_score),
-        1.0,
-    )
-    channel_shape = channel_shape.where(width_change_pct.le(float(cfg.channel_parallel_width_change_pct)), -1.0)
-
-    line_score = pd.concat([res_score, sup_score], axis=1).mean(axis=1)
-    overlap_score = _clip01(overlap_bars / max(float(cfg.channel_min_overlap_bars) * 3.0, 1.0))
-    slope_score = _clip01(1.0 - slope_diff_pct / max(float(cfg.channel_slope_tolerance_pct), 1e-9))
-    preferred_width = max(float(cfg.channel_preferred_width_pct), float(cfg.channel_min_width_pct))
-    width_score = _clip01(1.0 - (width_pct - preferred_width).abs() / max(preferred_width, 1e-9))
-    pivot_score = _clip01((res_pivots.fillna(2.0) + sup_pivots.fillna(2.0)) / 10.0)
-    score = _clip01(
-        0.24 * line_score
-        + 0.18 * overlap_score
-        + 0.18 * relation_score
-        + 0.14 * slope_score
-        + 0.10 * width_score
-        + 0.16 * pivot_score
-    )
-    valid = (
-        upper.notna()
-        & lower.notna()
-        & width.gt(0.0)
-        & width_pct.ge(float(cfg.channel_min_width_pct))
-        & width_pct.le(float(cfg.channel_max_width_pct))
-        & span_start_width.gt(0.0)
-        & span_end_width.gt(0.0)
-        & overlap_bars.ge(float(cfg.channel_min_overlap_bars))
-        & relation_score.gt(0.0)
-        & bar_index.ge(overlap_start)
-        & bar_index.le(overlap_end)
-    ).fillna(False)
-    tolerance = pd.concat(
-        [
-            close.abs() * float(cfg.channel_touch_tolerance_pct),
-            base["atr"].fillna(0.0) * float(cfg.channel_touch_atr_mult),
-        ],
-        axis=1,
-    ).max(axis=1)
-    position = ((close - lower) / width.replace(0.0, np.nan)).replace([np.inf, -np.inf], np.nan)
-    body_high = base["body_high"]
-    body_low = base["body_low"]
-    inside = (body_high.le(upper + tolerance) & body_low.ge(lower - tolerance)).fillna(False)
-    breakout_up = close.gt(upper + tolerance).fillna(False)
-    breakdown_down = close.lt(lower - tolerance).fillna(False)
-    outside = breakout_up | breakdown_down
-    stale_break = _rolling_all_true(outside.where(valid, False), max(int(cfg.channel_breakout_grace_bars), 1))
-    active = valid & ~stale_break
-    active_quality = pd.Series(1.0, index=index, dtype="float64").where(
-        inside,
-        0.72,
-    )
-    active_quality = active_quality.where(~outside, 0.46)
-    score = (score * active_quality).where(active)
-    return {
-        "upper": upper.where(active),
-        "lower": lower.where(active),
-        "mid": ((upper + lower) / 2.0).where(active),
-        "width": width.where(active),
-        "width_pct": width_pct.where(active),
-        "position": position.where(active),
-        "score": score,
-        "slope_upper": res_slope.where(active),
-        "slope_lower": sup_slope.where(active),
-        "slope_diff_pct": slope_diff_pct.where(active),
-        "width_change_pct": width_change_pct.where(active),
-        "shape": channel_shape.where(active),
-        "overlap_start_index": overlap_start.where(active),
-        "overlap_end_index": overlap_end.where(active),
-        "overlap_bars": overlap_bars.where(active),
-        "source_resistance_slot": pd.Series(float(resistance_rank), index=index).where(active),
-        "source_support_slot": pd.Series(float(support_rank), index=index).where(active),
-        "active": active.astype("float64").where(valid),
-        "inside": inside.astype("float64").where(valid),
-        "stale_break": stale_break.astype("float64").where(valid),
-        "breakout_up": breakout_up.astype("float64").where(valid),
-        "breakdown_down": breakdown_down.astype("float64").where(valid),
-        "near_upper": (upper - close).abs().le(tolerance).astype("float64").where(active),
-        "near_lower": (close - lower).abs().le(tolerance).astype("float64").where(active),
-    }
-
-
-def _channel_width_at(
-    target_x: Series,
-    res_slope: Series,
-    sup_slope: Series,
-    current_upper: Series,
-    current_lower: Series,
-    current_x: Series,
-) -> Series:
-    upper_at_x = current_upper + res_slope * (target_x - current_x)
-    lower_at_x = current_lower + sup_slope * (target_x - current_x)
-    return upper_at_x - lower_at_x
-
-
-def _rank_channel_columns(
-    pack: dict[str, list[Series]],
-    cfg: TrendlineProjectionV2Config,
-    *,
-    index: pd.Index,
-    label: str,
-) -> dict[str, Series]:
-    p = cfg.output_prefix
-    slots = int(cfg.channel_output_count)
-    out: dict[str, Series] = {}
-    if not pack["score"]:
-        return _empty_channel_columns(index, p, slots, label=label)
-    score_values = _series_matrix(pack["score"])
-    score_values = np.where(np.isfinite(score_values), score_values, -np.inf)
-    metric_values = {key: _series_matrix(pack[key]) for key in pack if key != "score"}
-    remaining = score_values.copy()
-    rows = np.arange(len(index))
-    for rank in range(slots):
-        chosen = np.argmax(remaining, axis=1)
-        chosen_score = remaining[rows, chosen]
-        valid = np.isfinite(chosen_score) & (chosen_score > -np.inf)
-        out[f"{p}_{label}_score_rank{rank}"] = pd.Series(np.where(valid, chosen_score, np.nan), index=index, dtype="float64")
-        for metric in (
-            "upper",
-            "lower",
-            "mid",
-            "width",
-            "width_pct",
-            "position",
-            "slope_upper",
-            "slope_lower",
-            "slope_diff_pct",
-            "width_change_pct",
-            "shape",
-            "overlap_start_index",
-            "overlap_end_index",
-            "overlap_bars",
-            "source_resistance_slot",
-            "source_support_slot",
-            "active",
-            "inside",
-            "stale_break",
-            "breakout_up",
-            "breakdown_down",
-            "near_upper",
-            "near_lower",
-        ):
-            out[f"{p}_{label}_{metric}_rank{rank}"] = pd.Series(
-                _select_metric(metric_values[metric], chosen, valid),
-                index=index,
-                dtype="float64",
-            )
-        duplicate = _rolling_channel_duplicate_mask(metric_values, chosen, valid, cfg)
-        remaining[duplicate] = -np.inf
-        remaining[rows, chosen] = -np.inf
-    return out
-
-
-def _rolling_channel_duplicate_mask(
-    metric_values: dict[str, np.ndarray],
-    chosen: np.ndarray,
-    valid: np.ndarray,
-    cfg: TrendlineProjectionV2Config,
-) -> np.ndarray:
-    """Row-wise duplicate suppression for strategy-facing ranked channels."""
-
-    if "mid" not in metric_values or metric_values["mid"].size == 0:
-        return np.zeros((len(valid), 0), dtype=bool)
-
-    rows = np.arange(len(valid))
-    start = metric_values["overlap_start_index"]
-    end = metric_values["overlap_end_index"]
-    mid = metric_values["mid"]
-    width = metric_values["width"]
-    upper_slope = metric_values["slope_upper"]
-    lower_slope = metric_values["slope_lower"]
-
-    chosen_start = start[rows, chosen][:, np.newaxis]
-    chosen_end = end[rows, chosen][:, np.newaxis]
-    chosen_mid = mid[rows, chosen][:, np.newaxis]
-    chosen_width = width[rows, chosen][:, np.newaxis]
-    chosen_upper_slope = upper_slope[rows, chosen][:, np.newaxis]
-    chosen_lower_slope = lower_slope[rows, chosen][:, np.newaxis]
-
-    overlap = np.minimum(end, chosen_end) - np.maximum(start, chosen_start)
-    span = np.maximum(end - start, 1.0)
-    chosen_span = np.maximum(chosen_end - chosen_start, 1.0)
-    overlap_ratio = overlap / np.maximum(np.minimum(span, chosen_span), 1.0)
-    width_ref = np.maximum(np.minimum(width, chosen_width), 1e-9)
-    mid_close = np.abs(mid - chosen_mid) <= width_ref * float(cfg.channel_duplicate_mid_width_mult)
-    width_close = _relative_array_diff(width, chosen_width) <= float(cfg.channel_duplicate_width_tolerance_pct)
-    finite = np.isfinite(start) & np.isfinite(end) & np.isfinite(mid) & np.isfinite(width)
-    return (
-        valid[:, np.newaxis]
-        & finite
-        & (overlap_ratio >= float(cfg.channel_duplicate_overlap_pct))
-        & mid_close
-        & width_close
-    )
-
-
-def _relative_array_diff(left: np.ndarray, right: np.ndarray) -> np.ndarray:
-    denominator = np.maximum(np.maximum(np.abs(left), np.abs(right)), 1e-9)
-    return np.abs(left - right) / denominator
-
-
-def _rolling_all_true(condition: Series, window: int) -> Series:
-    lookback = max(int(window), 1)
-    values = condition.fillna(False).astype("float64")
-    return values.rolling(lookback, min_periods=lookback).sum().ge(float(lookback))
-
-
-def _empty_channel_pack() -> dict[str, list[Series]]:
-    return {
-        "upper": [],
-        "lower": [],
-        "mid": [],
-        "width": [],
-        "width_pct": [],
-        "position": [],
-        "score": [],
-        "slope_upper": [],
-        "slope_lower": [],
-        "slope_diff_pct": [],
-        "width_change_pct": [],
-        "shape": [],
-        "overlap_start_index": [],
-        "overlap_end_index": [],
-        "overlap_bars": [],
-        "source_resistance_slot": [],
-        "source_support_slot": [],
-        "active": [],
-        "inside": [],
-        "stale_break": [],
-        "breakout_up": [],
-        "breakdown_down": [],
-        "near_upper": [],
-        "near_lower": [],
-    }
-
-
-def _empty_channel_columns(index: pd.Index, prefix: str, slots: int, *, label: str) -> dict[str, Series]:
-    out: dict[str, Series] = {}
-    nan = pd.Series(np.nan, index=index, dtype="float64")
-    for rank in range(slots):
-        out[f"{prefix}_{label}_score_rank{rank}"] = nan
-        for metric in (
-            "upper",
-            "lower",
-            "mid",
-            "width",
-            "width_pct",
-            "position",
-            "slope_upper",
-            "slope_lower",
-            "slope_diff_pct",
-            "width_change_pct",
-            "shape",
-            "overlap_start_index",
-            "overlap_end_index",
-            "overlap_bars",
-            "source_resistance_slot",
-            "source_support_slot",
-            "active",
-            "inside",
-            "stale_break",
-            "breakout_up",
-            "breakdown_down",
-            "near_upper",
-            "near_lower",
-        ):
-            out[f"{prefix}_{label}_{metric}_rank{rank}"] = nan
-    return out
-
-
-def _cluster_columns(
-    pack: dict[str, list[Series]],
-    *,
-    label: str,
-    close: Series,
-    proximity_pct: float,
-    min_lines: int,
-    slots: int,
-    prefix: str,
-) -> dict[str, Series]:
-    if not pack["line"]:
-        return _empty_cluster_columns(close.index, prefix, label, slots, include_bias=False)
-
-    line_values = _series_matrix(pack["line"])
-    score_values = _series_matrix(pack["score"])
-    clusters = _cluster_matrix_rows(
-        line_values=line_values,
-        score_values=score_values,
-        close=close.to_numpy(dtype="float64"),
-        proximity_pct=proximity_pct,
-        min_lines=min_lines,
-        slots=slots,
-    )
-    return _cluster_output_columns(clusters, close.index, prefix, label, include_bias=False)
-
-
-def _hotspot_columns(
-    resistance: dict[str, list[Series]],
-    support: dict[str, list[Series]],
-    *,
-    close: Series,
-    proximity_pct: float,
-    min_lines: int,
-    slots: int,
-    prefix: str,
-) -> dict[str, Series]:
-    if not resistance["line"] and not support["line"]:
-        return _empty_cluster_columns(close.index, prefix, "hotspot", slots, include_bias=True)
-
-    res_lines = _series_matrix(resistance["line"]) if resistance["line"] else np.empty((len(close), 0))
-    sup_lines = _series_matrix(support["line"]) if support["line"] else np.empty((len(close), 0))
-    res_scores = _series_matrix(resistance["score"]) if resistance["score"] else np.empty((len(close), 0))
-    sup_scores = _series_matrix(support["score"]) if support["score"] else np.empty((len(close), 0))
-    line_values = np.concatenate([res_lines, sup_lines], axis=1)
-    score_values = np.concatenate([res_scores, sup_scores], axis=1)
-    labels = np.concatenate([np.ones(res_lines.shape[1]), -np.ones(sup_lines.shape[1])])
-    clusters = _cluster_matrix_rows(
-        line_values=line_values,
-        score_values=score_values,
-        close=close.to_numpy(dtype="float64"),
-        proximity_pct=proximity_pct,
-        min_lines=min_lines,
-        slots=slots,
-        labels=labels,
-    )
-    return _cluster_output_columns(clusters, close.index, prefix, "hotspot", include_bias=True)
-
-
-def _cluster_matrix_rows(
-    *,
-    line_values: np.ndarray,
-    score_values: np.ndarray,
-    close: np.ndarray,
-    proximity_pct: float,
-    min_lines: int,
-    slots: int,
-    labels: np.ndarray | None = None,
-) -> dict[str, np.ndarray]:
-    rows = line_values.shape[0]
-    out = {
-        "price": np.full((rows, slots), np.nan, dtype="float64"),
-        "strength": np.full((rows, slots), np.nan, dtype="float64"),
-        "line_count": np.full((rows, slots), np.nan, dtype="float64"),
-        "width": np.full((rows, slots), np.nan, dtype="float64"),
-        "side_bias": np.full((rows, slots), np.nan, dtype="float64"),
-    }
-    # This bounded NumPy row loop avoids materializing a huge rows x lines x lines
-    # proximity cube while still keeping all dataframe calculations columnar.
-    for row in range(rows):
-        values = line_values[row]
-        finite = np.isfinite(values)
-        if finite.sum() < min_lines:
-            continue
-        width = abs(close[row]) * proximity_pct if np.isfinite(close[row]) else np.nan
-        if not np.isfinite(width) or width <= 0.0:
-            continue
-        row_labels = labels[finite] if labels is not None else None
-        clusters = _line_value_clusters(
-            values=values[finite],
-            scores=score_values[row][finite],
-            width=width,
-            min_lines=min_lines,
-            labels=row_labels,
-            slots=slots,
-        )
-        for slot, cluster in enumerate(clusters):
-            out["price"][row, slot] = cluster["price"]
-            out["strength"][row, slot] = cluster["strength"]
-            out["line_count"][row, slot] = cluster["line_count"]
-            out["width"][row, slot] = cluster["width"]
-            out["side_bias"][row, slot] = cluster["side_bias"]
-    return out
-
-
-def _line_value_clusters(
-    *,
-    values: np.ndarray,
-    scores: np.ndarray,
-    width: float,
-    min_lines: int,
-    labels: np.ndarray | None,
-    slots: int,
-) -> list[dict[str, float]]:
-    order = np.argsort(values)
-    sorted_values = values[order]
-    sorted_scores = np.nan_to_num(scores[order], nan=0.0, posinf=0.0, neginf=0.0)
-    sorted_labels = labels[order] if labels is not None else None
-    found: list[dict[str, float]] = []
-    for start in range(len(sorted_values)):
-        end = np.searchsorted(sorted_values, sorted_values[start] + width, side="right")
-        count = end - start
-        if count < min_lines:
-            continue
-        cluster_values = sorted_values[start:end]
-        cluster_scores = sorted_scores[start:end]
-        weights = np.maximum(cluster_scores, 0.01)
-        price = float(np.average(cluster_values, weights=weights))
-        cluster_width = float(max(cluster_values[-1] - cluster_values[0], width * 0.25))
-        mean_score = float(np.mean(cluster_scores))
-        strength = float(count * (0.5 + mean_score))
-        side_bias = 0.0
-        if sorted_labels is not None:
-            side_bias = float(np.mean(sorted_labels[start:end]))
-        found.append(
-            {
-                "price": price,
-                "strength": strength,
-                "line_count": float(count),
-                "width": cluster_width,
-                "side_bias": side_bias,
-            }
-        )
-    found.sort(key=lambda item: (item["strength"], item["line_count"]), reverse=True)
-    selected: list[dict[str, float]] = []
-    for cluster in found:
-        if all(abs(cluster["price"] - kept["price"]) > width for kept in selected):
-            selected.append(cluster)
-        if len(selected) >= slots:
-            break
-    return selected
-
-
-def _cluster_output_columns(
-    clusters: dict[str, np.ndarray],
-    index: pd.Index,
-    prefix: str,
-    label: str,
-    *,
-    include_bias: bool,
-) -> dict[str, Series]:
-    out: dict[str, Series] = {}
-    slots = clusters["price"].shape[1]
-    for rank in range(slots):
-        price = pd.Series(clusters["price"][:, rank], index=index, dtype="float64")
-        width = pd.Series(clusters["width"][:, rank], index=index, dtype="float64")
-        out[f"{prefix}_{label}_price_rank{rank}"] = price
-        out[f"{prefix}_{label}_upper_rank{rank}"] = price + width / 2.0
-        out[f"{prefix}_{label}_lower_rank{rank}"] = price - width / 2.0
-        out[f"{prefix}_{label}_strength_rank{rank}"] = pd.Series(clusters["strength"][:, rank], index=index, dtype="float64")
-        out[f"{prefix}_{label}_line_count_rank{rank}"] = pd.Series(clusters["line_count"][:, rank], index=index, dtype="float64")
-        out[f"{prefix}_{label}_width_rank{rank}"] = width
-        if include_bias:
-            out[f"{prefix}_{label}_side_bias_rank{rank}"] = pd.Series(clusters["side_bias"][:, rank], index=index, dtype="float64")
-    return out
-
-
-def _empty_cluster_columns(index: pd.Index, prefix: str, label: str, slots: int, *, include_bias: bool) -> dict[str, Series]:
-    clusters = {
-        "price": np.full((len(index), slots), np.nan),
-        "strength": np.full((len(index), slots), np.nan),
-        "line_count": np.full((len(index), slots), np.nan),
-        "width": np.full((len(index), slots), np.nan),
-        "side_bias": np.full((len(index), slots), np.nan),
-    }
-    return _cluster_output_columns(clusters, index, prefix, label, include_bias=include_bias)
-
-
-def _diagnostic_candidates(
+def _candidate_lines(
     base: dict[str, Series],
     side: LineSide,
     cfg: TrendlineProjectionV2Config,
@@ -1426,26 +398,43 @@ def _diagnostic_candidates(
     min_anchor_bars: int | None = None,
     max_anchor_bars: int | None = None,
     max_projection_bars: int | None = None,
-    pivot_family: Literal["primary", "confirmation"] = "primary",
     min_pivot_prominence_atr: float | None = None,
     line_kind: str = "raw",
 ) -> DataFrame:
     if side == "resistance":
-        pivot_price = base["confirm_pivot_high"] if pivot_family == "confirmation" else base["pivot_high"]
-        pivot_index = base["confirm_pivot_high_index"] if pivot_family == "confirmation" else base["pivot_high_index"]
-        pivot_prominence = (
-            base["confirm_pivot_high_prominence"] if pivot_family == "confirmation" else base["pivot_high_prominence"]
-        )
+        pivot_price = base["pivot_high"]
+        pivot_index = base["pivot_high_index"]
+        pivot_available = base["pivot_high_available_index"]
+        pivot_prominence = base["pivot_high_prominence"]
+        pivot_score = base["pivot_high_score"]
     else:
-        pivot_price = base["confirm_pivot_low"] if pivot_family == "confirmation" else base["pivot_low"]
-        pivot_index = base["confirm_pivot_low_index"] if pivot_family == "confirmation" else base["pivot_low_index"]
-        pivot_prominence = base["confirm_pivot_low_prominence"] if pivot_family == "confirmation" else base["pivot_low_prominence"]
+        pivot_price = base["pivot_low"]
+        pivot_index = base["pivot_low_index"]
+        pivot_available = base["pivot_low_available_index"]
+        pivot_prominence = base["pivot_low_prominence"]
+        pivot_score = base["pivot_low_score"]
 
     prominence_floor = float(cfg.min_pivot_prominence_atr if min_pivot_prominence_atr is None else min_pivot_prominence_atr)
-    allowed = pivot_price.notna() & pivot_prominence.fillna(0.0).ge(prominence_floor)
-    prices = pivot_price.where(allowed).dropna().to_numpy(dtype="float64")
-    indexes = pivot_index.where(allowed).dropna().to_numpy(dtype="float64")
-    prominences = pivot_prominence.where(allowed).dropna().to_numpy(dtype="float64")
+    pivot_frame = pd.DataFrame(
+        {
+            "price": pivot_price,
+            "anchor_index": pivot_index,
+            "available_index": pivot_available,
+            "prominence": pivot_prominence,
+            "score": pivot_score,
+        }
+    )
+    pivot_frame = pivot_frame[
+        pivot_frame["price"].notna()
+        & pivot_frame["anchor_index"].notna()
+        & pivot_frame["available_index"].notna()
+        & pivot_frame["prominence"].fillna(0.0).ge(prominence_floor)
+    ].dropna(subset=["price", "anchor_index", "available_index", "prominence"])
+    prices = pivot_frame["price"].to_numpy(dtype="float64")
+    indexes = pivot_frame["anchor_index"].to_numpy(dtype="float64")
+    available_indexes = pivot_frame["available_index"].to_numpy(dtype="float64")
+    prominences = pivot_frame["prominence"].to_numpy(dtype="float64")
+    pivot_scores = pivot_frame["score"].fillna(0.0).to_numpy(dtype="float64")
     rows: list[dict[str, float | str]] = []
     anchor_min = float(cfg.min_anchor_bars if min_anchor_bars is None else min_anchor_bars)
     anchor_cap = float(cfg.max_anchor_bars if max_anchor_bars is None else max_anchor_bars)
@@ -1476,376 +465,58 @@ def _diagnostic_candidates(
                 cfg,
             ):
                 continue
-            projection_end = min(float(len(base["close"]) - 1), x_new + projection_cap)
-            if projection_cap > float(cfg.max_projection_bars):
-                projection_end = float(
-                    _projection_end_after_sustained_break(
-                        base=base,
-                        side=side,
-                        slope=float(slope),
-                        intercept=float(intercept),
-                        start_index=int(round(x_new)),
-                        max_end=int(round(projection_end)),
-                        cfg=cfg,
-                    )
+            raw_projection_end = min(float(len(base["close"]) - 1), x_new + projection_cap)
+            projection_end = float(
+                _projection_end_after_sustained_break(
+                    base=base,
+                    side=side,
+                    slope=float(slope),
+                    intercept=float(intercept),
+                    start_index=int(round(x_new)),
+                    max_end=int(round(raw_projection_end)),
+                    cfg=cfg,
                 )
+            )
+            live_start = max(
+                float(available_indexes[new_pos]),
+                x_new + float(cfg.pivot_strength),
+            )
+            if projection_end < live_start:
+                continue
             span_score = min(span / max(anchor_min * 10.0, 1.0), 1.0)
             slope_score = max(0.0, 1.0 - slope_pct / max(float(cfg.max_slope_pct_per_bar), 1e-9))
             prom_score = min(prominence / max(prominence_floor * 5.0, 1.0), 1.0)
-            score = 0.42 * span_score + 0.28 * slope_score + 0.30 * prom_score
+            pivot_quality = float((pivot_scores[old_pos] + pivot_scores[new_pos]) / 2.0)
+            score = 0.38 * span_score + 0.24 * slope_score + 0.26 * prom_score + 0.12 * pivot_quality
             rows.append(
                 {
                     "side": side,
                     "x_old": float(x_old),
                     "x_new": float(x_new),
+                    "x_end": float(x_new),
                     "y_old": float(p_old),
                     "y_new": float(p_new),
+                    "y_end": float(p_new),
                     "slope": float(slope),
                     "intercept": float(intercept),
                     "projection_end": float(projection_end),
+                    "live_start": float(live_start),
                     "span": float(span),
                     "slope_pct": float(slope_pct),
                     "prominence": prominence,
+                    "pivot_quality": pivot_quality,
                     "score": float(score),
                     "pivot_count": 2.0,
                     "pivot_path": f"{int(round(x_old))}|{int(round(x_new))}",
                     "price_path": f"{float(p_old)}|{float(p_new)}",
                     "source_count": 1.0,
+                    "absorbed_pivot_count": 2.0,
+                    "absorbed_line_count": 0.0,
+                    "half_width": 0.0,
                     "line_kind": line_kind,
                 }
             )
     return pd.DataFrame(rows)
-
-
-def _diagnostic_channel_candidates(
-    candidates: DataFrame,
-    base: dict[str, Series],
-    cfg: TrendlineProjectionV2Config,
-    *,
-    line_kind: str,
-) -> DataFrame:
-    columns = [
-        "line_kind",
-        "res_pivot_path",
-        "sup_pivot_path",
-        "start",
-        "end",
-        "raw_end",
-        "overlap_bars",
-        "upper_slope",
-        "lower_slope",
-        "upper_intercept",
-        "lower_intercept",
-        "width_start",
-        "width_end",
-        "width_mid",
-        "width_pct_mid",
-        "width_change_pct",
-        "shape",
-        "slope_diff_pct",
-        "containment_ratio",
-        "upper_touch_count",
-        "lower_touch_count",
-        "upper_recent_touch_count",
-        "lower_recent_touch_count",
-        "touch_balance_score",
-        "recent_touch_score",
-        "position_coverage",
-        "empty_space_score",
-        "pivot_touch_count",
-        "score",
-    ]
-    if candidates.empty:
-        return pd.DataFrame(columns=columns)
-    pool_size = int(cfg.channel_candidate_pool_size)
-    resistance = candidates[candidates["side"].eq("resistance")].sort_values(["score", "span"], ascending=False).head(pool_size)
-    support = candidates[candidates["side"].eq("support")].sort_values(["score", "span"], ascending=False).head(pool_size)
-    rows: list[dict[str, float | str]] = []
-    for _, upper in resistance.iterrows():
-        for _, lower in support.iterrows():
-            start = int(round(max(float(upper["x_new"]), float(lower["x_new"]))))
-            end = int(round(min(float(upper["projection_end"]), float(lower["projection_end"]))))
-            overlap = end - start
-            if overlap < int(cfg.channel_min_overlap_bars):
-                continue
-            metrics = _diagnostic_channel_metrics(upper, lower, base, start, end, cfg)
-            if metrics is None:
-                continue
-            active_end = int(round(metrics["active_end"]))
-            active_overlap = active_end - start
-            if active_overlap < int(cfg.channel_min_overlap_bars):
-                continue
-            if metrics["width_pct_mid"] < float(cfg.channel_min_width_pct) or metrics["width_pct_mid"] > float(cfg.channel_max_width_pct):
-                continue
-            if metrics["containment_ratio"] < float(cfg.channel_min_containment_ratio):
-                continue
-            if metrics["pivot_touch_count"] < int(cfg.channel_min_pivot_touches):
-                continue
-            if metrics["upper_touch_count"] < int(cfg.channel_min_rail_touches):
-                continue
-            if metrics["lower_touch_count"] < int(cfg.channel_min_rail_touches):
-                continue
-            if metrics["upper_recent_touch_count"] < int(cfg.channel_min_recent_rail_touches):
-                continue
-            if metrics["lower_recent_touch_count"] < int(cfg.channel_min_recent_rail_touches):
-                continue
-            if metrics["position_coverage"] < float(cfg.channel_min_position_coverage):
-                continue
-            relation_score = max(metrics["parallel_score"], metrics["convergence_score"])
-            if relation_score <= 0.0:
-                continue
-            overlap_score = min(active_overlap / max(float(cfg.channel_min_overlap_bars) * 3.0, 1.0), 1.0)
-            touch_score = min(metrics["pivot_touch_count"] / 10.0, 1.0)
-            line_score = (float(upper["score"]) + float(lower["score"])) / 2.0
-            tight_score = max(
-                0.0,
-                1.0
-                - (metrics["width_pct_mid"] - float(cfg.channel_min_width_pct))
-                / max(float(cfg.channel_max_width_pct) - float(cfg.channel_min_width_pct), 1e-9),
-            )
-            score = (
-                0.16 * metrics["containment_ratio"]
-                + 0.15 * touch_score
-                + 0.15 * metrics["touch_balance_score"]
-                + 0.12 * metrics["recent_touch_score"]
-                + 0.14 * metrics["empty_space_score"]
-                + 0.12 * relation_score
-                + 0.07 * overlap_score
-                + 0.05 * line_score
-                + 0.04 * tight_score
-            )
-            rows.append(
-                {
-                    "line_kind": line_kind,
-                    "res_pivot_path": str(upper["pivot_path"]),
-                    "sup_pivot_path": str(lower["pivot_path"]),
-                    "start": float(start),
-                    "end": float(active_end),
-                    "raw_end": float(end),
-                    "overlap_bars": float(active_overlap),
-                    "upper_slope": float(upper["slope"]),
-                    "lower_slope": float(lower["slope"]),
-                    "upper_intercept": float(upper["intercept"]),
-                    "lower_intercept": float(lower["intercept"]),
-                    "width_start": metrics["width_start"],
-                    "width_end": metrics["width_end"],
-                    "width_mid": metrics["width_mid"],
-                    "width_pct_mid": metrics["width_pct_mid"],
-                    "width_change_pct": metrics["width_change_pct"],
-                    "shape": metrics["shape"],
-                    "slope_diff_pct": metrics["slope_diff_pct"],
-                    "containment_ratio": metrics["containment_ratio"],
-                    "upper_touch_count": metrics["upper_touch_count"],
-                    "lower_touch_count": metrics["lower_touch_count"],
-                    "upper_recent_touch_count": metrics["upper_recent_touch_count"],
-                    "lower_recent_touch_count": metrics["lower_recent_touch_count"],
-                    "touch_balance_score": metrics["touch_balance_score"],
-                    "recent_touch_score": metrics["recent_touch_score"],
-                    "position_coverage": metrics["position_coverage"],
-                    "empty_space_score": metrics["empty_space_score"],
-                    "pivot_touch_count": metrics["pivot_touch_count"],
-                    "score": float(score),
-                }
-            )
-    if not rows:
-        return pd.DataFrame(columns=columns)
-    ranked = pd.DataFrame(rows, columns=columns).sort_values("score", ascending=False).reset_index(drop=True)
-    return _suppress_duplicate_channel_rows(ranked, cfg)
-
-
-def _diagnostic_channel_metrics(
-    upper: pd.Series,
-    lower: pd.Series,
-    base: dict[str, Series],
-    start: int,
-    end: int,
-    cfg: TrendlineProjectionV2Config,
-) -> dict[str, float] | None:
-    if end <= start or start < 0 or end >= len(base["close"]):
-        return None
-    xs = np.arange(start, end + 1, dtype="float64")
-    upper_line = float(upper["intercept"]) + float(upper["slope"]) * xs
-    lower_line = float(lower["intercept"]) + float(lower["slope"]) * xs
-    width = upper_line - lower_line
-    if np.any(~np.isfinite(width)) or np.any(width <= 0.0):
-        return None
-    mid_idx = int(round((start + end) / 2.0))
-    close_ref = max(abs(float(base["close"].iloc[mid_idx])), 1e-9)
-    width_start = float(width[0])
-    width_end = float(width[-1])
-    width_mid = float(width[len(width) // 2])
-    width_pct_mid = width_mid / close_ref
-    width_change_pct = (width_end - width_start) / max(abs(width_start), 1e-9)
-    slope_denom = max(abs(float(upper["slope"])), abs(float(lower["slope"])), 1e-9)
-    slope_diff_pct = abs(float(upper["slope"]) - float(lower["slope"])) / slope_denom
-    parallel_score = min(1.0, max(0.0, 1.0 - abs(width_change_pct) / max(float(cfg.channel_parallel_width_change_pct), 1e-9)))
-    convergence_score = min(
-        1.0,
-        max(0.0, (-width_change_pct - float(cfg.channel_min_convergence_pct)) / max(float(cfg.channel_parallel_width_change_pct), 1e-9)),
-    )
-    if convergence_score > parallel_score:
-        shape = 1.0
-    elif width_change_pct > float(cfg.channel_parallel_width_change_pct):
-        shape = -1.0
-    else:
-        shape = 0.0
-
-    body_high = base["body_high"].iloc[start : end + 1].to_numpy(dtype="float64")
-    body_low = base["body_low"].iloc[start : end + 1].to_numpy(dtype="float64")
-    atr = base["atr"].iloc[start : end + 1].fillna(0.0).to_numpy(dtype="float64")
-    tolerance = np.maximum(np.abs((upper_line + lower_line) / 2.0) * float(cfg.channel_touch_tolerance_pct), atr * float(cfg.channel_touch_atr_mult))
-    contained = (body_high <= upper_line + tolerance) & (body_low >= lower_line - tolerance)
-    sample_end = len(contained)
-    trimmed = 0
-    while sample_end > 1 and trimmed < int(cfg.channel_breakout_grace_bars) and not bool(contained[sample_end - 1]):
-        sample_end -= 1
-        trimmed += 1
-    if sample_end <= 1:
-        return None
-    active_end = start + sample_end - 1
-    active_width = width[:sample_end]
-    active_mid_idx = start + int(round((sample_end - 1) / 2.0))
-    close_ref = max(abs(float(base["close"].iloc[active_mid_idx])), 1e-9)
-    width_start = float(active_width[0])
-    width_end = float(active_width[-1])
-    width_mid = float(active_width[len(active_width) // 2])
-    width_pct_mid = width_mid / close_ref
-    width_change_pct = (width_end - width_start) / max(abs(width_start), 1e-9)
-    parallel_score = min(1.0, max(0.0, 1.0 - abs(width_change_pct) / max(float(cfg.channel_parallel_width_change_pct), 1e-9)))
-    convergence_score = min(
-        1.0,
-        max(0.0, (-width_change_pct - float(cfg.channel_min_convergence_pct)) / max(float(cfg.channel_parallel_width_change_pct), 1e-9)),
-    )
-    if convergence_score > parallel_score:
-        shape = 1.0
-    elif width_change_pct > float(cfg.channel_parallel_width_change_pct):
-        shape = -1.0
-    else:
-        shape = 0.0
-    containment_sample = contained[:sample_end]
-    containment_ratio = float(np.mean(containment_sample)) if len(containment_sample) else 0.0
-    close_values = base["close"].iloc[start : end + 1].to_numpy(dtype="float64")
-    position = (close_values - lower_line) / np.maximum(width, 1e-9)
-    position_sample = position[:sample_end]
-    position_sample = position_sample[np.isfinite(position_sample)]
-    if len(position_sample):
-        clipped_position = np.clip(position_sample, 0.0, 1.0)
-        position_coverage = float(np.quantile(clipped_position, 0.90) - np.quantile(clipped_position, 0.10))
-    else:
-        position_coverage = 0.0
-
-    high_pivot = base["confirm_pivot_high"].combine_first(base["pivot_high"]).iloc[start : end + 1].to_numpy(dtype="float64")[
-        :sample_end
-    ]
-    low_pivot = base["confirm_pivot_low"].combine_first(base["pivot_low"]).iloc[start : end + 1].to_numpy(dtype="float64")[
-        :sample_end
-    ]
-    high_valid = np.isfinite(high_pivot)
-    low_valid = np.isfinite(low_pivot)
-    active_indexes = np.arange(start, active_end + 1, dtype="int64")
-    upper_line_sample = upper_line[:sample_end]
-    lower_line_sample = lower_line[:sample_end]
-    tolerance_sample = tolerance[:sample_end]
-    upper_overlap_touches = {
-        int(active_indexes[pos])
-        for pos in np.flatnonzero(high_valid & (np.abs(high_pivot - upper_line_sample) <= tolerance_sample))
-    }
-    lower_overlap_touches = {
-        int(active_indexes[pos])
-        for pos in np.flatnonzero(low_valid & (np.abs(low_pivot - lower_line_sample) <= tolerance_sample))
-    }
-    recent_bars = max(1, int(round((active_end - start + 1) * float(cfg.channel_recent_touch_fraction))))
-    recent_start = max(start, active_end - recent_bars + 1)
-    upper_recent_touches = {pivot for pivot in upper_overlap_touches if pivot >= recent_start}
-    lower_recent_touches = {pivot for pivot in lower_overlap_touches if pivot >= recent_start}
-    upper_touches = len(upper_overlap_touches)
-    lower_touches = len(lower_overlap_touches)
-    touch_max = max(float(max(upper_touches, lower_touches)), 1.0)
-    touch_balance_score = min(float(min(upper_touches, lower_touches)) / touch_max, 1.0)
-    recent_touch_score = min(
-        min(float(len(upper_recent_touches)), float(len(lower_recent_touches)))
-        / max(float(cfg.channel_min_recent_rail_touches) * 2.0, 1.0),
-        1.0,
-    )
-    coverage_score = min(position_coverage / 0.55, 1.0)
-    empty_space_score = 0.45 * coverage_score + 0.35 * touch_balance_score + 0.20 * recent_touch_score
-    return {
-        "width_start": width_start,
-        "width_end": width_end,
-        "width_mid": width_mid,
-        "active_end": float(active_end),
-        "width_pct_mid": float(width_pct_mid),
-        "width_change_pct": float(width_change_pct),
-        "shape": shape,
-        "slope_diff_pct": float(slope_diff_pct),
-        "parallel_score": float(parallel_score),
-        "convergence_score": float(convergence_score),
-        "containment_ratio": containment_ratio,
-        "upper_touch_count": float(upper_touches),
-        "lower_touch_count": float(lower_touches),
-        "upper_recent_touch_count": float(len(upper_recent_touches)),
-        "lower_recent_touch_count": float(len(lower_recent_touches)),
-        "touch_balance_score": float(touch_balance_score),
-        "recent_touch_score": float(recent_touch_score),
-        "position_coverage": float(position_coverage),
-        "empty_space_score": float(empty_space_score),
-        "pivot_touch_count": float(upper_touches + lower_touches),
-    }
-
-
-def _suppress_duplicate_channel_rows(channels: DataFrame, cfg: TrendlineProjectionV2Config) -> DataFrame:
-    """Keep the clearest channel when candidates describe the same geometry."""
-
-    if channels.empty:
-        return channels.copy()
-
-    kept: list[pd.Series] = []
-    for _, candidate in channels.sort_values(["score", "width_pct_mid"], ascending=[False, True]).iterrows():
-        if any(_channels_are_duplicates(candidate, kept_channel, cfg) for kept_channel in kept):
-            continue
-        kept.append(candidate)
-
-    if not kept:
-        return channels.head(0).copy()
-    return pd.DataFrame(kept, columns=channels.columns).reset_index(drop=True)
-
-
-def _channels_are_duplicates(left: pd.Series, right: pd.Series, cfg: TrendlineProjectionV2Config) -> bool:
-    overlap_start = max(float(left["start"]), float(right["start"]))
-    overlap_end = min(float(left["end"]), float(right["end"]))
-    overlap = overlap_end - overlap_start
-    if overlap <= 0.0:
-        return False
-    left_span = max(float(left["end"]) - float(left["start"]), 1.0)
-    right_span = max(float(right["end"]) - float(right["start"]), 1.0)
-    overlap_ratio = overlap / max(min(left_span, right_span), 1.0)
-    if overlap_ratio < float(cfg.channel_duplicate_overlap_pct):
-        return False
-
-    check_x = (overlap_start + overlap_end) / 2.0
-    left_upper = float(left["upper_intercept"]) + float(left["upper_slope"]) * check_x
-    left_lower = float(left["lower_intercept"]) + float(left["lower_slope"]) * check_x
-    right_upper = float(right["upper_intercept"]) + float(right["upper_slope"]) * check_x
-    right_lower = float(right["lower_intercept"]) + float(right["lower_slope"]) * check_x
-    left_width = max(left_upper - left_lower, 1e-9)
-    right_width = max(right_upper - right_lower, 1e-9)
-    if left_width <= 0.0 or right_width <= 0.0:
-        return False
-
-    mid_distance = abs(((left_upper + left_lower) / 2.0) - ((right_upper + right_lower) / 2.0))
-    width_ref = max(min(left_width, right_width), 1e-9)
-    if mid_distance > width_ref * float(cfg.channel_duplicate_mid_width_mult):
-        return False
-    width_diff = abs(left_width - right_width) / max(max(left_width, right_width), 1e-9)
-    if width_diff > float(cfg.channel_duplicate_width_tolerance_pct):
-        return False
-
-    return True
-
-
-def _relative_float_diff(left: float, right: float) -> float:
-    denominator = max(abs(left), abs(right), 1e-9)
-    return abs(left - right) / denominator
 
 
 def _anchor_span_is_clear(
@@ -1944,113 +615,6 @@ def _max_true_run(values: np.ndarray) -> int:
     return best
 
 
-def _confirm_candidate_table(candidates: DataFrame, base: dict[str, Series], cfg: TrendlineProjectionV2Config) -> DataFrame:
-    if candidates.empty:
-        return candidates.copy()
-    rows: list[dict[str, float | str]] = []
-    for _, row in candidates.iterrows():
-        confirmed = _confirm_candidate_row(row, base, cfg)
-        if confirmed is not None:
-            rows.append(confirmed)
-    if not rows:
-        return candidates.head(0).copy()
-    return pd.DataFrame(rows).sort_values(["pivot_count", "score", "span"], ascending=False).reset_index(drop=True)
-
-
-def _confirm_candidate_row(row: pd.Series, base: dict[str, Series], cfg: TrendlineProjectionV2Config) -> dict[str, float | str] | None:
-    side = str(row["side"])
-    pivots = _diagnostic_confirmation_pivots(base, side, cfg)
-    if pivots.empty:
-        return None
-    seed_pivots = _pivot_tuple(row["pivot_path"])
-    seed_prices = _price_tuple(row.to_dict())
-    if len(seed_pivots) < 2 or len(seed_pivots) != len(seed_prices):
-        return None
-    slope = float(row["slope"])
-    intercept = float(row["intercept"])
-    x_new = int(round(float(row["x_new"])))
-    path: dict[int, float] = {int(pivot): float(price) for pivot, price in zip(seed_pivots[:2], seed_prices[:2], strict=False)}
-    errors: list[float] = []
-    for pivot in pivots.itertuples(index=False):
-        pivot_x = int(pivot.x)
-        if pivot_x <= x_new or pivot_x > x_new + int(cfg.confirmation_max_bars) or pivot_x in path:
-            continue
-        expected = intercept + slope * float(pivot_x)
-        error = abs(float(pivot.price) - expected)
-        tolerance = max(
-            abs(float(pivot.price)) * float(cfg.confirmation_tolerance_pct),
-            float(pivot.atr) * float(cfg.confirmation_atr_mult),
-        )
-        if error <= tolerance:
-            path[pivot_x] = float(pivot.price)
-            errors.append(error)
-    if len(path) < int(cfg.confirmation_min_pivots):
-        return None
-    ordered = sorted(path.items())
-    last_pivot = ordered[-1][0]
-    projection_end = _projection_end_after_sustained_break(
-        base=base,
-        side=side,
-        slope=slope,
-        intercept=intercept,
-        start_index=last_pivot,
-        max_end=min(len(base["close"]) - 1, last_pivot + int(cfg.max_projection_bars)),
-        cfg=cfg,
-    )
-    candidate = row.to_dict()
-    candidate.update(
-        {
-            "x_old": float(ordered[0][0]),
-            "x_new": float(last_pivot),
-            "seed_x_new": float(x_new),
-            "y_old": float(intercept + slope * float(ordered[0][0])),
-            "y_new": float(intercept + slope * float(last_pivot)),
-            "projection_end": float(projection_end),
-            "pivot_count": float(len(ordered)),
-            "pivot_path": "|".join(str(pivot) for pivot, _ in ordered),
-            "price_path": "|".join(str(float(price)) for _, price in ordered),
-            "avg_touch_error_pct": float(np.mean([err / max(abs(price), 1.0) for err, (_, price) in zip(errors, ordered[2:], strict=False)]))
-            if errors
-            else 0.0,
-            "max_touch_error_pct": float(np.max([err / max(abs(price), 1.0) for err, (_, price) in zip(errors, ordered[2:], strict=False)]))
-            if errors
-            else 0.0,
-            "line_kind": "seed_no_redraw",
-        }
-    )
-    candidate["score"] = min(
-        1.0,
-        float(row.get("score", 0.0)) * 0.45 + 0.14 * float(len(ordered)) - float(candidate["avg_touch_error_pct"]) * 10.0,
-    )
-    return candidate
-
-
-def _diagnostic_confirmation_pivots(base: dict[str, Series], side: str, cfg: TrendlineProjectionV2Config) -> DataFrame:
-    if side == "resistance":
-        pivot_price = base["confirm_pivot_high"]
-        pivot_index = base["confirm_pivot_high_index"]
-        pivot_prominence = base["confirm_pivot_high_prominence"]
-    else:
-        pivot_price = base["confirm_pivot_low"]
-        pivot_index = base["confirm_pivot_low_index"]
-        pivot_prominence = base["confirm_pivot_low_prominence"]
-    allowed = pivot_price.notna() & pivot_prominence.fillna(0.0).ge(float(cfg.min_confirmation_pivot_prominence_atr))
-    rows = []
-    for event_idx in np.flatnonzero(allowed.to_numpy()):
-        pivot_x = int(round(float(pivot_index.iloc[event_idx])))
-        if 0 <= pivot_x < len(base["close"]):
-            rows.append(
-                {
-                    "x": pivot_x,
-                    "price": float(pivot_price.iloc[event_idx]),
-                    "atr": float(base["atr"].iloc[pivot_x]) if pd.notna(base["atr"].iloc[pivot_x]) else 0.0,
-                }
-            )
-    if not rows:
-        return pd.DataFrame(columns=["x", "price", "atr"])
-    return pd.DataFrame(rows).drop_duplicates(["x", "price"]).sort_values("x").reset_index(drop=True)
-
-
 def _projection_end_after_sustained_break(
     *,
     base: dict[str, Series],
@@ -2085,72 +649,6 @@ def _projection_end_after_sustained_break(
     return int(max_end)
 
 
-def _absorb_confirmed_keep_seed_table(candidates: DataFrame, base: dict[str, Series], cfg: TrendlineProjectionV2Config) -> DataFrame:
-    if candidates.empty:
-        return candidates.copy()
-    out_rows: list[pd.Series] = []
-    sorted_candidates = candidates.sort_values(["pivot_count", "score", "span"], ascending=False)
-    for _, side_candidates in sorted_candidates.groupby("side", sort=False):
-        kept: list[dict[str, object]] = []
-        for _, candidate in side_candidates.iterrows():
-            absorbed = False
-            for kept_item in kept:
-                kept_row = kept_item["row"]
-                if not isinstance(kept_row, pd.Series):
-                    continue
-                if _candidate_is_weaker_or_equal(candidate, kept_row) and _candidate_is_absorbable_keep_seed(
-                    candidate,
-                    kept_row,
-                    cfg,
-                ):
-                    kept_item["absorbed_pivots"].update(_pivot_set(candidate["pivot_path"]))
-                    kept_item["absorbed_line_count"] = int(kept_item["absorbed_line_count"]) + 1
-                    kept_item["line_width"] = max(
-                        float(kept_item["line_width"]),
-                        _candidate_max_distance_to_line(candidate, kept_row),
-                    )
-                    absorbed = True
-                    break
-            if not absorbed:
-                kept.append(
-                    {
-                        "row": candidate.copy(),
-                        "absorbed_pivots": set(_pivot_set(candidate["pivot_path"])),
-                        "absorbed_line_count": 0,
-                        "line_width": 0.0,
-                    }
-                )
-        for kept_item in kept:
-            row = kept_item["row"]
-            if isinstance(row, pd.Series):
-                row = row.copy()
-                row["absorbed_pivot_count"] = float(len(kept_item["absorbed_pivots"]))
-                row["absorbed_line_count"] = float(kept_item["absorbed_line_count"])
-                row["half_width"] = float(kept_item["line_width"]) * float(cfg.absorb_width_scale)
-                row["line_kind"] = "absorb_keep_seed_geometry"
-                row["score"] = min(
-                    1.0,
-                    float(row.get("score", 0.0))
-                    + 0.02 * float(row["absorbed_pivot_count"])
-                    + 0.025 * float(row["absorbed_line_count"]),
-                )
-                out_rows.append(row)
-    if not out_rows:
-        return candidates.head(0).copy()
-    return pd.DataFrame(out_rows).sort_values(
-        ["side", "absorbed_pivot_count", "score", "span"],
-        ascending=[True, False, False, False],
-    ).reset_index(drop=True)
-
-
-def _candidate_is_absorbable_keep_seed(candidate: pd.Series, stronger: pd.Series, cfg: TrendlineProjectionV2Config) -> bool:
-    left_norm = _row_norm_slope(candidate)
-    right_norm = _row_norm_slope(stronger)
-    if not _angle_within_tolerance(left_norm, right_norm, float(cfg.absorb_angle_tolerance_pct)):
-        return False
-    return _candidate_pivots_near_line(candidate, stronger, float(cfg.absorb_touch_tolerance_pct))
-
-
 def _candidate_max_distance_to_line(candidate: pd.Series, stronger: pd.Series) -> float:
     pivots = _pivot_tuple(candidate["pivot_path"])
     prices = _price_tuple(candidate.to_dict())
@@ -2163,7 +661,7 @@ def _candidate_max_distance_to_line(candidate: pd.Series, stronger: pd.Series) -
 
 
 def _join_endpoint_continuations(candidates: DataFrame, cfg: TrendlineProjectionV2Config) -> DataFrame:
-    """Build raw plus A->B->C continuation chains when angles stay similar."""
+    """Join A->B and B->C into A->B->C, then remove exact component lines."""
 
     if candidates.empty:
         return candidates.copy()
@@ -2178,11 +676,11 @@ def _join_endpoint_continuations(candidates: DataFrame, cfg: TrendlineProjection
             next_frontier: list[dict[str, float | str]] = []
             seen_paths: set[str] = set()
             for path in frontier:
-                continuations = by_old_anchor.get(float(path["x_new"]))
-                if continuations is None:
-                    continue
                 path_pivots = _pivot_tuple(path["pivot_path"])
                 path_prices = _price_tuple(path)
+                continuations = by_old_anchor.get(float(path_pivots[-1]))
+                if continuations is None:
+                    continue
                 path_norm = _row_norm_slope(pd.Series(path))
                 for segment in continuations.itertuples(index=False):
                     next_pivot = int(round(float(segment.x_new)))
@@ -2197,6 +695,7 @@ def _join_endpoint_continuations(candidates: DataFrame, cfg: TrendlineProjection
                         pivots=new_pivots,
                         prices=new_prices,
                         projection_end=float(segment.projection_end),
+                        live_start=float(segment.live_start),
                         prominence=float((float(path["prominence"]) + float(segment.prominence)) / 2.0),
                         score=min(float(path["score"]) * 0.65 + float(segment.score) * 0.35 + 0.06, 1.0),
                         cfg=cfg,
@@ -2216,7 +715,8 @@ def _join_endpoint_continuations(candidates: DataFrame, cfg: TrendlineProjection
 
     joined = pd.DataFrame(output_rows)
     joined = joined.sort_values(["pivot_count", "score", "span"], ascending=False)
-    return joined.drop_duplicates(["side", "pivot_path"], keep="first").reset_index(drop=True)
+    joined = joined.drop_duplicates(["side", "pivot_path"], keep="first").reset_index(drop=True)
+    return _absorb_shared_pivot_smaller_lines(joined, cfg)
 
 
 def _candidate_from_path(
@@ -2225,39 +725,49 @@ def _candidate_from_path(
     pivots: tuple[int, ...],
     prices: tuple[float, ...],
     projection_end: float,
+    live_start: float,
     prominence: float,
     score: float,
     cfg: TrendlineProjectionV2Config,
 ) -> dict[str, float | str] | None:
+    if len(pivots) < 2 or len(prices) < 2:
+        return None
     x_old = float(pivots[0])
-    x_new = float(pivots[-1])
+    x_new = float(pivots[1])
+    x_end = float(pivots[-1])
     y_old = float(prices[0])
-    y_new = float(prices[-1])
-    span = x_new - x_old
+    y_new = float(prices[1])
+    y_end = float(prices[-1])
+    span = x_end - x_old
     if span <= 0.0:
         return None
-    slope = (y_new - y_old) / span
-    intercept = y_new - slope * x_new
+    slope = (y_end - y_old) / span
+    intercept = y_end - slope * x_end
     line_at_pivots = np.array([intercept + slope * float(pivot) for pivot in pivots], dtype="float64")
     prices_array = np.array(prices, dtype="float64")
     midpoint_error = np.max(np.abs(prices_array - line_at_pivots) / np.maximum(np.abs(prices_array), 1e-9))
     if midpoint_error > float(cfg.join_midpoint_tolerance_pct):
         return None
-    price_ref = max((abs(y_old) + abs(y_new)) / 2.0, 1e-9)
+    price_ref = max((abs(y_old) + abs(y_end)) / 2.0, 1e-9)
     slope_pct = abs(slope) / price_ref
     if not np.isfinite(slope_pct) or slope_pct > float(cfg.max_slope_pct_per_bar):
+        return None
+    if projection_end < live_start:
         return None
     return {
         "side": side,
         "x_old": x_old,
         "x_new": x_new,
+        "x_end": x_end,
         "x_join": float(pivots[-2]),
         "y_old": y_old,
         "y_join": float(prices[-2]),
         "y_new": y_new,
+        "y_end": y_end,
         "slope": float(slope),
         "intercept": float(intercept),
         "projection_end": projection_end,
+        "live_start": float(live_start),
         "span": float(span),
         "slope_pct": float(slope_pct),
         "prominence": prominence,
@@ -2266,11 +776,14 @@ def _candidate_from_path(
         "pivot_path": "|".join(str(pivot) for pivot in pivots),
         "price_path": "|".join(str(float(price)) for price in prices),
         "source_count": float(len(pivots) - 1),
+        "absorbed_pivot_count": float(len(pivots)),
+        "absorbed_line_count": 0.0,
+        "half_width": 0.0,
     }
 
 
 def _absorb_shared_pivot_smaller_lines(candidates: DataFrame, cfg: TrendlineProjectionV2Config) -> DataFrame:
-    """Remove smaller lines when all their pivots are contained in a larger line."""
+    """Replace exact component lines after the larger line becomes knowable."""
 
     if candidates.empty:
         return candidates.copy()
@@ -2279,30 +792,57 @@ def _absorb_shared_pivot_smaller_lines(candidates: DataFrame, cfg: TrendlineProj
     sorted_candidates = candidates.sort_values(["pivot_count", "span", "score"], ascending=False)
     for _, side_candidates in sorted_candidates.groupby("side", sort=False):
         side_kept: list[pd.Series] = []
+        pre_replacement_rows: list[pd.Series] = []
         for _, candidate in side_candidates.iterrows():
             candidate_pivots = _pivot_set(candidate["pivot_path"])
             absorbed = False
+            earliest_replacement_live_start = np.inf
             for kept in side_kept:
                 kept_pivots = _pivot_set(kept["pivot_path"])
                 if len(candidate_pivots) < int(cfg.shared_pivot_merge_min):
                     continue
                 if candidate_pivots.issubset(kept_pivots):
+                    kept["absorbed_line_count"] = float(kept.get("absorbed_line_count", 0.0)) + 1.0
+                    replacement_live_start = float(kept.get("live_start", kept["x_new"]))
+                    earliest_replacement_live_start = min(earliest_replacement_live_start, replacement_live_start)
                     absorbed = True
-                    break
             if not absorbed:
                 side_kept.append(candidate)
+                continue
+            pre_replacement = _truncate_candidate_before(candidate, earliest_replacement_live_start - 1.0)
+            if pre_replacement is not None:
+                pre_replacement["line_kind"] = "pre_join_component"
+                pre_replacement["replacement_live_start"] = earliest_replacement_live_start
+                pre_replacement_rows.append(pre_replacement)
         kept_rows.extend(side_kept)
+        kept_rows.extend(pre_replacement_rows)
 
     if not kept_rows:
         return candidates.head(0).copy()
     merged = pd.DataFrame(kept_rows).sort_values(["side", "score", "span"], ascending=[True, False, False]).reset_index(drop=True)
-    merged["absorbed_pivot_count"] = merged["pivot_path"].map(lambda value: float(len(_pivot_set(value))))
-    merged["absorbed_line_count"] = 0.0
+    pivot_counts = merged["pivot_path"].map(lambda value: float(len(_pivot_set(value))))
+    existing_absorbed = pd.to_numeric(merged.get("absorbed_pivot_count", pivot_counts), errors="coerce")
+    merged["absorbed_pivot_count"] = np.maximum(existing_absorbed.fillna(pivot_counts), pivot_counts)
+    if "absorbed_line_count" not in merged:
+        merged["absorbed_line_count"] = 0.0
+    merged["absorbed_line_count"] = pd.to_numeric(merged["absorbed_line_count"], errors="coerce").fillna(0.0)
     return merged
 
 
-def _absorb_nearby_weaker_lines(candidates: DataFrame, proximity_pct: float) -> DataFrame:
-    """Remove weaker lines near stronger lines and transfer unique pivot confirmations."""
+def _truncate_candidate_before(candidate: pd.Series, cutoff_index: float) -> pd.Series | None:
+    """Keep an absorbed/deleted line only until the stronger replacement is live."""
+
+    row = candidate.copy()
+    live_start = float(row.get("live_start", row["x_new"]))
+    projection_end = min(float(row["projection_end"]), float(cutoff_index))
+    if projection_end < live_start:
+        return None
+    row["projection_end"] = float(projection_end)
+    return row
+
+
+def _absorb_nearby_weaker_lines(candidates: DataFrame, proximity_pct: float, cfg: TrendlineProjectionV2Config) -> DataFrame:
+    """Remove weaker duplicate lines and transfer unique pivot confirmations."""
 
     if candidates.empty:
         return candidates.copy()
@@ -2313,18 +853,31 @@ def _absorb_nearby_weaker_lines(candidates: DataFrame, proximity_pct: float) -> 
         kept: list[dict[str, object]] = []
         for _, candidate in side_candidates.iterrows():
             candidate_pivots = _pivot_set(candidate["pivot_path"])
+            candidate_points = _pivot_price_map(candidate)
             absorbed = False
             for kept_item in kept:
                 kept_row = kept_item["row"]
                 if not isinstance(kept_row, pd.Series):
                     continue
-                if _candidate_is_weaker_or_equal(candidate, kept_row) and _candidate_pivots_near_line(
+                if _candidate_is_weaker_or_equal(candidate, kept_row) and _candidate_is_absorbable_duplicate(
                     candidate,
                     kept_row,
                     proximity_pct,
+                    cfg,
                 ):
                     kept_item["absorbed_pivots"].update(candidate_pivots)
-                    kept_item["absorbed_line_count"] = int(kept_item["absorbed_line_count"]) + 1
+                    absorbed_points = kept_item["absorbed_points"]
+                    if isinstance(absorbed_points, dict):
+                        absorbed_points.update(candidate_points)
+                    kept_item["absorbed_line_count"] = (
+                        float(kept_item["absorbed_line_count"])
+                        + 1.0
+                        + max(float(candidate.get("absorbed_line_count", 0.0)), 0.0)
+                    )
+                    kept_item["line_width"] = max(
+                        float(kept_item["line_width"]),
+                        _candidate_max_distance_to_line(candidate, kept_row),
+                    )
                     absorbed = True
                     break
             if not absorbed:
@@ -2332,24 +885,66 @@ def _absorb_nearby_weaker_lines(candidates: DataFrame, proximity_pct: float) -> 
                     {
                         "row": candidate.copy(),
                         "absorbed_pivots": set(candidate_pivots),
-                        "absorbed_line_count": 0,
+                        "absorbed_points": candidate_points,
+                        "absorbed_line_count": max(float(candidate.get("absorbed_line_count", 0.0)), 0.0),
+                        "line_width": 0.0,
                     }
                 )
         for kept_item in kept:
             row = kept_item["row"]
             if isinstance(row, pd.Series):
                 row = row.copy()
-                row["absorbed_pivot_count"] = float(len(kept_item["absorbed_pivots"]))
+                row["absorbed_pivot_count"] = max(
+                    float(row.get("absorbed_pivot_count", 0.0)),
+                    float(len(kept_item["absorbed_pivots"])),
+                )
                 row["absorbed_line_count"] = float(kept_item["absorbed_line_count"])
                 row["nearby_merge_proximity_pct"] = float(proximity_pct)
-                out_rows.append(row)
+                row["half_width"] = float(kept_item["line_width"]) * float(cfg.absorb_width_scale)
+                if float(row["absorbed_line_count"]) > 0.0:
+                    row["line_kind"] = "nearby_absorbed"
+                row["score"] = min(
+                    1.0,
+                    float(row.get("score", 0.0))
+                    + 0.025 * float(row["absorbed_line_count"])
+                    + 0.015 * max(float(row["absorbed_pivot_count"]) - float(row.get("pivot_count", 2.0)), 0.0),
+                )
+                if float(row.get("projection_end", row["x_new"])) >= float(row.get("live_start", row["x_new"])):
+                    out_rows.append(row)
 
     if not out_rows:
         return candidates.head(0).copy()
-    return pd.DataFrame(out_rows).sort_values(
+    merged = pd.DataFrame(out_rows).sort_values(
         ["side", "absorbed_pivot_count", "score", "span"],
         ascending=[True, False, False, False],
     ).reset_index(drop=True)
+    cleaned = _absorb_shared_pivot_smaller_lines(merged, cfg)
+    return _preserve_absorbed_line_counts(cleaned, candidates, merged)
+
+
+def _preserve_absorbed_line_counts(result: DataFrame, *sources: DataFrame) -> DataFrame:
+    """Keep merge evidence counts from being reset by later cleanup passes."""
+
+    if result.empty or "pivot_path" not in result or "side" not in result:
+        return result
+    count_sources = []
+    for source in sources:
+        if source.empty or "absorbed_line_count" not in source or "pivot_path" not in source or "side" not in source:
+            continue
+        count_sources.append(
+            source.assign(absorbed_line_count=pd.to_numeric(source["absorbed_line_count"], errors="coerce").fillna(0.0))
+            .groupby(["side", "pivot_path"], dropna=False)["absorbed_line_count"]
+            .max()
+        )
+    if not count_sources:
+        return result
+    source_counts = pd.concat(count_sources, axis=1).max(axis=1)
+    out = result.copy()
+    current = pd.to_numeric(out.get("absorbed_line_count", 0.0), errors="coerce").fillna(0.0)
+    keys = pd.MultiIndex.from_frame(out[["side", "pivot_path"]])
+    preserved = pd.Series(keys.map(source_counts).to_numpy(dtype="float64"), index=out.index).fillna(0.0)
+    out["absorbed_line_count"] = np.maximum(current.to_numpy(dtype="float64"), preserved.to_numpy(dtype="float64"))
+    return out
 
 
 def _candidate_is_weaker_or_equal(candidate: pd.Series, stronger: pd.Series) -> bool:
@@ -2364,6 +959,65 @@ def _candidate_is_weaker_or_equal(candidate: pd.Series, stronger: pd.Series) -> 
         float(stronger.get("span", 0.0)),
     )
     return candidate_key <= stronger_key
+
+
+def _candidate_is_absorbable_duplicate(
+    candidate: pd.Series,
+    stronger: pd.Series,
+    proximity_pct: float,
+    cfg: TrendlineProjectionV2Config,
+) -> bool:
+    """Return true when two same-side lines express the same structure."""
+
+    if str(candidate.get("side")) != str(stronger.get("side")):
+        return False
+    left_norm = _row_norm_slope(candidate)
+    right_norm = _row_norm_slope(stronger)
+    if not _angle_within_tolerance(left_norm, right_norm, float(cfg.duplicate_angle_tolerance_pct)):
+        return False
+    if not _candidate_last_pivot_near_line(candidate, stronger, max(float(proximity_pct), float(cfg.duplicate_line_proximity_pct))):
+        return False
+    if _candidate_pivots_near_line(candidate, stronger, max(float(proximity_pct), float(cfg.duplicate_line_proximity_pct))):
+        return True
+    return _candidate_lines_overlap_same_structure(
+        candidate,
+        stronger,
+        max(float(proximity_pct), float(cfg.duplicate_line_proximity_pct)),
+        int(cfg.duplicate_min_overlap_bars),
+    )
+
+
+def _candidate_last_pivot_near_line(candidate: pd.Series, stronger: pd.Series, proximity_pct: float) -> bool:
+    pivots = _pivot_tuple(candidate["pivot_path"])
+    prices = _price_tuple(candidate.to_dict())
+    if not pivots or len(pivots) != len(prices):
+        return False
+    last_pivot = float(pivots[-1])
+    last_price = float(prices[-1])
+    stronger_price = float(stronger["intercept"]) + float(stronger["slope"]) * last_pivot
+    denominator = max(abs(last_price), 1e-9)
+    return abs(last_price - stronger_price) / denominator <= float(proximity_pct)
+
+
+def _candidate_lines_overlap_same_structure(
+    candidate: pd.Series,
+    stronger: pd.Series,
+    proximity_pct: float,
+    min_overlap_bars: int,
+) -> bool:
+    start = max(
+        float(candidate.get("live_start", candidate.get("x_new", 0.0))),
+        float(stronger.get("live_start", stronger.get("x_new", 0.0))),
+    )
+    end = min(float(candidate.get("projection_end", 0.0)), float(stronger.get("projection_end", 0.0)))
+    if end - start < float(min_overlap_bars):
+        return False
+    sample_x = np.array([start, (start + end) / 2.0, end], dtype="float64")
+    candidate_values = float(candidate["intercept"]) + float(candidate["slope"]) * sample_x
+    stronger_values = float(stronger["intercept"]) + float(stronger["slope"]) * sample_x
+    denominator = np.maximum(np.maximum(np.abs(candidate_values), np.abs(stronger_values)), 1e-9)
+    distance_pct = np.abs(candidate_values - stronger_values) / denominator
+    return bool(np.all(np.isfinite(distance_pct)) and np.nanmax(distance_pct) <= float(proximity_pct))
 
 
 def _candidate_pivots_near_line(candidate: pd.Series, stronger: pd.Series, proximity_pct: float) -> bool:
@@ -2382,12 +1036,14 @@ def _candidate_pivots_near_line(candidate: pd.Series, stronger: pd.Series, proxi
 
 
 def _candidate_norm_slope(candidates: DataFrame) -> Series:
-    price_ref = ((candidates["y_old"].abs() + candidates["y_new"].abs()) / 2.0).replace(0.0, np.nan)
+    end_price = candidates["y_end"] if "y_end" in candidates else candidates["y_new"]
+    price_ref = ((candidates["y_old"].abs() + end_price.abs()) / 2.0).replace(0.0, np.nan)
     return (candidates["slope"] / price_ref).replace([np.inf, -np.inf], np.nan)
 
 
 def _row_norm_slope(row: pd.Series) -> float:
-    price_ref = max((abs(float(row["y_old"])) + abs(float(row["y_new"]))) / 2.0, 1e-9)
+    end_price = row.get("y_end", row["y_new"])
+    price_ref = max((abs(float(row["y_old"])) + abs(float(end_price))) / 2.0, 1e-9)
     return float(row["slope"]) / price_ref
 
 
@@ -2402,6 +1058,14 @@ def _price_tuple(row: dict[str, object]) -> tuple[float, ...]:
     return (float(row["y_old"]), float(row["y_new"]))
 
 
+def _pivot_price_map(row: pd.Series) -> dict[int, float]:
+    pivots = _pivot_tuple(row["pivot_path"])
+    prices = _price_tuple(row.to_dict())
+    if len(pivots) != len(prices):
+        return {}
+    return {int(pivot): float(price) for pivot, price in zip(pivots, prices, strict=False)}
+
+
 def _angle_within_tolerance(left_norm_slope: float, right_norm_slope: float, tolerance_pct: float) -> bool:
     if not np.isfinite(left_norm_slope) or not np.isfinite(right_norm_slope):
         return False
@@ -2411,105 +1075,6 @@ def _angle_within_tolerance(left_norm_slope: float, right_norm_slope: float, tol
 
 def _pivot_set(path: object) -> set[int]:
     return {int(part) for part in str(path).split("|") if part != ""}
-
-
-def _diagnostic_cluster_table(
-    *,
-    frame: DataFrame,
-    candidates: DataFrame,
-    label: str,
-    proximity_pct: float,
-    min_lines: int,
-    slots: int,
-) -> DataFrame:
-    if candidates.empty:
-        return pd.DataFrame(index=frame.index)
-    line_values, score_values, _ = _candidate_matrix_for_frame(frame, candidates)
-    clusters = _cluster_matrix_rows(
-        line_values=line_values,
-        score_values=score_values,
-        close=_num(frame, "close").to_numpy(dtype="float64"),
-        proximity_pct=proximity_pct,
-        min_lines=min_lines,
-        slots=slots,
-    )
-    return pd.DataFrame(_cluster_output_columns(clusters, frame.index, "tlv2", label, include_bias=False), index=frame.index)
-
-
-def _diagnostic_hotspot_table(
-    *,
-    frame: DataFrame,
-    candidates: DataFrame,
-    proximity_pct: float,
-    min_lines: int,
-    slots: int,
-) -> DataFrame:
-    if candidates.empty:
-        return pd.DataFrame(index=frame.index)
-    line_values, score_values, labels = _candidate_matrix_for_frame(frame, candidates)
-    clusters = _cluster_matrix_rows(
-        line_values=line_values,
-        score_values=score_values,
-        close=_num(frame, "close").to_numpy(dtype="float64"),
-        proximity_pct=proximity_pct,
-        min_lines=min_lines,
-        slots=slots,
-        labels=labels,
-    )
-    return pd.DataFrame(_cluster_output_columns(clusters, frame.index, "tlv2", "hotspot", include_bias=True), index=frame.index)
-
-
-def _candidate_matrix_for_frame(frame: DataFrame, candidates: DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    rows = len(frame)
-    line_values = np.full((rows, len(candidates)), np.nan, dtype="float64")
-    score_values = np.full((rows, len(candidates)), np.nan, dtype="float64")
-    labels = np.where(candidates["side"].eq("resistance").to_numpy(), 1.0, -1.0)
-    x_values = np.arange(rows, dtype="float64")
-    for col, candidate in enumerate(candidates.itertuples(index=False)):
-        start = max(int(candidate.x_old), 0)
-        end = min(int(candidate.projection_end), rows - 1)
-        if end < start:
-            continue
-        xs = x_values[start : end + 1]
-        line_values[start : end + 1, col] = float(candidate.intercept) + float(candidate.slope) * xs
-        score_values[start : end + 1, col] = float(candidate.score)
-    return line_values, score_values, labels
-
-
-def _empty_pack() -> dict[str, list[Series]]:
-    return {
-        "line": [],
-        "score": [],
-        "slope": [],
-        "slope_pct": [],
-        "anchor_old_index": [],
-        "anchor_new_index": [],
-        "projection_end_index": [],
-        "line_id": [],
-        "pivot_count": [],
-        "absorbed_pivot_count": [],
-        "line_width": [],
-        "last_confirm_index": [],
-    }
-
-
-def _series_matrix(values: Sequence[Series]) -> np.ndarray:
-    if not values:
-        return np.empty((0, 0), dtype="float64")
-    return pd.concat(list(values), axis=1).astype("float64").to_numpy()
-
-
-def _select_metric(values: np.ndarray, chosen: np.ndarray, valid: np.ndarray) -> np.ndarray:
-    rows = np.arange(values.shape[0])
-    selected = values[rows, chosen]
-    return np.where(valid, selected, np.nan)
-
-
-def _plot_safe_line(line: Series, line_id: Series, break_pct: float) -> Series:
-    line_float = line.astype("float64")
-    id_change = line_id.ne(line_id.shift(1))
-    jump = (line_float.pct_change(fill_method=None).abs() > break_pct).fillna(False)
-    return line_float.where(~id_change & ~jump)
 
 
 def _atr(frame: DataFrame, period: int) -> Series:
@@ -2532,14 +1097,6 @@ def _num(frame: DataFrame, column: str) -> Series:
     return pd.to_numeric(frame[column], errors="coerce")
 
 
-def _safe_div(numerator: Series, denominator: Series) -> Series:
-    return numerator / denominator.replace(0.0, np.nan)
-
-
-def _clip01(value: Series) -> Series:
-    return value.clip(lower=0.0, upper=1.0)
-
-
 def _resolve_config(config: TrendlineProjectionV2Config | None, overrides: dict[str, object]) -> TrendlineProjectionV2Config:
     cfg = config or TrendlineProjectionV2Config()
     clean = {key: value for key, value in overrides.items() if value is not None}
@@ -2556,86 +1113,36 @@ def _validate_dataframe(frame: DataFrame) -> None:
 def _validate_config(cfg: TrendlineProjectionV2Config) -> None:
     if cfg.pivot_strength < 1:
         raise ValueError("pivot_strength must be positive")
-    if cfg.confirmation_pivot_strength < 1:
-        raise ValueError("confirmation_pivot_strength must be positive")
+    if cfg.pivot_method not in ("body", "atr_zigzag"):
+        raise ValueError("pivot_method must be 'body' or 'atr_zigzag'")
+    if cfg.zigzag_atr_mult <= 0.0:
+        raise ValueError("zigzag_atr_mult must be positive")
+    if cfg.pivot_score_touch_atr_mult < 0.0 or cfg.pivot_score_touch_pct < 0.0:
+        raise ValueError("pivot score touch tolerances must be non-negative")
     if cfg.candidate_pivot_count < 3:
         raise ValueError("candidate_pivot_count must be at least 3")
     if cfg.raw_line_output_count < 1:
         raise ValueError("raw_line_output_count must be positive")
-    if cfg.confirmed_line_output_count < 1 or cfg.absorbed_line_output_count < 1:
-        raise ValueError("confirmed/absorbed line output counts must be positive")
-    if cfg.channel_output_count < 1:
-        raise ValueError("channel_output_count must be positive")
-    if cfg.fuzzy_zone_count < 1 or cfg.hotspot_count < 1:
-        raise ValueError("cluster output counts must be positive")
     if cfg.min_anchor_bars < 1:
         raise ValueError("min_anchor_bars must be positive")
     if cfg.max_anchor_bars < cfg.min_anchor_bars:
         raise ValueError("max_anchor_bars must be greater than or equal to min_anchor_bars")
     if cfg.min_pivot_prominence_atr < 0.0:
         raise ValueError("min_pivot_prominence_atr must be non-negative")
-    if cfg.min_confirmation_pivot_prominence_atr < 0.0:
-        raise ValueError("min_confirmation_pivot_prominence_atr must be non-negative")
     if cfg.max_slope_pct_per_bar <= 0.0:
         raise ValueError("max_slope_pct_per_bar must be positive")
     if cfg.max_projection_bars < 1:
         raise ValueError("max_projection_bars must be positive")
-    if cfg.channel_source_line_count < 2:
-        raise ValueError("channel_source_line_count must be at least 2")
-    if cfg.channel_candidate_pool_size < cfg.channel_source_line_count:
-        raise ValueError("channel_candidate_pool_size must be greater than or equal to channel_source_line_count")
-    if cfg.channel_min_pivot_prominence_atr < 0.0:
-        raise ValueError("channel_min_pivot_prominence_atr must be non-negative")
-    if cfg.channel_min_anchor_bars < 1:
-        raise ValueError("channel_min_anchor_bars must be positive")
-    if cfg.channel_max_anchor_bars < cfg.min_anchor_bars:
-        raise ValueError("channel_max_anchor_bars must be greater than or equal to min_anchor_bars")
-    if cfg.channel_max_anchor_bars < cfg.channel_min_anchor_bars:
-        raise ValueError("channel_max_anchor_bars must be greater than or equal to channel_min_anchor_bars")
-    if cfg.channel_max_projection_bars < 1:
-        raise ValueError("channel_max_projection_bars must be positive")
-    if cfg.channel_min_overlap_bars < 1:
-        raise ValueError("channel_min_overlap_bars must be positive")
-    if cfg.channel_slope_tolerance_pct <= 0.0:
-        raise ValueError("channel_slope_tolerance_pct must be positive")
-    if cfg.channel_parallel_width_change_pct <= 0.0 or cfg.channel_min_convergence_pct < 0.0:
-        raise ValueError("channel width relation settings are invalid")
-    if cfg.channel_min_width_pct <= 0.0 or cfg.channel_max_width_pct <= cfg.channel_min_width_pct:
-        raise ValueError("channel width settings are invalid")
-    if cfg.channel_preferred_width_pct <= 0.0:
-        raise ValueError("channel_preferred_width_pct must be positive")
-    if not 0.0 <= cfg.channel_min_containment_ratio <= 1.0:
-        raise ValueError("channel_min_containment_ratio must be between 0 and 1")
-    if cfg.channel_touch_tolerance_pct <= 0.0 or cfg.channel_touch_atr_mult < 0.0:
-        raise ValueError("channel touch tolerances are invalid")
-    if cfg.channel_min_pivot_touches < 2:
-        raise ValueError("channel_min_pivot_touches must be at least 2")
-    if cfg.channel_min_rail_touches < 1:
-        raise ValueError("channel_min_rail_touches must be positive")
-    if cfg.channel_min_recent_rail_touches < 0:
-        raise ValueError("channel_min_recent_rail_touches must be non-negative")
-    if not 0.0 < cfg.channel_recent_touch_fraction <= 1.0:
-        raise ValueError("channel_recent_touch_fraction must be between 0 and 1")
-    if not 0.0 <= cfg.channel_min_position_coverage <= 1.0:
-        raise ValueError("channel_min_position_coverage must be between 0 and 1")
-    if not 0.0 < cfg.channel_duplicate_overlap_pct <= 1.0:
-        raise ValueError("channel_duplicate_overlap_pct must be between 0 and 1")
-    if cfg.channel_duplicate_mid_width_mult <= 0.0:
-        raise ValueError("channel_duplicate_mid_width_mult must be positive")
-    if cfg.channel_duplicate_width_tolerance_pct <= 0.0:
-        raise ValueError("channel_duplicate_width_tolerance_pct must be positive")
-    if cfg.channel_duplicate_slope_tolerance_pct <= 0.0:
-        raise ValueError("channel_duplicate_slope_tolerance_pct must be positive")
-    if cfg.channel_breakout_grace_bars < 0:
-        raise ValueError("channel_breakout_grace_bars must be non-negative")
-    if cfg.confirmation_tolerance_pct <= 0.0 or cfg.confirmation_atr_mult < 0.0:
-        raise ValueError("confirmation tolerances must be positive")
-    if cfg.confirmation_max_bars < 1 or cfg.confirmation_min_pivots < 2:
-        raise ValueError("confirmation bars/pivots settings are invalid")
+    if cfg.max_active_line_distance_pct <= 0.0 or cfg.max_active_line_distance_atr_mult <= 0.0:
+        raise ValueError("active line distance settings must be positive")
     if cfg.absorb_touch_tolerance_pct <= 0.0 or cfg.absorb_angle_tolerance_pct <= 0.0:
         raise ValueError("absorb tolerances must be positive")
     if cfg.absorb_width_scale < 0.0:
         raise ValueError("absorb_width_scale must be non-negative")
+    if cfg.duplicate_line_proximity_pct <= 0.0 or cfg.duplicate_angle_tolerance_pct <= 0.0:
+        raise ValueError("duplicate tolerances must be positive")
+    if cfg.duplicate_min_overlap_bars < 1:
+        raise ValueError("duplicate_min_overlap_bars must be positive")
     if cfg.anchor_break_edge_bars < 0 or cfg.anchor_break_max_run < 0:
         raise ValueError("anchor break bars/run settings must be non-negative")
     if cfg.anchor_break_max_pct < 0.0 or cfg.anchor_break_max_atr_mult < 0.0:
@@ -2644,10 +1151,6 @@ def _validate_config(cfg: TrendlineProjectionV2Config) -> None:
         raise ValueError("projection_break_candles must be positive")
     if cfg.projection_break_tolerance_pct < 0.0 or cfg.projection_break_atr_mult < 0.0:
         raise ValueError("projection break tolerance settings must be non-negative")
-    if cfg.density_proximity_pct <= 0.0 or cfg.hotspot_proximity_pct <= 0.0:
-        raise ValueError("cluster proximity settings must be positive")
-    if cfg.density_min_lines < 2 or cfg.hotspot_min_lines < 2:
-        raise ValueError("cluster min line settings must be at least 2")
     if cfg.join_angle_tolerance_pct <= 0.0:
         raise ValueError("join_angle_tolerance_pct must be positive")
     if cfg.join_midpoint_tolerance_pct <= 0.0:
@@ -2656,17 +1159,10 @@ def _validate_config(cfg: TrendlineProjectionV2Config) -> None:
         raise ValueError("max_joined_pivots must be at least 2")
     if cfg.shared_pivot_merge_min < 1:
         raise ValueError("shared_pivot_merge_min must be positive")
-    if not cfg.nearby_merge_proximity_pcts:
-        raise ValueError("nearby_merge_proximity_pcts must not be empty")
-    if any(proximity <= 0.0 for proximity in cfg.nearby_merge_proximity_pcts):
-        raise ValueError("nearby_merge_proximity_pcts values must be positive")
-    if cfg.max_raw_lines_plotted < 1:
-        raise ValueError("max_raw_lines_plotted must be positive")
-
+    if cfg.nearby_merge_proximity_pct <= 0.0:
+        raise ValueError("nearby_merge_proximity_pct must be positive")
 
 __all__ = [
     "TrendlineProjectionV2Config",
-    "TrendlineProjectionV2Diagnostic",
     "add_trendline_projection_v2",
-    "build_trendline_projection_v2_diagnostic",
 ]

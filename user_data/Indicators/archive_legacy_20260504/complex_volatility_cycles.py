@@ -44,7 +44,9 @@ class VolatilityCycleConfig:
     compression_release_lookback: int = 8
     entry_cooldown_bars: int = 8
     context_window: int = 24
-    trendline_prefix: str = "tl"
+    channel_prefix: str = "tlv2"
+    channel_label: str = "local_channel"
+    channel_rank: int = 0
     output_prefix: str = "vc"
 
 
@@ -66,7 +68,9 @@ def add_volatility_cycles(
     compression_release_lookback: int | None = None,
     entry_cooldown_bars: int | None = None,
     context_window: int | None = None,
-    trendline_prefix: str | None = None,
+    channel_prefix: str | None = None,
+    channel_label: str | None = None,
+    channel_rank: int | None = None,
     output_prefix: str | None = None,
 ) -> DataFrame:
     """Append vectorized volatility-cycle columns and normalized scores."""
@@ -87,7 +91,9 @@ def add_volatility_cycles(
         compression_release_lookback=compression_release_lookback,
         entry_cooldown_bars=entry_cooldown_bars,
         context_window=context_window,
-        trendline_prefix=trendline_prefix,
+        channel_prefix=channel_prefix,
+        channel_label=channel_label,
+        channel_rank=channel_rank,
         output_prefix=output_prefix,
     )
     _validate_config(cfg)
@@ -116,17 +122,25 @@ def add_volatility_cycles(
     candle_range = (high - low).clip(lower=0.0)
     close_location = ((_safe_div(close - low, candle_range) * 2.0) - 1.0).clip(-1.0, 1.0)
     body_direction = np.sign(close - open_)
-    tl_compression = _num(frame, f"{cfg.trendline_prefix}_channel_compression")
+    channel_base = f"{cfg.channel_prefix}_{cfg.channel_label}"
+    channel_active = _bool(frame, f"{channel_base}_active_rank{int(cfg.channel_rank)}")
+    channel_score = _num(frame, f"{channel_base}_score_rank{int(cfg.channel_rank)}")
+    channel_shape = _num(frame, f"{channel_base}_shape_rank{int(cfg.channel_rank)}")
+    channel_width_change = _num(frame, f"{channel_base}_width_change_pct_rank{int(cfg.channel_rank)}")
 
     atr_compression = _clip01((cfg.compression_atr_ratio - atr_ratio) / max(cfg.compression_atr_ratio, 1e-9))
     range_compression = _clip01(1.0 - range_ratio)
     volume_dry = _clip01((cfg.dry_volume_rvol - rvol) / max(cfg.dry_volume_rvol, 1e-9))
-    tl_compression_score = _clip01(1.0 - tl_compression.fillna(1.0))
+    channel_convergence_score = _clip01((-channel_width_change.fillna(0.0)) / 0.35)
+    channel_compression_score = (
+        _clip01(0.60 * channel_convergence_score + 0.40 * channel_score.fillna(0.0))
+        .where(channel_active & channel_shape.eq(1.0), 0.0)
+    )
     compression_score = _clip01(
         0.40 * atr_compression
         + 0.30 * range_compression
         + 0.20 * volume_dry
-        + 0.10 * tl_compression_score
+        + 0.10 * channel_compression_score
     )
 
     range_expansion = _clip01(
@@ -307,6 +321,10 @@ def _validate_config(cfg: VolatilityCycleConfig) -> None:
         raise ValueError("cycle thresholds must be positive")
     if not 0.0 <= cfg.close_location_extreme <= 1.0:
         raise ValueError("close_location_extreme must be between 0.0 and 1.0")
+    if int(cfg.channel_rank) < 0:
+        raise ValueError("channel_rank must be non-negative")
+    if not cfg.channel_prefix or not cfg.channel_label:
+        raise ValueError("channel_prefix and channel_label must be set")
 
 
 def _validate_dataframe(dataframe: DataFrame) -> None:
@@ -343,3 +361,9 @@ def _num(frame: DataFrame, column: str) -> Series:
     if column not in frame.columns:
         return pd.Series(np.nan, index=frame.index, dtype="float64")
     return pd.to_numeric(frame[column], errors="coerce")
+
+
+def _bool(frame: DataFrame, column: str) -> Series:
+    if column not in frame.columns:
+        return pd.Series(False, index=frame.index, dtype="bool")
+    return pd.Series(frame[column], index=frame.index).fillna(False).astype("bool")

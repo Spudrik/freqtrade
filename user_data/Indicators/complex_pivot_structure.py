@@ -7,6 +7,11 @@ import numpy as np
 import pandas as pd
 from pandas import DataFrame, Series
 
+try:
+    from .pivot_foundation import build_clean_pivot_source
+except Exception:  # pragma: no cover - optional fallback for standalone notebooks
+    from pivot_foundation import build_clean_pivot_source  # type: ignore[no-redef]
+
 
 @dataclass(frozen=True)
 class PivotStructureConfig:
@@ -18,6 +23,10 @@ class PivotStructureConfig:
     right-side candles have closed, so the current row never uses unknown future
     candles.
 
+    Pivot detection uses open/close body highs and lows from the shared pivot
+    foundation. Wick highs/lows are still used where this indicator checks
+    actual candle interaction with structural zones.
+
     Freqtrade/hyperopt notes:
     - All fields are strategy-facing tuning knobs.
     - Per-strength outputs let a strategy hyperopt the active strength without
@@ -27,10 +36,9 @@ class PivotStructureConfig:
 
     Score meaning:
     - ``*_score_long`` rises when confirmed structure shows higher-high /
-      higher-low sequences, bullish trend-aligned/trend-flip breakouts, an
-      upward channel bias, and actionable upside target space.
-    - ``*_score_short`` mirrors that for lower-high / lower-low structure,
-      bearish breakouts, downward channel bias, and downside target space.
+      higher-low sequences and bullish trend-aligned/trend-flip breakouts.
+    - ``*_score_short`` mirrors that for lower-high / lower-low structure and
+      bearish breakouts.
     - ``*_score_abs`` is max(long, short). It measures structural clarity rather
       than direction.
     - ``*_state`` is -1/0/1 directional lean and is not normalized.
@@ -48,12 +56,8 @@ class PivotStructureConfig:
       larger support/resistance memory. They use stricter prominence, spacing,
       and distance filters, then expose horizontal support/resistance zones.
 
-    Channel compression:
-    ``*_channel_width_ratio`` is current channel width divided by its recent
-    median width. ``*_channel_compression`` is a bounded 0..1 score derived from
-    that ratio: 0 means width is normal/wide versus history, 1 means the channel
-    is compressed to ``compression_full_at_ratio`` or lower. It is not a price
-    target; it is a regime/guard feature for squeeze-like structure.
+    Channel detection is intentionally not part of this indicator. Channels are
+    built from ranked trendline evidence in the dedicated channel indicator.
     """
 
     strength: int = 5
@@ -65,16 +69,8 @@ class PivotStructureConfig:
     min_pivot_distance_atr: float = 0.0
     min_pivot_distance_pct: float = 0.0
     max_pivot_age_bars: int = 240
-    zone_atr_mult: float = 0.35
-    zone_pct: float = 0.003
-    min_channel_width_pct: float = 0.003
-    min_target_distance_pct: float = 0.002
     breakout_buffer_pct: float = 0.001
     structure_score_window: int = 12
-    compression_window: int = 48
-    compression_min_periods: int = 12
-    compression_full_at_ratio: float = 0.50
-    compression_none_at_ratio: float = 1.00
     structural_strength: int = 21
     structural_min_prominence_atr: float = 1.25
     structural_min_prominence_pct: float = 0.012
@@ -100,16 +96,8 @@ def add_pivot_structure(
     min_pivot_distance_atr: float | None = None,
     min_pivot_distance_pct: float | None = None,
     max_pivot_age_bars: int | None = None,
-    zone_atr_mult: float | None = None,
-    zone_pct: float | None = None,
-    min_channel_width_pct: float | None = None,
-    min_target_distance_pct: float | None = None,
     breakout_buffer_pct: float | None = None,
     structure_score_window: int | None = None,
-    compression_window: int | None = None,
-    compression_min_periods: int | None = None,
-    compression_full_at_ratio: float | None = None,
-    compression_none_at_ratio: float | None = None,
     structural_strength: int | None = None,
     structural_min_prominence_atr: float | None = None,
     structural_min_prominence_pct: float | None = None,
@@ -122,7 +110,7 @@ def add_pivot_structure(
     prefix: str | None = None,
 ) -> DataFrame:
     """
-    Append no-lookahead pivot structure, trendline, and target-range columns.
+    Append no-lookahead pivot structure and structural-zone columns.
 
     Per-strength columns are precomputed so strategies can choose an active
     strength later without recalculating indicators during hyperopt. Active
@@ -132,9 +120,8 @@ def add_pivot_structure(
     - confirmed local pivots and pivot prominence
     - confirmed structural pivots and horizontal structure zones
     - current/previous swing levels and swing ages
-    - projected local support/resistance channel columns
+    - simple two-pivot local support/resistance line evidence
     - HH/HL/LH/LL, trend-aligned/trend-flip breakouts, and structure state columns
-    - bounded channel compression and channel width ratio columns
     - normalized ``*_score_long/short/abs`` and directional ``*_state``
     """
 
@@ -149,16 +136,8 @@ def add_pivot_structure(
         min_pivot_distance_atr=min_pivot_distance_atr,
         min_pivot_distance_pct=min_pivot_distance_pct,
         max_pivot_age_bars=max_pivot_age_bars,
-        zone_atr_mult=zone_atr_mult,
-        zone_pct=zone_pct,
-        min_channel_width_pct=min_channel_width_pct,
-        min_target_distance_pct=min_target_distance_pct,
         breakout_buffer_pct=breakout_buffer_pct,
         structure_score_window=structure_score_window,
-        compression_window=compression_window,
-        compression_min_periods=compression_min_periods,
-        compression_full_at_ratio=compression_full_at_ratio,
-        compression_none_at_ratio=compression_none_at_ratio,
         structural_strength=structural_strength,
         structural_min_prominence_atr=structural_min_prominence_atr,
         structural_min_prominence_pct=structural_min_prominence_pct,
@@ -173,24 +152,19 @@ def add_pivot_structure(
     _validate_config(cfg)
     _validate_dataframe(dataframe)
 
+    open_ = _num(dataframe["open"])
     high = _num(dataframe["high"])
     low = _num(dataframe["low"])
     close = _num(dataframe["close"]).replace(0, np.nan)
+    body_high = pd.concat([open_, close], axis=1).max(axis=1)
+    body_low = pd.concat([open_, close], axis=1).min(axis=1)
     atr = _atr(dataframe, cfg.atr_period)
     p = cfg.prefix
 
-    zone_width = pd.concat(
-        [
-            atr * float(cfg.zone_atr_mult),
-            close * float(cfg.zone_pct),
-        ],
-        axis=1,
-    ).max(axis=1)
     bar_index = pd.Series(np.arange(len(dataframe), dtype="float64"), index=dataframe.index)
 
     new_cols: dict[str, Series] = {
         f"{p}_atr": atr,
-        f"{p}_zone_width": zone_width,
         f"{p}_bar_index": bar_index,
     }
 
@@ -199,11 +173,10 @@ def add_pivot_structure(
         columns = _pivot_columns(
             dataframe.index,
             bar_index,
-            high,
-            low,
+            body_high,
+            body_low,
             close,
             atr,
-            zone_width,
             pivot_strength,
             cfg,
             p,
@@ -214,6 +187,8 @@ def add_pivot_structure(
         _structural_pivot_columns(
             dataframe.index,
             bar_index,
+            body_high,
+            body_low,
             high,
             low,
             close,
@@ -243,68 +218,35 @@ def _pivot_columns(
     low: Series,
     close: Series,
     atr: Series,
-    zone_width: Series,
     strength: int,
     cfg: PivotStructureConfig,
     prefix: str,
 ) -> dict[str, Series]:
-    left = int(strength)
-    right = int(strength)
-    window = left + right + 1
-
-    candidate_high = high.shift(right)
-    candidate_low = low.shift(right)
-    candidate_atr = atr.shift(right).replace(0, np.nan)
-
-    left_high = high.shift(right + 1).rolling(left, min_periods=left).max()
-    right_high = high.rolling(right, min_periods=right).max()
-    left_low = low.shift(right + 1).rolling(left, min_periods=left).min()
-    right_low = low.rolling(right, min_periods=right).min()
-    window_high = high.rolling(window, min_periods=window).max()
-    window_low = low.rolling(window, min_periods=window).min()
-
-    high_prominence = (candidate_high - window_low) / candidate_atr
-    low_prominence = (window_high - candidate_low) / candidate_atr
-    high_prominence_pct = _safe_div(candidate_high - window_low, candidate_high)
-    low_prominence_pct = _safe_div(window_high - candidate_low, candidate_low)
-    high_confirmed = (
-        candidate_high.notna()
-        & left_high.notna()
-        & right_high.notna()
-        & (candidate_high >= left_high)
-        & (candidate_high > right_high)
-        & (high_prominence >= float(cfg.min_prominence_atr))
-        & (high_prominence_pct >= float(cfg.min_prominence_pct))
+    pivots = build_clean_pivot_source(
+        body_high=high,
+        body_low=low,
+        atr=atr,
+        bar_index=bar_index,
+        strength=int(strength),
+        method="body",
+        min_prominence_atr=float(cfg.min_prominence_atr),
+        min_prominence_pct=float(cfg.min_prominence_pct),
+        min_pivot_spacing_bars=int(cfg.min_pivot_spacing_bars),
+        min_pivot_distance_atr=float(cfg.min_pivot_distance_atr),
+        min_pivot_distance_pct=float(cfg.min_pivot_distance_pct),
     )
-    low_confirmed = (
-        candidate_low.notna()
-        & left_low.notna()
-        & right_low.notna()
-        & (candidate_low <= left_low)
-        & (candidate_low < right_low)
-        & (low_prominence >= float(cfg.min_prominence_atr))
-        & (low_prominence_pct >= float(cfg.min_prominence_pct))
-    )
-
-    high_confirmed = _filter_pivot_noise(
-        high_confirmed,
-        candidate_high,
-        bar_index - right,
-        candidate_atr,
-        cfg,
-    )
-    low_confirmed = _filter_pivot_noise(
-        low_confirmed,
-        candidate_low,
-        bar_index - right,
-        candidate_atr,
-        cfg,
-    )
-
-    high_event_price = candidate_high.where(high_confirmed)
-    low_event_price = candidate_low.where(low_confirmed)
-    high_event_index = (bar_index - right).where(high_confirmed)
-    low_event_index = (bar_index - right).where(low_confirmed)
+    high_confirmed = pivots["pivot_high_confirmed"]
+    low_confirmed = pivots["pivot_low_confirmed"]
+    high_event_price = pivots["pivot_high"]
+    low_event_price = pivots["pivot_low"]
+    high_event_index = pivots["pivot_high_index"]
+    low_event_index = pivots["pivot_low_index"]
+    high_event_prominence = pivots["pivot_high_prominence"]
+    low_event_prominence = pivots["pivot_low_prominence"]
+    high_event_prominence_pct = pivots["pivot_high_prominence_pct"]
+    low_event_prominence_pct = pivots["pivot_low_prominence_pct"]
+    high_event_score = pivots["pivot_high_score"]
+    low_event_score = pivots["pivot_low_score"]
 
     high_state = _last_two_events(high_event_price, high_event_index, index)
     low_state = _last_two_events(low_event_price, low_event_index, index)
@@ -346,55 +288,8 @@ def _pivot_columns(
     ).fillna(False)
     resistance_line = resistance_line.where(resistance_line_valid)
     support_line = support_line.where(support_line_valid)
-    channel_width = resistance_line - support_line
-    channel_width_pct = channel_width / close
-    channel_valid = (
-        resistance_line.notna()
-        & support_line.notna()
-        & channel_width.gt(0.0)
-        & channel_width_pct.ge(float(cfg.min_channel_width_pct))
-    )
-    valid_resistance_line = resistance_line.where(channel_valid)
-    valid_support_line = support_line.where(channel_valid)
-    channel_mid = ((valid_resistance_line + valid_support_line) / 2.0).where(channel_valid)
-    channel_width_pct = channel_width_pct.where(channel_valid)
-    resistance_slope_pct = (resistance_slope / close).where(channel_valid)
-    support_slope_pct = (support_slope / close).where(channel_valid)
-    trend_bias = pd.Series(
-        np.select(
-            [
-                channel_valid & (resistance_slope > 0) & (support_slope > 0),
-                channel_valid & (resistance_slope < 0) & (support_slope < 0),
-            ],
-            [1.0, -1.0],
-            default=0.0,
-        ),
-        index=index,
-    )
-    channel_width_median = channel_width_pct.rolling(
-        int(cfg.compression_window),
-        min_periods=int(cfg.compression_min_periods),
-    ).median()
-    channel_width_ratio = _safe_div(channel_width_pct, channel_width_median)
-    compression = _compression_score(
-        channel_width_ratio,
-        float(cfg.compression_full_at_ratio),
-        float(cfg.compression_none_at_ratio),
-    )
-
-    resistance_zone_upper = valid_resistance_line + zone_width
-    resistance_zone_lower = valid_resistance_line - zone_width
-    support_zone_upper = valid_support_line + zone_width
-    support_zone_lower = valid_support_line - zone_width
-
-    long_target_low = resistance_zone_lower
-    long_target_high = resistance_zone_upper
-    short_target_low = support_zone_lower
-    short_target_high = support_zone_upper
-    long_target_distance_pct = (long_target_low - close) / close
-    short_target_distance_pct = (close - short_target_high) / close
-    long_target_actionable = channel_valid & long_target_distance_pct.ge(float(cfg.min_target_distance_pct))
-    short_target_actionable = channel_valid & short_target_distance_pct.ge(float(cfg.min_target_distance_pct))
+    resistance_slope_pct = (resistance_slope / close).where(resistance_line_valid)
+    support_slope_pct = (support_slope / close).where(support_line_valid)
 
     market_structure = _market_structure_columns(
         index,
@@ -411,14 +306,9 @@ def _pivot_columns(
         prefix,
     )
 
-    channel_age_ok = high_age.le(float(cfg.max_pivot_age_bars)) & low_age.le(float(cfg.max_pivot_age_bars))
     score_columns = _score_columns(
         prefix,
         strength,
-        trend_bias,
-        channel_valid & channel_age_ok,
-        long_target_actionable,
-        short_target_actionable,
         market_structure,
         int(cfg.structure_score_window),
     )
@@ -429,10 +319,12 @@ def _pivot_columns(
         f"{prefix}_pivot_low_confirmed_{s}": low_confirmed.fillna(False),
         f"{prefix}_pivot_high_{s}": high_event_price,
         f"{prefix}_pivot_low_{s}": low_event_price,
-        f"{prefix}_pivot_high_prominence_{s}": high_prominence.where(high_confirmed),
-        f"{prefix}_pivot_low_prominence_{s}": low_prominence.where(low_confirmed),
-        f"{prefix}_pivot_high_prominence_pct_{s}": high_prominence_pct.where(high_confirmed),
-        f"{prefix}_pivot_low_prominence_pct_{s}": low_prominence_pct.where(low_confirmed),
+        f"{prefix}_pivot_high_prominence_{s}": high_event_prominence,
+        f"{prefix}_pivot_low_prominence_{s}": low_event_prominence,
+        f"{prefix}_pivot_high_prominence_pct_{s}": high_event_prominence_pct,
+        f"{prefix}_pivot_low_prominence_pct_{s}": low_event_prominence_pct,
+        f"{prefix}_pivot_high_score_{s}": high_event_score,
+        f"{prefix}_pivot_low_score_{s}": low_event_score,
         f"{prefix}_pivot_high_index_{s}": high_event_index,
         f"{prefix}_pivot_low_index_{s}": low_event_index,
         f"{prefix}_last_pivot_high_{s}": high_state["last_price"],
@@ -447,26 +339,8 @@ def _pivot_columns(
         f"{prefix}_support_line_valid_{s}": support_line_valid,
         f"{prefix}_resistance_anchor_span_{s}": high_anchor_span.where(resistance_line_valid),
         f"{prefix}_support_anchor_span_{s}": low_anchor_span.where(support_line_valid),
-        f"{prefix}_channel_valid_{s}": channel_valid.fillna(False),
         f"{prefix}_resistance_slope_pct_{s}": resistance_slope_pct,
         f"{prefix}_support_slope_pct_{s}": support_slope_pct,
-        f"{prefix}_channel_mid_{s}": channel_mid,
-        f"{prefix}_channel_width_pct_{s}": channel_width_pct,
-        f"{prefix}_channel_width_ratio_{s}": channel_width_ratio,
-        f"{prefix}_channel_compression_{s}": compression,
-        f"{prefix}_trend_bias_{s}": trend_bias,
-        f"{prefix}_resistance_zone_upper_{s}": resistance_zone_upper,
-        f"{prefix}_resistance_zone_lower_{s}": resistance_zone_lower,
-        f"{prefix}_support_zone_upper_{s}": support_zone_upper,
-        f"{prefix}_support_zone_lower_{s}": support_zone_lower,
-        f"{prefix}_long_target_low_{s}": long_target_low.where(long_target_actionable),
-        f"{prefix}_long_target_high_{s}": long_target_high.where(long_target_actionable),
-        f"{prefix}_short_target_low_{s}": short_target_low.where(short_target_actionable),
-        f"{prefix}_short_target_high_{s}": short_target_high.where(short_target_actionable),
-        f"{prefix}_long_target_distance_pct_{s}": long_target_distance_pct.where(long_target_actionable),
-        f"{prefix}_short_target_distance_pct_{s}": short_target_distance_pct.where(short_target_actionable),
-        f"{prefix}_long_target_actionable_{s}": long_target_actionable.fillna(False),
-        f"{prefix}_short_target_actionable_{s}": short_target_actionable.fillna(False),
     }
     columns.update(market_structure)
     columns.update(score_columns)
@@ -608,6 +482,8 @@ def _market_structure_columns(
 def _structural_pivot_columns(
     index: pd.Index,
     bar_index: Series,
+    pivot_high_source: Series,
+    pivot_low_source: Series,
     high: Series,
     low: Series,
     close: Series,
@@ -616,67 +492,31 @@ def _structural_pivot_columns(
     cfg: PivotStructureConfig,
     prefix: str,
 ) -> dict[str, Series]:
-    left = int(strength)
-    right = int(strength)
-    window = left + right + 1
-
-    candidate_high = high.shift(right)
-    candidate_low = low.shift(right)
-    candidate_atr = atr.shift(right).replace(0, np.nan)
-
-    left_high = high.shift(right + 1).rolling(left, min_periods=left).max()
-    right_high = high.rolling(right, min_periods=right).max()
-    left_low = low.shift(right + 1).rolling(left, min_periods=left).min()
-    right_low = low.rolling(right, min_periods=right).min()
-    window_high = high.rolling(window, min_periods=window).max()
-    window_low = low.rolling(window, min_periods=window).min()
-
-    high_prominence = (candidate_high - window_low) / candidate_atr
-    low_prominence = (window_high - candidate_low) / candidate_atr
-    high_prominence_pct = _safe_div(candidate_high - window_low, candidate_high)
-    low_prominence_pct = _safe_div(window_high - candidate_low, candidate_low)
-    high_confirmed = (
-        candidate_high.notna()
-        & left_high.notna()
-        & right_high.notna()
-        & (candidate_high >= left_high)
-        & (candidate_high > right_high)
-        & high_prominence.ge(float(cfg.structural_min_prominence_atr))
-        & high_prominence_pct.ge(float(cfg.structural_min_prominence_pct))
+    pivots = build_clean_pivot_source(
+        body_high=pivot_high_source,
+        body_low=pivot_low_source,
+        atr=atr,
+        bar_index=bar_index,
+        strength=int(strength),
+        method="body",
+        min_prominence_atr=float(cfg.structural_min_prominence_atr),
+        min_prominence_pct=float(cfg.structural_min_prominence_pct),
+        min_pivot_spacing_bars=int(cfg.structural_min_pivot_spacing_bars),
+        min_pivot_distance_atr=float(cfg.structural_min_pivot_distance_atr),
+        min_pivot_distance_pct=float(cfg.structural_min_pivot_distance_pct),
     )
-    low_confirmed = (
-        candidate_low.notna()
-        & left_low.notna()
-        & right_low.notna()
-        & (candidate_low <= left_low)
-        & (candidate_low < right_low)
-        & low_prominence.ge(float(cfg.structural_min_prominence_atr))
-        & low_prominence_pct.ge(float(cfg.structural_min_prominence_pct))
-    )
-
-    high_confirmed = _filter_pivot_noise_values(
-        high_confirmed,
-        candidate_high,
-        bar_index - right,
-        candidate_atr,
-        int(cfg.structural_min_pivot_spacing_bars),
-        float(cfg.structural_min_pivot_distance_atr),
-        float(cfg.structural_min_pivot_distance_pct),
-    )
-    low_confirmed = _filter_pivot_noise_values(
-        low_confirmed,
-        candidate_low,
-        bar_index - right,
-        candidate_atr,
-        int(cfg.structural_min_pivot_spacing_bars),
-        float(cfg.structural_min_pivot_distance_atr),
-        float(cfg.structural_min_pivot_distance_pct),
-    )
-
-    high_event_price = candidate_high.where(high_confirmed)
-    low_event_price = candidate_low.where(low_confirmed)
-    high_event_index = (bar_index - right).where(high_confirmed)
-    low_event_index = (bar_index - right).where(low_confirmed)
+    high_confirmed = pivots["pivot_high_confirmed"]
+    low_confirmed = pivots["pivot_low_confirmed"]
+    high_event_price = pivots["pivot_high"]
+    low_event_price = pivots["pivot_low"]
+    high_event_index = pivots["pivot_high_index"]
+    low_event_index = pivots["pivot_low_index"]
+    high_event_prominence = pivots["pivot_high_prominence"]
+    low_event_prominence = pivots["pivot_low_prominence"]
+    high_event_prominence_pct = pivots["pivot_high_prominence_pct"]
+    low_event_prominence_pct = pivots["pivot_low_prominence_pct"]
+    high_event_score = pivots["pivot_high_score"]
+    low_event_score = pivots["pivot_low_score"]
     high_state = _last_two_events(high_event_price, high_event_index, index)
     low_state = _last_two_events(low_event_price, low_event_index, index)
     high_age = bar_index - high_state["last_index"]
@@ -778,10 +618,12 @@ def _structural_pivot_columns(
         f"{prefix}_structural_pivot_low": low_event_price,
         f"{prefix}_structural_pivot_high_index": high_event_index,
         f"{prefix}_structural_pivot_low_index": low_event_index,
-        f"{prefix}_structural_pivot_high_prominence": high_prominence.where(high_confirmed),
-        f"{prefix}_structural_pivot_low_prominence": low_prominence.where(low_confirmed),
-        f"{prefix}_structural_pivot_high_prominence_pct": high_prominence_pct.where(high_confirmed),
-        f"{prefix}_structural_pivot_low_prominence_pct": low_prominence_pct.where(low_confirmed),
+        f"{prefix}_structural_pivot_high_prominence": high_event_prominence,
+        f"{prefix}_structural_pivot_low_prominence": low_event_prominence,
+        f"{prefix}_structural_pivot_high_prominence_pct": high_event_prominence_pct,
+        f"{prefix}_structural_pivot_low_prominence_pct": low_event_prominence_pct,
+        f"{prefix}_structural_pivot_high_score": high_event_score,
+        f"{prefix}_structural_pivot_low_score": low_event_score,
         f"{prefix}_structural_resistance": structural_resistance,
         f"{prefix}_structural_support": structural_support,
         f"{prefix}_structural_resistance_zone_upper": resistance_upper,
@@ -806,51 +648,9 @@ def _structural_pivot_columns(
     }
 
 
-def _filter_pivot_noise(
-    confirmed: Series,
-    candidate_price: Series,
-    candidate_index: Series,
-    candidate_atr: Series,
-    cfg: PivotStructureConfig,
-) -> Series:
-    return _filter_pivot_noise_values(
-        confirmed,
-        candidate_price,
-        candidate_index,
-        candidate_atr,
-        int(cfg.min_pivot_spacing_bars),
-        float(cfg.min_pivot_distance_atr),
-        float(cfg.min_pivot_distance_pct),
-    )
-
-
-def _filter_pivot_noise_values(
-    confirmed: Series,
-    candidate_price: Series,
-    candidate_index: Series,
-    candidate_atr: Series,
-    min_pivot_spacing_bars: int,
-    min_pivot_distance_atr: float,
-    min_pivot_distance_pct: float,
-) -> Series:
-    raw_price = candidate_price.where(confirmed)
-    raw_index = candidate_index.where(confirmed)
-    prev_price = raw_price.dropna().shift(1).reindex(candidate_price.index).ffill()
-    prev_index = raw_index.dropna().shift(1).reindex(candidate_price.index).ffill()
-    spacing_ok = (candidate_index - prev_index).ge(float(min_pivot_spacing_bars)) | prev_index.isna()
-    distance = (candidate_price - prev_price).abs()
-    atr_ok = _safe_div(distance, candidate_atr).ge(float(min_pivot_distance_atr)) | prev_price.isna()
-    pct_ok = _safe_div(distance, candidate_price).ge(float(min_pivot_distance_pct)) | prev_price.isna()
-    return (confirmed & spacing_ok & atr_ok & pct_ok).fillna(False)
-
-
 def _score_columns(
     prefix: str,
     strength: int,
-    trend_bias: Series,
-    channel_valid: Series,
-    long_target_actionable: Series,
-    short_target_actionable: Series,
     market_structure: dict[str, Series],
     score_window: int,
 ) -> dict[str, Series]:
@@ -863,20 +663,14 @@ def _score_columns(
     break_norm = max(float(score_window) / 3.0, 1.0)
 
     long_score = _clip01(
-        0.35 * up_sequence
-        + 0.25 * (state.gt(0.0).astype("float64"))
-        + 0.20 * (trend_bias.gt(0.0).astype("float64"))
-        + 0.10 * (channel_valid.astype("float64"))
-        + 0.10 * _clip01(bullish_breaks / break_norm)
-        + 0.05 * (long_target_actionable.astype("float64"))
+        0.45 * up_sequence
+        + 0.35 * (state.gt(0.0).astype("float64"))
+        + 0.20 * _clip01(bullish_breaks / break_norm)
     )
     short_score = _clip01(
-        0.35 * down_sequence
-        + 0.25 * (state.lt(0.0).astype("float64"))
-        + 0.20 * (trend_bias.lt(0.0).astype("float64"))
-        + 0.10 * (channel_valid.astype("float64"))
-        + 0.10 * _clip01(bearish_breaks / break_norm)
-        + 0.05 * (short_target_actionable.astype("float64"))
+        0.45 * down_sequence
+        + 0.35 * (state.lt(0.0).astype("float64"))
+        + 0.20 * _clip01(bearish_breaks / break_norm)
     )
     abs_score = pd.concat([long_score, short_score], axis=1).max(axis=1)
     score_state = pd.Series(
@@ -887,12 +681,12 @@ def _score_columns(
         market_structure[f"{prefix}_ms_bullish_breakout_{s}"]
         | market_structure[f"{prefix}_ms_bullish_trend_aligned_breakout_{s}"]
         | market_structure[f"{prefix}_ms_bullish_trend_flip_breakout_{s}"]
-    ) & long_score.ge(short_score) & long_target_actionable
+    ) & long_score.ge(short_score)
     suggested_entry_short = (
         market_structure[f"{prefix}_ms_bearish_breakout_{s}"]
         | market_structure[f"{prefix}_ms_bearish_trend_aligned_breakout_{s}"]
         | market_structure[f"{prefix}_ms_bearish_trend_flip_breakout_{s}"]
-    ) & short_score.ge(long_score) & short_target_actionable
+    ) & short_score.ge(long_score)
     return {
         f"{prefix}_suggested_entry_long_{s}": suggested_entry_long,
         f"{prefix}_suggested_entry_short_{s}": suggested_entry_short,
@@ -914,7 +708,6 @@ def _pivot_diagnostic_columns(
     score_abs = _column_or_default(columns, f"{prefix}_score_abs", index, 0.0)
     up_sequence = _column_or_default(columns, f"{prefix}_ms_up_sequence_score", index, 0.0)
     down_sequence = _column_or_default(columns, f"{prefix}_ms_down_sequence_score", index, 0.0)
-    compression = _column_or_default(columns, f"{prefix}_channel_compression", index, 0.0)
     structural_state = _column_or_default(columns, f"{prefix}_structural_state", index, 0.0)
     range_position = _column_or_default(columns, f"{prefix}_structural_range_position", index, 0.5)
     structural_resistance_break = _bool_column(columns, f"{prefix}_structural_resistance_break", index)
@@ -925,8 +718,6 @@ def _pivot_diagnostic_columns(
     bearish_trend_aligned_breakout = _bool_column(columns, f"{prefix}_ms_bearish_trend_aligned_breakout", index)
     bullish_trend_flip_breakout = _bool_column(columns, f"{prefix}_ms_bullish_trend_flip_breakout", index)
     bearish_trend_flip_breakout = _bool_column(columns, f"{prefix}_ms_bearish_trend_flip_breakout", index)
-    bullish_breakout = _bool_column(columns, f"{prefix}_ms_bullish_breakout", index)
-    bearish_breakout = _bool_column(columns, f"{prefix}_ms_bearish_breakout", index)
 
     bull_events = (
         structural_resistance_break
@@ -946,10 +737,9 @@ def _pivot_diagnostic_columns(
     bull_event_density = _clip01(_rolling_count(bull_events, context_window) / 4.0)
     bear_event_density = _clip01(_rolling_count(bear_events, context_window) / 4.0)
     balance_score = _clip01(
-        0.38 * compression
-        + 0.26 * (1.0 - score_abs)
-        + 0.20 * (1.0 - (range_position - 0.5).abs() * 2.0)
-        + 0.16 * (structural_state.eq(0.0).astype("float64"))
+        0.40 * (1.0 - score_abs)
+        + 0.34 * (1.0 - (range_position - 0.5).abs() * 2.0)
+        + 0.26 * (structural_state.eq(0.0).astype("float64"))
     )
     bull_context_score = _clip01(
         0.34 * score_long
@@ -1033,7 +823,6 @@ def _pivot_diagnostic_columns(
     context_bearish = market_context.le(-1)
     score_long_ok = score_long.ge(score_short)
     score_short_ok = score_short.ge(score_long)
-    recent_compression = compression.rolling(max(4, int(cfg.structure_score_window)), min_periods=1).max().ge(0.60)
 
     long_breakout = structural_resistance_break & score_long_ok
     long_reclaim = structural_support_reclaim & context_not_full_bear
@@ -1045,11 +834,6 @@ def _pivot_diagnostic_columns(
     long_trend_aligned_breakout = (
         bullish_trend_aligned_breakout
         & context_bullish
-        & score_long_ok
-    )
-    long_compression = (
-        (structural_resistance_break | bullish_breakout)
-        & recent_compression
         & score_long_ok
     )
     long_range_support = (
@@ -1071,11 +855,6 @@ def _pivot_diagnostic_columns(
         & context_bearish
         & score_short_ok
     )
-    short_compression = (
-        (structural_support_break | bearish_breakout)
-        & recent_compression
-        & score_short_ok
-    )
     short_range_resistance = (
         _bool_column(columns, f"{prefix}_near_structural_resistance", index)
         & score_short.gt(score_long + 0.04)
@@ -1089,13 +868,11 @@ def _pivot_diagnostic_columns(
         f"{prefix}_entry_support_reclaim_long": _dedupe_events(long_reclaim, cooldown),
         f"{prefix}_entry_bullish_trend_flip_breakout_long": _dedupe_events(long_trend_flip_breakout, cooldown),
         f"{prefix}_entry_bullish_trend_aligned_breakout_long": _dedupe_events(long_trend_aligned_breakout, cooldown),
-        f"{prefix}_entry_compression_breakout_long": _dedupe_events(long_compression, cooldown),
         f"{prefix}_entry_range_support_long": _dedupe_events(long_range_support, cooldown),
         f"{prefix}_entry_support_breakdown_short": _dedupe_events(short_breakdown, cooldown),
         f"{prefix}_entry_resistance_reject_short": _dedupe_events(short_reject, cooldown),
         f"{prefix}_entry_bearish_trend_flip_breakout_short": _dedupe_events(short_trend_flip_breakout, cooldown),
         f"{prefix}_entry_bearish_trend_aligned_breakout_short": _dedupe_events(short_trend_aligned_breakout, cooldown),
-        f"{prefix}_entry_compression_breakdown_short": _dedupe_events(short_compression, cooldown),
         f"{prefix}_entry_range_resistance_short": _dedupe_events(short_range_resistance, cooldown),
     }
     legacy_entries = {
@@ -1203,12 +980,6 @@ def _clip01(series: Series) -> Series:
     return pd.to_numeric(series, errors="coerce").replace([np.inf, -np.inf], np.nan).clip(0.0, 1.0).fillna(0.0)
 
 
-def _compression_score(width_ratio: Series, full_at_ratio: float, none_at_ratio: float) -> Series:
-    ratio = pd.to_numeric(width_ratio, errors="coerce").replace([np.inf, -np.inf], np.nan)
-    score = (float(none_at_ratio) - ratio) / max(float(none_at_ratio) - float(full_at_ratio), 1e-9)
-    return _clip01(score)
-
-
 def _active_alias_columns(columns: dict[str, Series], prefix: str, strength: int) -> dict[str, Series]:
     aliases = (
         "pivot_high_confirmed",
@@ -1219,6 +990,8 @@ def _active_alias_columns(columns: dict[str, Series], prefix: str, strength: int
         "pivot_low_prominence",
         "pivot_high_prominence_pct",
         "pivot_low_prominence_pct",
+        "pivot_high_score",
+        "pivot_low_score",
         "pivot_high_index",
         "pivot_low_index",
         "last_pivot_high",
@@ -1229,26 +1002,12 @@ def _active_alias_columns(columns: dict[str, Series], prefix: str, strength: int
         "pivot_low_age",
         "resistance_line",
         "support_line",
-        "channel_valid",
+        "resistance_line_valid",
+        "support_line_valid",
+        "resistance_anchor_span",
+        "support_anchor_span",
         "resistance_slope_pct",
         "support_slope_pct",
-        "channel_mid",
-        "channel_width_pct",
-        "channel_width_ratio",
-        "channel_compression",
-        "trend_bias",
-        "resistance_zone_upper",
-        "resistance_zone_lower",
-        "support_zone_upper",
-        "support_zone_lower",
-        "long_target_low",
-        "long_target_high",
-        "short_target_low",
-        "short_target_high",
-        "long_target_distance_pct",
-        "short_target_distance_pct",
-        "long_target_actionable",
-        "short_target_actionable",
         "ms_higher_high",
         "ms_lower_high",
         "ms_higher_low",
@@ -1328,16 +1087,8 @@ def _resolve_config(config: PivotStructureConfig | None, **overrides: object) ->
         "min_pivot_distance_atr": cfg.min_pivot_distance_atr,
         "min_pivot_distance_pct": cfg.min_pivot_distance_pct,
         "max_pivot_age_bars": cfg.max_pivot_age_bars,
-        "zone_atr_mult": cfg.zone_atr_mult,
-        "zone_pct": cfg.zone_pct,
-        "min_channel_width_pct": cfg.min_channel_width_pct,
-        "min_target_distance_pct": cfg.min_target_distance_pct,
         "breakout_buffer_pct": cfg.breakout_buffer_pct,
         "structure_score_window": cfg.structure_score_window,
-        "compression_window": cfg.compression_window,
-        "compression_min_periods": cfg.compression_min_periods,
-        "compression_full_at_ratio": cfg.compression_full_at_ratio,
-        "compression_none_at_ratio": cfg.compression_none_at_ratio,
         "structural_strength": cfg.structural_strength,
         "structural_min_prominence_atr": cfg.structural_min_prominence_atr,
         "structural_min_prominence_pct": cfg.structural_min_prominence_pct,
@@ -1372,26 +1123,10 @@ def _validate_config(cfg: PivotStructureConfig) -> None:
         raise ValueError("min_pivot_distance_pct must be non-negative")
     if cfg.max_pivot_age_bars < 1:
         raise ValueError("max_pivot_age_bars must be at least 1")
-    if cfg.zone_atr_mult < 0:
-        raise ValueError("zone_atr_mult must be non-negative")
-    if cfg.zone_pct < 0:
-        raise ValueError("zone_pct must be non-negative")
-    if cfg.min_channel_width_pct < 0:
-        raise ValueError("min_channel_width_pct must be non-negative")
-    if cfg.min_target_distance_pct < 0:
-        raise ValueError("min_target_distance_pct must be non-negative")
     if cfg.breakout_buffer_pct < 0:
         raise ValueError("breakout_buffer_pct must be non-negative")
     if cfg.structure_score_window < 2:
         raise ValueError("structure_score_window must be at least 2")
-    if cfg.compression_window < 2:
-        raise ValueError("compression_window must be at least 2")
-    if cfg.compression_min_periods < 1 or cfg.compression_min_periods > cfg.compression_window:
-        raise ValueError("compression_min_periods must be between 1 and compression_window")
-    if cfg.compression_full_at_ratio <= 0:
-        raise ValueError("compression_full_at_ratio must be positive")
-    if cfg.compression_none_at_ratio <= cfg.compression_full_at_ratio:
-        raise ValueError("compression_none_at_ratio must be greater than compression_full_at_ratio")
     if cfg.structural_strength < 1:
         raise ValueError("structural_strength must be at least 1")
     if cfg.structural_min_prominence_atr < 0:

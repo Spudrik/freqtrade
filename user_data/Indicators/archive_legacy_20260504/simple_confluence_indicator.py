@@ -5,8 +5,158 @@ from math import sqrt
 
 import numpy as np
 import pandas as pd
+import talib
 from numpy.lib.stride_tricks import sliding_window_view
 from pandas import DataFrame, Series
+
+_TALIB_CDL_PATTERNS = (
+    "CDL2CROWS",
+    "CDL3BLACKCROWS",
+    "CDL3INSIDE",
+    "CDL3LINESTRIKE",
+    "CDL3OUTSIDE",
+    "CDL3STARSINSOUTH",
+    "CDL3WHITESOLDIERS",
+    "CDLABANDONEDBABY",
+    "CDLADVANCEBLOCK",
+    "CDLBELTHOLD",
+    "CDLBREAKAWAY",
+    "CDLCLOSINGMARUBOZU",
+    "CDLCONCEALBABYSWALL",
+    "CDLCOUNTERATTACK",
+    "CDLDARKCLOUDCOVER",
+    "CDLDOJI",
+    "CDLDOJISTAR",
+    "CDLDRAGONFLYDOJI",
+    "CDLENGULFING",
+    "CDLEVENINGDOJISTAR",
+    "CDLEVENINGSTAR",
+    "CDLGAPSIDESIDEWHITE",
+    "CDLGRAVESTONEDOJI",
+    "CDLHAMMER",
+    "CDLHANGINGMAN",
+    "CDLHARAMI",
+    "CDLHARAMICROSS",
+    "CDLHIGHWAVE",
+    "CDLHIKKAKE",
+    "CDLHIKKAKEMOD",
+    "CDLHOMINGPIGEON",
+    "CDLIDENTICAL3CROWS",
+    "CDLINNECK",
+    "CDLINVERTEDHAMMER",
+    "CDLKICKING",
+    "CDLKICKINGBYLENGTH",
+    "CDLLADDERBOTTOM",
+    "CDLLONGLEGGEDDOJI",
+    "CDLLONGLINE",
+    "CDLMARUBOZU",
+    "CDLMATCHINGLOW",
+    "CDLMATHOLD",
+    "CDLMORNINGDOJISTAR",
+    "CDLMORNINGSTAR",
+    "CDLONNECK",
+    "CDLPIERCING",
+    "CDLRICKSHAWMAN",
+    "CDLRISEFALL3METHODS",
+    "CDLSEPARATINGLINES",
+    "CDLSHOOTINGSTAR",
+    "CDLSHORTLINE",
+    "CDLSPINNINGTOP",
+    "CDLSTALLEDPATTERN",
+    "CDLSTICKSANDWICH",
+    "CDLTAKURI",
+    "CDLTASUKIGAP",
+    "CDLTHRUSTING",
+    "CDLTRISTAR",
+    "CDLUNIQUE3RIVER",
+    "CDLUPSIDEGAP2CROWS",
+    "CDLXSIDEGAP3METHODS",
+)
+
+_SIGNAL_WEIGHTS = {
+    "stoch_cross_midline": 1.80,
+    "stoch_rsi_cross_midline": 1.60,
+    "adx_directional_trend": 1.70,
+    "bb_reversal": 1.40,
+    "cmf_pressure": 1.30,
+    "efi_cross_zero": 1.20,
+    "atr_expansion_direction": 1.30,
+    "ema_price_reclaim_fast": 1.20,
+    "cci_cross_extreme": 1.20,
+    "stoch_rsi_cross_extreme": 1.20,
+    "ultimate_cross_midline": 0.45,
+    "adx_di_cross": 1.10,
+    "sma_price_reclaim_mid": 1.10,
+    "dema_cross": 1.10,
+    "macd_cross_signal": 1.10,
+    "ppo_cross_signal": 1.10,
+    "cmo_cross_zero": 1.00,
+    "tema_price_reclaim": 1.00,
+    "vwap_reclaim": 0.80,
+    "bb_midline_reclaim": 0.90,
+    "bb_percent_b_midline": 0.90,
+    "rsi_cross_midline": 0.90,
+    "engulfing": 0.90,
+    "wma_cross": 1.20,
+    "keltner_breakout": 1.10,
+    "trix_cross_signal": 1.10,
+    "aroon_cross": 1.00,
+    "cmf_cross_zero": 0.35,
+    "ma_cluster": 0.35,
+    "ma_slope_consensus": 0.45,
+    "rsi_range_momentum": 0.25,
+    "vwap_trend": 0.30,
+    "mfi_money_flow_bias": 0.30,
+    "ichimoku_cloud_position": 0.25,
+    "bb_squeeze_breakout": 0.20,
+    "ema_pullback_hold": 0.20,
+    "donchian_breakout": 0.45,
+    "macd_hist_reversal": 0.40,
+    "volume_confirmed_breakout": 0.00,
+    "volume_climax_reversal": 0.00,
+    "obv_breakout": 0.00,
+    "inside_bar_break": 0.00,
+    "keltner_reversal": 0.25,
+    "donchian_failed_break": 0.30,
+}
+
+_DIRECTIONAL_VOLUME_WEIGHTS = {
+    "cmf_pressure": 1.30,
+    "efi_cross_zero": 1.20,
+    "vwap_reclaim": 0.80,
+    "adl_cross": 0.70,
+    "obv_cross": 0.60,
+    "cmf_cross_zero": 0.35,
+    "vwap_trend": 0.30,
+}
+
+_CDL_DEFAULT_WEIGHT = 0.25
+
+# First-pass BTC/SOL futures validation weights. The low default keeps sparse
+# TA-Lib candle patterns from dominating broader confluence.
+_CDL_SIGNAL_WEIGHTS = {
+    "cdl_3inside": (0.60, 0.80),
+    "cdl_3outside": (0.05, 0.05),
+    "cdl_belthold": (0.65, 0.20),
+    "cdl_closingmarubozu": (0.35, 0.20),
+    "cdl_doji": (0.40, 0.25),
+    "cdl_dragonflydoji": (0.65, 0.25),
+    "cdl_engulfing": (0.75, 0.05),
+    "cdl_eveningstar": (0.25, 0.05),
+    "cdl_hammer": (0.60, 0.25),
+    "cdl_harami": (0.50, 0.15),
+    "cdl_haramicross": (0.05, 0.25),
+    "cdl_highwave": (0.40, 0.30),
+    "cdl_hikkake": (0.45, 0.05),
+    "cdl_longleggeddoji": (0.40, 0.25),
+    "cdl_longline": (0.35, 0.45),
+    "cdl_marubozu": (0.45, 0.20),
+    "cdl_morningstar": (0.05, 0.25),
+    "cdl_separatinglines": (0.70, 0.05),
+    "cdl_shortline": (0.45, 0.60),
+    "cdl_spinningtop": (0.25, 0.35),
+    "cdl_takuri": (0.65, 0.25),
+}
 
 
 @dataclass(frozen=True)
@@ -23,13 +173,16 @@ class SimpleConfluenceConfig:
       of currently triggered long/short rules.
     - ``*_recent_signal_count_long`` and ``*_recent_signal_count_short`` count
       triggers over the rolling memory window.
-    - ``*_score_long`` and ``*_score_short`` normalize those counts to 0..1.
+    - ``*_weighted_signal_sum_long`` and ``*_weighted_signal_sum_short`` apply
+      first-pass usefulness weights while leaving raw counts intact for audit.
+    - ``*_score_long`` and ``*_score_short`` normalize weighted evidence to
+      0..1.
     - ``*_score_abs`` is max(long, short).
     - ``*_state`` is -1/0/1 directional lean and is not a score.
 
-    The score is deliberately count-based. Use the individual flag columns to
-    audit which common TA rules are helping or hurting before keeping them in a
-    strategy.
+    The raw counts are deliberately broad. The normalized score is weighted so
+    always-on or non-directional rules do not contribute as much as signals that
+    showed better early BTC/SOL validation behavior.
     """
 
     rsi_period: int = 14
@@ -111,6 +264,8 @@ class SimpleConfluenceConfig:
     ichimoku_span_b: int = 52
     signal_memory_window: int = 3
     score_signal_cap: float = 12.0
+    weighted_score_cap: float = 20.0
+    weighted_family_score_cap: float = 8.0
     recent_score_weight: float = 0.25
     min_confluence_signals: int = 5
     min_confluence_families: int = 4
@@ -207,6 +362,8 @@ def add_simple_confluence_indicator(
     ichimoku_span_b: int | None = None,
     signal_memory_window: int | None = None,
     score_signal_cap: float | None = None,
+    weighted_score_cap: float | None = None,
+    weighted_family_score_cap: float | None = None,
     recent_score_weight: float | None = None,
     min_confluence_signals: int | None = None,
     min_confluence_families: int | None = None,
@@ -302,6 +459,8 @@ def add_simple_confluence_indicator(
         ichimoku_span_b=ichimoku_span_b,
         signal_memory_window=signal_memory_window,
         score_signal_cap=score_signal_cap,
+        weighted_score_cap=weighted_score_cap,
+        weighted_family_score_cap=weighted_family_score_cap,
         recent_score_weight=recent_score_weight,
         min_confluence_signals=min_confluence_signals,
         min_confluence_families=min_confluence_families,
@@ -408,7 +567,7 @@ def _build_raw_columns(frame: DataFrame, cfg: SimpleConfluenceConfig) -> dict[st
     candle_range = (high - low).clip(lower=0.0)
     close_location = ((_safe_div(close - low, candle_range) * 2.0) - 1.0).clip(-1.0, 1.0)
 
-    return {
+    raw = {
         "hlc3": typical,
         "close_location": close_location,
         "volume_ratio": volume_ratio,
@@ -488,6 +647,8 @@ def _build_raw_columns(frame: DataFrame, cfg: SimpleConfluenceConfig) -> dict[st
         "ichimoku_span_a": ichimoku["span_a"],
         "ichimoku_span_b": ichimoku["span_b"],
     }
+    raw.update(_talib_candle_columns(open_, high, low, close))
+    return raw
 
 
 def _build_signal_flags(
@@ -814,8 +975,28 @@ def _build_signal_flags(
         high.shift(1).lt(high.shift(2)) & low.shift(1).gt(low.shift(2)) & close.gt(high.shift(1)),
         high.shift(1).lt(high.shift(2)) & low.shift(1).gt(low.shift(2)) & close.lt(low.shift(1)),
     )
+    for pattern in _TALIB_CDL_PATTERNS:
+        name = _talib_candle_name(pattern)
+        value = raw[name]
+        _add_pair(long, short, name, value.gt(0.0), value.lt(0.0))
 
     return long, short
+
+
+def _talib_candle_columns(open_: Series, high: Series, low: Series, close: Series) -> dict[str, Series]:
+    open_values = pd.to_numeric(open_, errors="coerce").to_numpy(dtype="float64")
+    high_values = pd.to_numeric(high, errors="coerce").to_numpy(dtype="float64")
+    low_values = pd.to_numeric(low, errors="coerce").to_numpy(dtype="float64")
+    close_values = pd.to_numeric(close, errors="coerce").to_numpy(dtype="float64")
+    columns: dict[str, Series] = {}
+    for pattern in _TALIB_CDL_PATTERNS:
+        values = getattr(talib, pattern)(open_values, high_values, low_values, close_values)
+        columns[_talib_candle_name(pattern)] = pd.Series(values, index=close.index, dtype="float64")
+    return columns
+
+
+def _talib_candle_name(pattern: str) -> str:
+    return f"cdl_{pattern[3:].lower()}"
 
 
 def _build_score_columns(
@@ -837,11 +1018,25 @@ def _build_score_columns(
     short_family_count = short_family_frame.sum(axis=1).astype("float64")
     long_family_recent = long_family_frame.rolling(memory, min_periods=1).sum().sum(axis=1).astype("float64")
     short_family_recent = short_family_frame.rolling(memory, min_periods=1).sum().sum(axis=1).astype("float64")
+    long_weighted_sum = _weighted_vote_sum(long_frame, "long")
+    short_weighted_sum = _weighted_vote_sum(short_frame, "short")
+    long_weighted_recent = _weighted_rolling_sum(long_frame, memory, "long")
+    short_weighted_recent = _weighted_rolling_sum(short_frame, memory, "short")
+    long_weighted_family_frame = _weighted_family_vote_frame(long_frame, "long")
+    short_weighted_family_frame = _weighted_family_vote_frame(short_frame, "short")
+    long_weighted_family_sum = long_weighted_family_frame.sum(axis=1).astype("float64")
+    short_weighted_family_sum = short_weighted_family_frame.sum(axis=1).astype("float64")
+    long_weighted_family_recent = long_weighted_family_frame.rolling(memory, min_periods=1).sum().sum(axis=1).astype("float64")
+    short_weighted_family_recent = short_weighted_family_frame.rolling(memory, min_periods=1).sum().sum(axis=1).astype("float64")
     cap = max(float(cfg.score_signal_cap), 1.0)
     family_cap = max(float(cfg.family_score_cap), 1.0)
+    weighted_cap = max(float(cfg.weighted_score_cap), 1.0)
+    weighted_family_cap = max(float(cfg.weighted_family_score_cap), 1.0)
     current_weight = 1.0 - float(cfg.recent_score_weight)
     recent_denominator = cap * max(float(memory), 1.0)
     family_recent_denominator = family_cap * max(float(memory), 1.0)
+    weighted_recent_denominator = weighted_cap * max(float(memory), 1.0)
+    weighted_family_recent_denominator = weighted_family_cap * max(float(memory), 1.0)
     raw_long_current_score = _clip01(long_count / cap)
     raw_short_current_score = _clip01(short_count / cap)
     raw_long_recent_score = _clip01(long_recent / recent_denominator)
@@ -850,10 +1045,18 @@ def _build_score_columns(
     short_family_score = _clip01(short_family_count / family_cap)
     long_family_recent_score = _clip01(long_family_recent / family_recent_denominator)
     short_family_recent_score = _clip01(short_family_recent / family_recent_denominator)
-    long_current_score = _clip01(0.75 * long_family_score + 0.25 * raw_long_current_score)
-    short_current_score = _clip01(0.75 * short_family_score + 0.25 * raw_short_current_score)
-    long_recent_score = _clip01(0.75 * long_family_recent_score + 0.25 * raw_long_recent_score)
-    short_recent_score = _clip01(0.75 * short_family_recent_score + 0.25 * raw_short_recent_score)
+    weighted_long_current_score = _clip01(long_weighted_sum / weighted_cap)
+    weighted_short_current_score = _clip01(short_weighted_sum / weighted_cap)
+    weighted_long_recent_score = _clip01(long_weighted_recent / weighted_recent_denominator)
+    weighted_short_recent_score = _clip01(short_weighted_recent / weighted_recent_denominator)
+    weighted_long_family_score = _clip01(long_weighted_family_sum / weighted_family_cap)
+    weighted_short_family_score = _clip01(short_weighted_family_sum / weighted_family_cap)
+    weighted_long_family_recent_score = _clip01(long_weighted_family_recent / weighted_family_recent_denominator)
+    weighted_short_family_recent_score = _clip01(short_weighted_family_recent / weighted_family_recent_denominator)
+    long_current_score = _clip01(0.75 * weighted_long_family_score + 0.25 * weighted_long_current_score)
+    short_current_score = _clip01(0.75 * weighted_short_family_score + 0.25 * weighted_short_current_score)
+    long_recent_score = _clip01(0.75 * weighted_long_family_recent_score + 0.25 * weighted_long_recent_score)
+    short_recent_score = _clip01(0.75 * weighted_short_family_recent_score + 0.25 * weighted_short_recent_score)
     long_score = _clip01(current_weight * long_current_score + cfg.recent_score_weight * long_recent_score)
     short_score = _clip01(current_weight * short_current_score + cfg.recent_score_weight * short_recent_score)
     abs_score = pd.concat([long_score, short_score], axis=1).max(axis=1)
@@ -923,6 +1126,16 @@ def _build_score_columns(
         "recent_family_count_long": long_family_recent,
         "recent_family_count_short": short_family_recent,
         "family_delta": long_family_count - short_family_count,
+        "weighted_signal_sum_long": long_weighted_sum,
+        "weighted_signal_sum_short": short_weighted_sum,
+        "weighted_recent_signal_sum_long": long_weighted_recent,
+        "weighted_recent_signal_sum_short": short_weighted_recent,
+        "weighted_family_sum_long": long_weighted_family_sum,
+        "weighted_family_sum_short": short_weighted_family_sum,
+        "weighted_recent_family_sum_long": long_weighted_family_recent,
+        "weighted_recent_family_sum_short": short_weighted_family_recent,
+        "weighted_signal_delta": long_weighted_sum - short_weighted_sum,
+        "weighted_family_delta": long_weighted_family_sum - short_weighted_family_sum,
         "raw_score_long_current": raw_long_current_score,
         "raw_score_short_current": raw_short_current_score,
         "raw_score_long_recent": raw_long_recent_score,
@@ -931,6 +1144,14 @@ def _build_score_columns(
         "family_score_short": short_family_score,
         "family_score_long_recent": long_family_recent_score,
         "family_score_short_recent": short_family_recent_score,
+        "weighted_score_long_current": weighted_long_current_score,
+        "weighted_score_short_current": weighted_short_current_score,
+        "weighted_score_long_recent": weighted_long_recent_score,
+        "weighted_score_short_recent": weighted_short_recent_score,
+        "weighted_family_score_long": weighted_long_family_score,
+        "weighted_family_score_short": weighted_short_family_score,
+        "weighted_family_score_long_recent": weighted_long_family_recent_score,
+        "weighted_family_score_short_recent": weighted_short_family_recent_score,
         "score_long_current": long_current_score,
         "score_short_current": short_current_score,
         "score_long_recent": long_recent_score,
@@ -961,6 +1182,59 @@ def _family_vote_frame(flag_frame: DataFrame) -> DataFrame:
     return pd.DataFrame(family_cols, index=flag_frame.index)
 
 
+def _weighted_vote_sum(flag_frame: DataFrame, side: str) -> Series:
+    weighted = {
+        column: flag_frame[column].astype("float64") * _signal_weight(column, side)
+        for column in flag_frame.columns
+    }
+    return pd.DataFrame(weighted, index=flag_frame.index).sum(axis=1).astype("float64")
+
+
+def _weighted_rolling_sum(flag_frame: DataFrame, window: int, side: str) -> Series:
+    weighted = {
+        column: flag_frame[column].astype("float64") * _signal_weight(column, side)
+        for column in flag_frame.columns
+    }
+    weighted_frame = pd.DataFrame(weighted, index=flag_frame.index)
+    return weighted_frame.rolling(window, min_periods=1).sum().sum(axis=1).astype("float64")
+
+
+def _weighted_family_vote_frame(flag_frame: DataFrame, side: str) -> DataFrame:
+    family_cols: dict[str, Series] = {}
+    for family in sorted({_signal_family(column) for column in flag_frame.columns}):
+        members = [column for column in flag_frame.columns if _signal_family(column) == family]
+        weighted_members = pd.DataFrame(
+            {
+                column: flag_frame[column].astype("float64") * _signal_weight(column, side)
+                for column in members
+            },
+            index=flag_frame.index,
+        )
+        family_cols[family] = weighted_members.max(axis=1)
+    return pd.DataFrame(family_cols, index=flag_frame.index)
+
+
+def _signal_weight(name: str, side: str | None = None) -> float:
+    if name in _SIGNAL_WEIGHTS:
+        return _SIGNAL_WEIGHTS[name]
+    if name.startswith("cdl_"):
+        return _cdl_signal_weight(name, side)
+    if _signal_family(name) == "volume":
+        return _DIRECTIONAL_VOLUME_WEIGHTS.get(name, 0.0)
+    return 0.75
+
+
+def _cdl_signal_weight(name: str, side: str | None) -> float:
+    weights = _CDL_SIGNAL_WEIGHTS.get(name)
+    if weights is None:
+        return _CDL_DEFAULT_WEIGHT
+    if side == "long":
+        return weights[0]
+    if side == "short":
+        return weights[1]
+    return max(weights)
+
+
 def _signal_family(name: str) -> str:
     if name.startswith(("rsi_", "stoch", "cci_", "mfi_", "cmo_", "williams_", "ultimate_")):
         return "oscillator"
@@ -972,6 +1246,8 @@ def _signal_family(name: str) -> str:
         return "volatility"
     if name.startswith(("volume_", "vwap_", "obv_", "cmf_", "adl_", "efi_")):
         return "volume"
+    if name.startswith("cdl_"):
+        return "talib_candle"
     return "candle"
 
 
@@ -1078,6 +1354,8 @@ def _validate_config(cfg: SimpleConfluenceConfig) -> None:
         cfg.zscore_extreme,
         cfg.volume_breakout_mult,
         cfg.score_signal_cap,
+        cfg.weighted_score_cap,
+        cfg.weighted_family_score_cap,
     ]
     if any(value <= 0.0 for value in positives):
         raise ValueError("thresholds and multipliers must be positive")

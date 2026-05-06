@@ -27,6 +27,7 @@ from explorer.explorer_commands import (
 from explorer.explorer_support import (
     build_backtest_args,
     latest_result_file,
+    metric_summary,
     parse_backtest_metrics,
     result_file_snapshot,
     run_command,
@@ -152,11 +153,11 @@ def _result_row(
     metrics: dict[str, Any] | None = None,
     error: str = "",
 ) -> dict[str, Any]:
-    metrics = metrics or {}
+    summary = metric_summary(metrics or {}) if metrics else {}
     objective = None
-    if metrics:
+    if summary:
         try:
-            objective = score_objective(metrics)
+            objective = score_objective(summary)
         except Exception:
             objective = None
     return {
@@ -179,54 +180,83 @@ def _result_row(
         "objective": objective,
         "best_params_count": best_params_count,
         "epoch_count": epoch_count,
-        "profit_total_abs": _metric(metrics, "profit_total_abs"),
-        "profit_total": _metric(metrics, "profit_total", "profit_total_pct"),
-        "profit_total_pct": _metric(metrics, "profit_total_pct"),
-        "trade_count": _metric(metrics, "total_trades", "trade_count"),
-        "winrate": _metric(metrics, "winrate"),
-        "wins": _metric(metrics, "wins"),
-        "draws": _metric(metrics, "draws"),
-        "losses": _metric(metrics, "losses"),
-        "profit_factor": _metric(metrics, "profit_factor"),
-        "max_drawdown_pct": _metric(metrics, "max_relative_drawdown", "max_drawdown_account"),
-        "final_balance": _metric(metrics, "final_balance"),
-        "market_change": _metric(metrics, "market_change"),
+        "profit_total_abs": _metric(summary, "profit_total_abs"),
+        "profit_total": _metric(summary, "profit_total", "profit_total_pct"),
+        "profit_total_pct": _metric(summary, "profit_total_pct"),
+        "trade_count": _metric(summary, "total_trades", "trade_count"),
+        "winrate": _metric(summary, "winrate"),
+        "wins": _metric(summary, "wins"),
+        "draws": _metric(summary, "draws"),
+        "losses": _metric(summary, "losses"),
+        "profit_factor": _metric(summary, "profit_factor"),
+        "max_drawdown_pct": _metric(summary, "max_relative_drawdown", "max_drawdown_account"),
+        "final_balance": _metric(summary, "final_balance"),
+        "market_change": _metric(summary, "market_change"),
         "hyperopt_file": str(hyperopt_file) if hyperopt_file is not None else "",
         "backtest_file": str(backtest_file) if backtest_file is not None else "",
         "params_file": str(params_file) if params_file is not None else "",
-        "metrics": metrics,
         "error": error,
     }
 
 
-def _append_result(runtime_dir: Path, row: dict[str, Any]) -> None:
-    job_id = str(row.get("job_id") or "unknown")
-    results_file = runtime_dir / "results" / f"{_safe_name(job_id)}.json"
-    payload = load_json(results_file, {"rows": []})
-    rows = payload.get("rows") if isinstance(payload, dict) else []
-    if not isinstance(rows, list):
-        rows = []
-    rows.append(row)
-    updated_at = datetime.now().astimezone().isoformat()
-    save_json(
-        results_file,
-        {
-            "schema_version": 2,
-            "job_id": job_id,
-            "created_at": payload.get("created_at") if isinstance(payload, dict) else "",
-            "updated_at": updated_at,
-            "status": payload.get("status", "running") if isinstance(payload, dict) else "running",
-            "phase": payload.get("phase", "backtest") if isinstance(payload, dict) else "backtest",
-            "rows": rows,
-        },
-    )
-    status = payload.get("status", "running") if isinstance(payload, dict) else "running"
-    phase = payload.get("phase", "backtest") if isinstance(payload, dict) else "backtest"
+def _result_file(runtime_dir: Path, job_id: str) -> Path:
+    return runtime_dir / "results" / f"{_safe_name(job_id)}.jsonl"
+
+
+def _result_summary_file(runtime_dir: Path, job_id: str) -> Path:
+    return runtime_dir / "results" / f"{_safe_name(job_id)}.summary.json"
+
+
+def _count_jsonl_rows(path: Path) -> int:
+    if not path.exists():
+        return 0
+    with path.open("r", encoding="utf-8") as handle:
+        return sum(1 for line in handle if line.strip())
+
+
+def _load_result_summary(runtime_dir: Path, job_id: str) -> dict[str, Any]:
+    summary_file = _result_summary_file(runtime_dir, job_id)
+    payload = load_json(summary_file, {}) if summary_file.exists() else {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _write_result_summary(
+    runtime_dir: Path,
+    job_id: str,
+    *,
+    status: str,
+    phase: str,
+    updated_at: str,
+    row_count: int | None = None,
+    created_at: str = "",
+) -> None:
+    results_file = _result_file(runtime_dir, job_id)
+    summary_file = _result_summary_file(runtime_dir, job_id)
+    payload = _load_result_summary(runtime_dir, job_id)
+    if row_count is None:
+        try:
+            row_count = int(payload.get("row_count") or _count_jsonl_rows(results_file))
+        except (TypeError, ValueError):
+            row_count = _count_jsonl_rows(results_file)
+    summary = {
+        "schema_version": 3,
+        "storage": "jsonl",
+        "job_id": job_id,
+        "created_at": str(payload.get("created_at") or created_at or updated_at),
+        "updated_at": updated_at,
+        "status": status,
+        "phase": phase,
+        "row_count": int(row_count),
+        "path": str(results_file),
+        "summary_path": str(summary_file),
+    }
+    save_json(summary_file, summary)
     save_json(
         runtime_dir / "latest.json",
         {
             "job_id": job_id,
             "path": str(results_file),
+            "summary_path": str(summary_file),
             "updated_at": updated_at,
             "status": status,
             "phase": phase,
@@ -234,66 +264,56 @@ def _append_result(runtime_dir: Path, row: dict[str, Any]) -> None:
     )
 
 
-def _result_file(runtime_dir: Path, job_id: str) -> Path:
-    return runtime_dir / "results" / f"{_safe_name(job_id)}.json"
+def _append_result(runtime_dir: Path, row: dict[str, Any]) -> None:
+    job_id = str(row.get("job_id") or "unknown")
+    results_file = _result_file(runtime_dir, job_id)
+    results_file.parent.mkdir(parents=True, exist_ok=True)
+    row = dict(row)
+    row.pop("metrics", None)
+    with results_file.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(row, sort_keys=False, default=str, separators=(",", ":")) + "\n")
+    payload = _load_result_summary(runtime_dir, job_id)
+    try:
+        row_count = int(payload.get("row_count") or 0) + 1
+    except (TypeError, ValueError):
+        row_count = _count_jsonl_rows(results_file)
+    updated_at = datetime.now().astimezone().isoformat()
+    _write_result_summary(
+        runtime_dir,
+        job_id,
+        status=str(payload.get("status") or "running"),
+        phase=str(payload.get("phase") or "backtest"),
+        updated_at=updated_at,
+        row_count=row_count,
+    )
 
 
 def _initialize_result_batch(runtime_dir: Path, job: dict[str, Any]) -> None:
     job_id = str(job.get("job_id") or "unknown")
     now = datetime.now().astimezone().isoformat()
     results_file = _result_file(runtime_dir, job_id)
-    if results_file.exists():
-        payload = load_json(results_file, {"rows": []})
-        rows = payload.get("rows") if isinstance(payload, dict) else []
-        created_at = payload.get("created_at") if isinstance(payload, dict) else now
-    else:
-        rows = []
-        created_at = str(job.get("created_at") or now)
-    if not isinstance(rows, list):
-        rows = []
-    save_json(
-        results_file,
-        {
-            "schema_version": 2,
-            "job_id": job_id,
-            "created_at": created_at,
-            "updated_at": now,
-            "status": "running",
-            "phase": "starting",
-            "rows": rows,
-        },
+    results_file.parent.mkdir(parents=True, exist_ok=True)
+    if not results_file.exists():
+        results_file.write_text("", encoding="utf-8")
+    _write_result_summary(
+        runtime_dir,
+        job_id,
+        status="running",
+        phase="starting",
+        updated_at=now,
+        row_count=_count_jsonl_rows(results_file),
+        created_at=str(job.get("created_at") or now),
     )
-    save_json(runtime_dir / "latest.json", {"job_id": job_id, "path": str(results_file), "updated_at": now, "status": "running"})
 
 
 def _update_result_batch_status(runtime_dir: Path, job_id: str, status_payload: dict[str, Any]) -> None:
-    results_file = _result_file(runtime_dir, job_id)
-    payload = load_json(results_file, {"rows": []})
-    rows = payload.get("rows") if isinstance(payload, dict) else []
-    if not isinstance(rows, list):
-        rows = []
     updated_at = str(status_payload.get("updated_at") or datetime.now().astimezone().isoformat())
-    save_json(
-        results_file,
-        {
-            "schema_version": 2,
-            "job_id": job_id,
-            "created_at": payload.get("created_at") if isinstance(payload, dict) else "",
-            "updated_at": updated_at,
-            "status": str(status_payload.get("status") or "running"),
-            "phase": str(status_payload.get("phase") or ""),
-            "rows": rows,
-        },
-    )
-    save_json(
-        runtime_dir / "latest.json",
-        {
-            "job_id": job_id,
-            "path": str(results_file),
-            "updated_at": updated_at,
-            "status": str(status_payload.get("status") or "running"),
-            "phase": str(status_payload.get("phase") or ""),
-        },
+    _write_result_summary(
+        runtime_dir,
+        job_id,
+        status=str(status_payload.get("status") or "running"),
+        phase=str(status_payload.get("phase") or ""),
+        updated_at=updated_at,
     )
 
 
@@ -968,7 +988,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     state["updated_at"] = datetime.now().astimezone().isoformat()
     explorer_save_json(state_file, state)
-    print(f"\nEntry Sieve results: {runtime_dir / 'results' / f'{_safe_name(job_id)}.json'}")
+    print(f"\nEntry Sieve results: {_result_file(runtime_dir, job_id)}")
     return 0
 
 
