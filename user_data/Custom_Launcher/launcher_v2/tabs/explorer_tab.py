@@ -101,6 +101,12 @@ class ExplorerTab(BaseTab):
         self.sieve_target_pairs_var = tk.StringVar(value="1/1, 1.5/1.5, 2/2, 3/2, 4/2, 2/3, 3/3")
         self.sieve_result_batch_var = tk.StringVar(value="")
         self.sieve_filter_var = tk.StringVar(value="")
+        self.sieve_filter_winrate_min_var = tk.StringVar(value="")
+        self.sieve_filter_profit_min_var = tk.StringVar(value="")
+        self.sieve_filter_drawdown_max_var = tk.StringVar(value="")
+        self.sieve_filter_trades_min_var = tk.StringVar(value="")
+        self.sieve_filter_tp_eq_var = tk.StringVar(value="")
+        self.sieve_filter_sl_eq_var = tk.StringVar(value="")
         self.sieve_status_var = tk.StringVar(value="Run status: idle")
         self._sieve_sort_column = "profit_total_abs"
         self._sieve_sort_reverse = True
@@ -276,7 +282,7 @@ class ExplorerTab(BaseTab):
     def _build_entry_sieve_tab(self, notebook: ttk.Notebook) -> None:
         sieve_tab = ttk.Frame(notebook, style="App.TFrame", padding=4)
         sieve_tab.grid_columnconfigure(0, weight=1)
-        sieve_tab.grid_rowconfigure(1, weight=1)
+        sieve_tab.grid_rowconfigure(2, weight=1)
         notebook.add(sieve_tab, text="Entry Sieve")
 
         controls = ttk.LabelFrame(sieve_tab, text="Entry Sieve")
@@ -300,8 +306,20 @@ class ExplorerTab(BaseTab):
         ttk.Button(controls, text="Open results folder", command=self._open_sieve_results_folder).grid(row=3, column=5, sticky="w", padx=8, pady=4)
         ttk.Label(controls, textvariable=self.sieve_status_var).grid(row=4, column=0, columnspan=6, sticky="w", padx=8, pady=4)
 
+        filters = ttk.LabelFrame(sieve_tab, text="Result column filters")
+        filters.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 8))
+        for col in (1, 3, 5, 7):
+            filters.grid_columnconfigure(col, weight=1)
+        self._editable_entry(filters, 0, 0, "Winrate >= %", self.sieve_filter_winrate_min_var)
+        self._editable_entry(filters, 0, 2, "Profit >= %", self.sieve_filter_profit_min_var)
+        self._editable_entry(filters, 0, 4, "Max DD <= %", self.sieve_filter_drawdown_max_var)
+        self._editable_entry(filters, 0, 6, "Trades >=", self.sieve_filter_trades_min_var)
+        self._editable_entry(filters, 1, 0, "TP % =", self.sieve_filter_tp_eq_var)
+        self._editable_entry(filters, 1, 2, "SL % =", self.sieve_filter_sl_eq_var)
+        ttk.Button(filters, text="Clear filters", command=self._clear_sieve_column_filters).grid(row=1, column=4, sticky="w", padx=8, pady=4)
+
         results = ttk.LabelFrame(sieve_tab, text="Runtime results")
-        results.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 8))
+        results.grid(row=2, column=0, sticky="nsew", padx=8, pady=(0, 8))
         results.grid_columnconfigure(0, weight=1)
         results.grid_rowconfigure(0, weight=1)
         columns = SIEVE_RESULT_COLUMNS
@@ -389,6 +407,15 @@ class ExplorerTab(BaseTab):
         self.search_breadth_var.trace_add("write", lambda *_: self._show_target_params(self._active_target_label))
         self.auto_epochs_var.trace_add("write", lambda *_: self._update_epochs_mode_state())
         self.sieve_filter_var.trace_add("write", lambda *_: self._refresh_sieve_results())
+        for variable in (
+            self.sieve_filter_winrate_min_var,
+            self.sieve_filter_profit_min_var,
+            self.sieve_filter_drawdown_max_var,
+            self.sieve_filter_trades_min_var,
+            self.sieve_filter_tp_eq_var,
+            self.sieve_filter_sl_eq_var,
+        ):
+            variable.trace_add("write", lambda *_: self._refresh_sieve_results())
         if self.sieve_result_batch_combo is not None:
             self.sieve_result_batch_combo.bind("<<ComboboxSelected>>", lambda event: self._refresh_sieve_results(), add="+")
         if self.catalog_tree is not None:
@@ -679,6 +706,17 @@ class ExplorerTab(BaseTab):
         except Exception as exc:
             messagebox.showerror("Entry Sieve results", f"Could not open results folder:\n{exc}", parent=self)
 
+    def _clear_sieve_column_filters(self) -> None:
+        for variable in (
+            self.sieve_filter_winrate_min_var,
+            self.sieve_filter_profit_min_var,
+            self.sieve_filter_drawdown_max_var,
+            self.sieve_filter_trades_min_var,
+            self.sieve_filter_tp_eq_var,
+            self.sieve_filter_sl_eq_var,
+        ):
+            variable.set("")
+
     def _refresh_sieve_results(self) -> None:
         if self.sieve_results_tree is None:
             return
@@ -701,6 +739,7 @@ class ExplorerTab(BaseTab):
         filter_text = self.sieve_filter_var.get().strip().lower()
         if filter_text:
             rows = [row for row in rows if filter_text in json.dumps(row, sort_keys=True, default=str).lower()]
+        rows = self._apply_sieve_column_filters(rows)
         rows = sorted(rows, key=lambda row: self._sieve_sort_key(row, self._sieve_sort_column), reverse=self._sieve_sort_reverse)
         rendered = [
             (
@@ -728,6 +767,61 @@ class ExplorerTab(BaseTab):
             for row in rows
         ]
         set_tree_rows(self.sieve_results_tree, rendered)
+
+    def _apply_sieve_column_filters(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        active_filters: list[tuple[str, str, float, float]] = []
+        filter_specs = (
+            ("winrate", self.sieve_filter_winrate_min_var.get(), ">=", 100.0),
+            ("profit_total", self.sieve_filter_profit_min_var.get(), ">=", 100.0),
+            ("max_drawdown_pct", self.sieve_filter_drawdown_max_var.get(), "<=", 100.0),
+            ("trade_count", self.sieve_filter_trades_min_var.get(), ">=", 1.0),
+            ("take_profit_pct", self.sieve_filter_tp_eq_var.get(), "=", 1.0),
+            ("stoploss_pct", self.sieve_filter_sl_eq_var.get(), "=", 1.0),
+        )
+        for column, text, operator, multiplier in filter_specs:
+            threshold = self._parse_filter_number(text)
+            if threshold is None:
+                continue
+            active_filters.append((column, operator, threshold, multiplier))
+        if not active_filters:
+            return rows
+
+        filtered: list[dict[str, Any]] = []
+        for row in rows:
+            keep = True
+            for column, operator, threshold, multiplier in active_filters:
+                raw_value = self._parse_filter_number(row.get(column))
+                if raw_value is None:
+                    keep = False
+                    break
+                value = raw_value * multiplier
+                if operator == ">=" and value < threshold:
+                    keep = False
+                    break
+                if operator == "<=" and value > threshold:
+                    keep = False
+                    break
+                if operator == "=" and abs(value - threshold) > 1e-9:
+                    keep = False
+                    break
+            if keep:
+                filtered.append(row)
+        return filtered
+
+    @staticmethod
+    def _parse_filter_number(value: Any) -> float | None:
+        if value in (None, ""):
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        if text.endswith("%"):
+            text = text[:-1].strip()
+        text = text.replace(",", "")
+        try:
+            return float(text)
+        except (TypeError, ValueError):
+            return None
 
     def _sieve_heading_clicked(self, column: str) -> None:
         self._sieve_selected_column = column
@@ -926,6 +1020,12 @@ class ExplorerTab(BaseTab):
             "sieve_target_pairs": self.sieve_target_pairs_var.get(),
             "sieve_result_batch": self.sieve_result_batch_var.get(),
             "sieve_result_filter": self.sieve_filter_var.get(),
+            "sieve_filter_winrate_min": self.sieve_filter_winrate_min_var.get(),
+            "sieve_filter_profit_min": self.sieve_filter_profit_min_var.get(),
+            "sieve_filter_drawdown_max": self.sieve_filter_drawdown_max_var.get(),
+            "sieve_filter_trades_min": self.sieve_filter_trades_min_var.get(),
+            "sieve_filter_tp_eq": self.sieve_filter_tp_eq_var.get(),
+            "sieve_filter_sl_eq": self.sieve_filter_sl_eq_var.get(),
             "sieve_column_order": list(self.sieve_column_order),
         }
 
@@ -952,6 +1052,12 @@ class ExplorerTab(BaseTab):
         self.sieve_target_pairs_var.set(str(state.get("sieve_target_pairs") or "1/1, 1.5/1.5, 2/2, 3/2, 4/2, 2/3, 3/3"))
         self.sieve_result_batch_var.set(str(state.get("sieve_result_batch") or ""))
         self.sieve_filter_var.set(str(state.get("sieve_result_filter") or ""))
+        self.sieve_filter_winrate_min_var.set(str(state.get("sieve_filter_winrate_min") or ""))
+        self.sieve_filter_profit_min_var.set(str(state.get("sieve_filter_profit_min") or ""))
+        self.sieve_filter_drawdown_max_var.set(str(state.get("sieve_filter_drawdown_max") or ""))
+        self.sieve_filter_trades_min_var.set(str(state.get("sieve_filter_trades_min") or ""))
+        self.sieve_filter_tp_eq_var.set(str(state.get("sieve_filter_tp_eq") or ""))
+        self.sieve_filter_sl_eq_var.set(str(state.get("sieve_filter_sl_eq") or ""))
         saved_order = state.get("sieve_column_order")
         if isinstance(saved_order, list):
             order = [str(column) for column in saved_order]
