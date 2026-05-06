@@ -5,11 +5,12 @@ import re
 import shlex
 from typing import Any
 import tkinter as tk
-from tkinter import ttk
+from tkinter import messagebox, ttk
 
 from ..base_tab import BaseTab
 from ..command_builder import command_text, freqtrade_command
 from ..console_pane import ConsolePane
+from ..services.collector_service import is_process_running
 from .pairs_tab import parse_pairs
 from ..ui_helpers import labeled_entry
 
@@ -51,6 +52,7 @@ class RunTab(BaseTab):
         ttk.Button(buttons, text="Refresh preview", command=self._refresh_preview).pack(side="left", padx=(0, 6))
         ttk.Button(buttons, text="Run", command=self._run).pack(side="left", padx=(0, 6))
         ttk.Button(buttons, text="Launch FreqUI", command=self.run_frequi).pack(side="left", padx=(0, 6))
+        ttk.Button(buttons, text="Launch/Refresh Data Tools", command=self.ensure_data_tools_running).pack(side="left", padx=(0, 6))
         ttk.Button(buttons, text="Stop", command=self._stop).pack(side="left", padx=(0, 6))
 
         preview = ttk.LabelFrame(self, text="Generated command")
@@ -260,6 +262,94 @@ class RunTab(BaseTab):
         self.context.emit("save_state", {"reason": "frequi_launch"})
         self.context.process_runner.run(result.preview_command, cwd=self.context.shared.project_root.get() or None, owner=self.tab_key)
         self.context.shared.status.set("FreqUI running")
+
+    def ensure_data_tools_running(self) -> None:
+        results = [
+            self._ensure_research_collector("News", "news"),
+            self._ensure_research_collector("Web", "web"),
+            self._ensure_global_context_collector(),
+            self._ensure_orderbook_collector(),
+        ]
+        ok = [message for ok, message in results if ok]
+        errors = [message for ok, message in results if not ok]
+        summary = " | ".join(ok + errors)
+        self.context.shared.status.set(f"Data tools: {summary}")
+        if self.raw_console is not None:
+            self.raw_console.append(f"Data tools ensure-running: {summary}\n")
+        self.context.emit("save_state", {"reason": "data_tools_ensure_running"})
+        if errors:
+            messagebox.showwarning("Data tools", "Some data tools could not be started:\n\n" + "\n".join(errors), parent=self)
+
+    def _ensure_research_collector(self, label: str, tab_key: str) -> tuple[bool, str]:
+        tab = self.context.registry.get(tab_key)
+        if tab is None:
+            return False, f"{label}: tab not loaded"
+        try:
+            state = dict(tab.get_state())
+            state["once"] = False
+            status = tab.service.read_status(tab.profile, state)
+            pid = self._running_pid(status)
+            if pid is None:
+                pid = int(tab.service.start_detached(tab.profile, state))
+            self._refresh_tab_status(tab)
+            return True, f"{label}: PID {pid}"
+        except Exception as exc:
+            self._refresh_tab_status(tab)
+            return False, f"{label}: {exc}"
+
+    def _ensure_global_context_collector(self) -> tuple[bool, str]:
+        tab = self.context.registry.get("global_context")
+        if tab is None:
+            return False, "Global: tab not loaded"
+        try:
+            state = dict(tab.get_state())
+            state["once"] = False
+            status = tab.service.read_status(state)
+            pid = self._running_pid(status)
+            if pid is None:
+                pid = int(tab.service.start_detached(state))
+            self._refresh_tab_status(tab)
+            return True, f"Global: PID {pid}"
+        except Exception as exc:
+            self._refresh_tab_status(tab)
+            return False, f"Global: {exc}"
+
+    def _ensure_orderbook_collector(self) -> tuple[bool, str]:
+        tab = self.context.registry.get("orderbook")
+        if tab is None:
+            return False, "Order book: tab not loaded"
+        try:
+            state = tab.get_state()
+            status = tab.service.read_status(state)
+            pid = self._running_pid(status)
+            if pid is None:
+                pid = int(tab.service.start_detached(state, self._main_pairs()))
+            self._refresh_tab_status(tab)
+            return True, f"Order book: PID {pid}"
+        except Exception as exc:
+            self._refresh_tab_status(tab)
+            return False, f"Order book: {exc}"
+
+    def _main_pairs(self) -> list[str]:
+        return parse_pairs(str(self._tab_state("pairs").get("pairs") or ""))
+
+    @staticmethod
+    def _running_pid(status: dict[str, Any]) -> int | None:
+        for key in ("pid_text", "pid"):
+            try:
+                pid = int(str(status.get(key) or "").strip())
+            except (TypeError, ValueError):
+                continue
+            if is_process_running(pid):
+                return pid
+        return None
+
+    @staticmethod
+    def _refresh_tab_status(tab: Any) -> None:
+        try:
+            tab.refresh_status()
+        except Exception:
+            return
 
     def _stop(self) -> None:
         self.context.process_runner.stop()
