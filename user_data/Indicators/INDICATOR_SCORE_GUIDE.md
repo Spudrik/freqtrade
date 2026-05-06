@@ -81,6 +81,13 @@ proxy. Long scores rise when the pair is outperforming the benchmark across
 multiple windows and the relative-strength line is high in its rolling range.
 Short scores rise when it underperforms.
 
+`external_global_context_features.py`
+
+First-pass external-data feature module. It reads the launcher Global Context
+SQLite database, aligns effective 0..100 context scores to strategy candles, and
+emits only rolling score, score delta, and fear/greed persistence columns. Treat
+it as context/filter research, not a standalone entry system.
+
 `simple_confluence_indicator.py`
 
 Broad textbook TA confluence: RSI, MACD/PPO, Bollinger, EMA/SMA/DEMA/TEMA/WMA/HMA,

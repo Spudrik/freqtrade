@@ -46,6 +46,7 @@ Current foundation order:
 Current disposition:
 - Done/ready for strategy tests: Volume Profile, Pivot Foundation, Pivot Structure, and Trendline V2.
 - Work in progress: Pattern Structure.
+- First-pass external context scaffold: `external_global_context_features.py`.
 - Removed: Market Regime. It was mostly standard EMA/ADX/ATR/range/volume state repackaging and should not be rebuilt unless a genuinely different regime premise is defined.
 - Archived/lower-value: Trendline Channels, Simple Confluence, Volatility Cycles, and OHLCV Complex Volume.
 
@@ -135,6 +136,39 @@ If resurrecting either module:
 - First explain why the proposed output is not just a renamed standard TA indicator.
 - Require plot-first proof that it provides strategy-useful information that Volume Profile, Pattern Structure, Trendlines, Pivots, or real order-book features do not already provide.
 - Keep any resurrection behind a new filename or explicit review branch so archived proxy logic does not silently re-enter active strategies.
+
+## External Data Feature Direction
+
+External data indicators should convert existing SQLite datasets into candle-aligned dataframe columns. They must not collect data, scrape APIs, run background processes, or make final trade decisions.
+
+Current external datasets:
+- Global Context SQLite: `user_data/research_news_data/global_context/global_context.sqlite`.
+- Global Context source config: `user_data/Custom_Launcher/research/config/global_context_sources.json`.
+- Global Context table: `global_context_ticks`.
+- Global Context columns of interest: `ts`, `source_ts`, `source_id`, `source_group`, `source_type`, `metric_key`, `score`, `source_score`, `calc_score`, `signal`, `value`, `unit`, `notes`, `raw_json`, `created_at`.
+- Effective score convention: `score` is 0..100, where lower values are Fear / weaker risk appetite, higher values are Greed / stronger risk appetite, and 50 is neutral.
+- Current source groups include `sentiment`, `market`, `defi`, `equity_indices`, and `rates_fx`.
+
+First-pass module:
+- `external_global_context_features.py` is a scaffold for another agent to finish and validate.
+- It reads the Global Context SQLite rows, aligns them to candle timestamps, applies a one-candle availability lag by default, and emits rolling score/persistence features only.
+- It intentionally does not emit entry, exit, hold, stake, risk, or final regime authority columns.
+- It defaults to strict missing-data behavior. If the DB path is wrong or empty, fix the collector/path/state issue rather than silently treating missing context as neutral.
+
+First-pass Global Context outputs to validate:
+- `gctx_score_latest`: latest aligned effective score normalized to 0..1.
+- `gctx_score_roll_short`, `gctx_score_roll_medium`, `gctx_score_roll_long`: rolling score means.
+- `gctx_score_delta_short`, `gctx_score_delta_medium`: score change over rolling windows.
+- `gctx_greed_persistence`, `gctx_fear_persistence`: fraction of recent candles above/below the configured thresholds.
+- `gctx_score_long`, `gctx_score_short`, `gctx_score_abs`, `gctx_state`: shared score-contract columns derived only from the medium rolling score and persistence.
+- `gctx_<source_group>_score_roll_medium`, `gctx_<source_group>_greed_persistence`, and `gctx_<source_group>_fear_persistence`: group-level context summaries where the source group exists.
+
+Validation priorities for the next agent:
+- Confirm no lookahead by checking that a collector tick cannot influence the same or earlier strategy candle.
+- Validate on 1h BTC, ETH, SOL, and at least one higher-beta alt before strategy integration.
+- Bucket forward returns and drawdowns by `gctx_score_roll_medium`, `gctx_fear_persistence`, and `gctx_greed_persistence`.
+- Test whether Global Context works better as a long/short filter, stake/risk filter, exit pressure input, or short-expansion guard before adding it to `DailyStructureLadderStrategy.py`.
+- Keep Global Context separate from News/Web sentiment until News/Web have their own rolling scored features.
 
 ## Relative Strength Strategy Outputs
 
