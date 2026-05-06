@@ -76,6 +76,127 @@ def _proof_line_columns(
     return columns
 
 
+def _dedupe_interval_level_events(
+    mask: np.ndarray,
+    first_index: np.ndarray,
+    last_index: np.ndarray,
+    primary_level: np.ndarray,
+    secondary_level: np.ndarray | None,
+    cooldown_bars: int,
+    overlap_pct: float,
+    level_tolerance_pct: float,
+) -> np.ndarray:
+    """Suppress repeated attention for the same no-lookahead structure.
+
+    The detector keeps the first confirmed event. Later events are dropped when
+    their anchor interval overlaps a prior kept event and their defining level
+    or levels describe the same price area. This fixes repeated pattern spam at
+    the source: one structure should not emit many setup rows just because the
+    rolling window still recognizes it on later candles.
+    """
+
+    clean = np.asarray(mask, dtype=bool)
+    selected = np.zeros(len(clean), dtype=bool)
+    selected_rows: list[int] = []
+    cooldown = max(int(cooldown_bars), 1)
+    min_overlap = float(overlap_pct)
+    tolerance = float(level_tolerance_pct)
+    secondary = secondary_level if secondary_level is not None else None
+
+    for row in np.flatnonzero(clean):
+        required = [first_index[row], last_index[row], primary_level[row]]
+        if secondary is not None:
+            required.append(secondary[row])
+        if not np.isfinite(required).all():
+            continue
+        duplicate = False
+        for prior in reversed(selected_rows):
+            if row - prior <= cooldown:
+                duplicate = True
+                break
+            if _same_interval_level_structure(
+                first_index[row],
+                last_index[row],
+                primary_level[row],
+                secondary[row] if secondary is not None else np.nan,
+                first_index[prior],
+                last_index[prior],
+                primary_level[prior],
+                secondary[prior] if secondary is not None else np.nan,
+                min_overlap,
+                tolerance,
+                secondary is not None,
+            ):
+                duplicate = True
+                break
+        if not duplicate:
+            selected[row] = True
+            selected_rows.append(int(row))
+    return selected
+
+
+def _same_interval_level_structure(
+    first_x: float,
+    last_x: float,
+    primary: float,
+    secondary: float,
+    prior_first_x: float,
+    prior_last_x: float,
+    prior_primary: float,
+    prior_secondary: float,
+    min_overlap: float,
+    level_tolerance_pct: float,
+    require_secondary: bool,
+) -> bool:
+    span = max(float(last_x) - float(first_x), 1.0)
+    prior_span = max(float(prior_last_x) - float(prior_first_x), 1.0)
+    overlap = min(float(last_x), float(prior_last_x)) - max(float(first_x), float(prior_first_x))
+    overlap_ratio = overlap / max(min(span, prior_span), 1.0)
+    if overlap_ratio < float(min_overlap):
+        return False
+    primary_ref = max(abs(float(primary)), abs(float(prior_primary)), 1e-9)
+    primary_close = abs(float(primary) - float(prior_primary)) / primary_ref <= float(level_tolerance_pct)
+    if not primary_close:
+        return False
+    if not require_secondary:
+        return True
+    secondary_ref = max(abs(float(secondary)), abs(float(prior_secondary)), 1e-9)
+    return abs(float(secondary) - float(prior_secondary)) / secondary_ref <= float(level_tolerance_pct)
+
+
+def _lifecycle_state_from_events(mask: np.ndarray | Series, mature_bars: int, stale_bars: int) -> np.ndarray:
+    """Carry sparse pattern events forward as mature/stale state.
+
+    Values are intentionally simple:
+    - ``0``: no active lifecycle.
+    - ``2``: mature/current pattern window after the event row.
+    - ``-1``: stale window after the mature window.
+
+    The setup event remains the primary signal. This state only tells the
+    strategy or diagnostic plot whether a recent pattern is still fresh enough
+    to pay attention to, without re-emitting the same setup repeatedly.
+    """
+
+    clean = np.asarray(mask, dtype=bool)
+    out = np.zeros(len(clean), dtype="int8")
+    mature = max(int(mature_bars), 1)
+    stale = max(int(stale_bars), 0)
+    active_row = -1
+    for row, is_event in enumerate(clean):
+        if is_event:
+            active_row = int(row)
+        if active_row < 0:
+            continue
+        age = row - active_row
+        if age <= mature:
+            out[row] = 2
+        elif age <= mature + stale:
+            out[row] = -1
+        else:
+            active_row = -1
+    return out
+
+
 def _pattern_geometry_arrays(
     frame: DataFrame,
     cfg: PatternStructureConfig,
