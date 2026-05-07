@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 import sqlite3
@@ -71,6 +71,7 @@ class OrderbookContextFeatureConfig:
     - Use compact ``orderbook_metric_bars`` rows by default, not raw snapshots.
     - Keep gap handling explicit with coverage, missing ratio, gap flags, bar
       age, and stale-period columns.
+    - Treat historical/backtest rows and live/dry-run rows differently.
     - Add market comparison features where both selected markets exist.
     - Optionally append derivative market-context rows already stored beside
       order book data: funding, open interest, long/short, and taker ratio.
@@ -97,6 +98,12 @@ class OrderbookContextFeatureConfig:
     Agent notes:
     - The safest default is closed-bar alignment: bar ``ts_end`` is grouped into
       the candle bin it closed inside.
+    - For backtest/hyperopt, pass a historical order-book SQLite path and keep
+      ``data_mode="historical"``. Do not use the live collector DB in backtests
+      unless it genuinely contains the historical range being tested.
+    - For dry/live, use ``data_mode="auto"``, pass the strategy runmode, and set
+      ``enable_live_stream=True``. This switches to the configured live bar
+      timeframe and adds freshness checks.
     - Basis bps and depth ratio are not emitted here because the current bar
       schema does not store mid price or top-book notionals. Add those to the
       collector bar schema, or build a separate tick-resample formatter, before
@@ -109,8 +116,12 @@ class OrderbookContextFeatureConfig:
     market_keys: tuple[str, ...] = DEFAULT_MARKET_KEYS
     primary_market_key: str = "binance_usdm_futures"
     comparison_pairs: tuple[tuple[str, str], ...] = DEFAULT_COMPARISON_PAIRS
+    data_mode: str = "historical"
+    runmode: str | None = None
+    enable_live_stream: bool = False
     resample_rule: str = "1h"
     bar_timeframe_seconds: int = 3600
+    live_bar_timeframe_seconds: int = 300
     availability_lag_candles: int = 0
     short_window: int = 6
     medium_window: int = 24
@@ -122,6 +133,7 @@ class OrderbookContextFeatureConfig:
     microprice_scale_bps: float = 5.0
     spread_penalty_bps: float = 10.0
     max_bar_age_seconds: int | None = None
+    live_max_bar_age_seconds: int = 900
     include_market_context: bool = True
     market_context_max_age_periods: int = 8
     prefix: str = "obctx"
@@ -138,8 +150,12 @@ def add_orderbook_context_features(
     market_keys: tuple[str, ...] | None = None,
     primary_market_key: str | None = None,
     comparison_pairs: tuple[tuple[str, str], ...] | None = None,
+    data_mode: str | None = None,
+    runmode: str | None = None,
+    enable_live_stream: bool | None = None,
     resample_rule: str | None = None,
     bar_timeframe_seconds: int | None = None,
+    live_bar_timeframe_seconds: int | None = None,
     availability_lag_candles: int | None = None,
     short_window: int | None = None,
     medium_window: int | None = None,
@@ -151,6 +167,7 @@ def add_orderbook_context_features(
     microprice_scale_bps: float | None = None,
     spread_penalty_bps: float | None = None,
     max_bar_age_seconds: int | None = None,
+    live_max_bar_age_seconds: int | None = None,
     include_market_context: bool | None = None,
     market_context_max_age_periods: int | None = None,
     prefix: str | None = None,
@@ -162,16 +179,23 @@ def add_orderbook_context_features(
     ``dataframe = add_orderbook_context_features(dataframe, pair=metadata["pair"])``
 
     Output columns use the configured prefix, default ``obctx``:
+    - ``obctx_mode_live`` / ``obctx_source_bar_timeframe_seconds``: confirms
+      whether the formatter used historical or live-stream settings.
     - ``obctx_coverage_ratio`` and ``obctx_gap_flag``: primary market data
       quality for each candle.
     - ``obctx_gap_ratio_roll_medium``: how much of the recent window is missing
       or below coverage threshold.
     - ``obctx_spread_bps_roll_medium``: rolling primary-market spread.
-    - ``obctx_imbalance_roll_short/medium/long``: rolling top-20 imbalance.
+    - ``obctx_spread_zscore_medium`` and spread widening/volatility columns:
+      detect spread stress better than a simple average.
+    - ``obctx_imbalance_roll_short/medium/long`` plus imbalance delta and
+      volatility columns: track pressure direction and instability.
     - ``obctx_bid_pressure_persistence`` and
       ``obctx_ask_pressure_persistence``: sustained one-sided pressure.
     - ``obctx_bid_wall_near_persistence`` and
       ``obctx_ask_wall_near_persistence``: recurring nearby wall presence.
+    - ``obctx_liquidity_stress_score`` and support/resistance pressure scores:
+      compact diagnostics for later validation, not entry rules.
     - ``obctx_score_long/short/abs/state``: shared score contract derived only
       from order-book pressure, not a strategy decision.
     - ``obctx_<market>_*``: selected per-market raw/aligned bar features.
@@ -180,6 +204,15 @@ def add_orderbook_context_features(
 
     Order-book values are not forward-filled through missing candle bins.
     Coverage and gap columns should be used before trusting any rolling score.
+
+    ``data_mode`` controls runtime behavior:
+    - ``historical``: default for backtest/hyperopt; uses
+      ``bar_timeframe_seconds`` and strict missing-measurement columns.
+    - ``live``: requires ``enable_live_stream=True``; uses
+      ``live_bar_timeframe_seconds`` unless a non-default bar timeframe is
+      explicitly set, and applies live freshness checks.
+    - ``auto``: live only when runmode looks like dry/live and live stream is
+      enabled; otherwise historical.
     """
 
     cfg = _resolve_config(
@@ -189,8 +222,12 @@ def add_orderbook_context_features(
         market_keys=market_keys,
         primary_market_key=primary_market_key,
         comparison_pairs=comparison_pairs,
+        data_mode=data_mode,
+        runmode=runmode,
+        enable_live_stream=enable_live_stream,
         resample_rule=resample_rule,
         bar_timeframe_seconds=bar_timeframe_seconds,
+        live_bar_timeframe_seconds=live_bar_timeframe_seconds,
         availability_lag_candles=availability_lag_candles,
         short_window=short_window,
         medium_window=medium_window,
@@ -202,11 +239,13 @@ def add_orderbook_context_features(
         microprice_scale_bps=microprice_scale_bps,
         spread_penalty_bps=spread_penalty_bps,
         max_bar_age_seconds=max_bar_age_seconds,
+        live_max_bar_age_seconds=live_max_bar_age_seconds,
         include_market_context=include_market_context,
         market_context_max_age_periods=market_context_max_age_periods,
         prefix=prefix,
         allow_missing=allow_missing,
     )
+    cfg = _effective_mode_config(cfg)
     _validate_config(cfg)
     if dataframe.empty:
         return dataframe.copy()
@@ -245,6 +284,11 @@ def format_orderbook_bars(
     canonical_pair: str | None = None,
     market_keys: tuple[str, ...] | None = None,
     bar_timeframe_seconds: int | None = None,
+    data_mode: str | None = None,
+    runmode: str | None = None,
+    enable_live_stream: bool | None = None,
+    live_bar_timeframe_seconds: int | None = None,
+    live_max_bar_age_seconds: int | None = None,
     allow_missing: bool | None = None,
 ) -> DataFrame:
     """Load compact order-book bar rows with coverage columns.
@@ -260,8 +304,14 @@ def format_orderbook_bars(
         canonical_pair=canonical_pair,
         market_keys=market_keys,
         bar_timeframe_seconds=bar_timeframe_seconds,
+        data_mode=data_mode,
+        runmode=runmode,
+        enable_live_stream=enable_live_stream,
+        live_bar_timeframe_seconds=live_bar_timeframe_seconds,
+        live_max_bar_age_seconds=live_max_bar_age_seconds,
         allow_missing=allow_missing,
     )
+    cfg = _effective_mode_config(cfg)
     _validate_config(cfg)
     canonical = _resolve_canonical_pair(pair, cfg)
     bars = _load_metric_bars(cfg, canonical, None, None)
@@ -279,13 +329,48 @@ def _resolve_config(config: OrderbookContextFeatureConfig | None, **overrides: A
     return OrderbookContextFeatureConfig(**values)
 
 
+def _effective_mode_config(cfg: OrderbookContextFeatureConfig) -> OrderbookContextFeatureConfig:
+    mode = _effective_data_mode(cfg)
+    if mode != "live":
+        return cfg
+    values: dict[str, Any] = {}
+    if int(cfg.bar_timeframe_seconds) == 3600:
+        values["bar_timeframe_seconds"] = int(cfg.live_bar_timeframe_seconds)
+    if cfg.max_bar_age_seconds is None:
+        values["max_bar_age_seconds"] = int(cfg.live_max_bar_age_seconds)
+    if int(cfg.availability_lag_candles) > 0:
+        values["availability_lag_candles"] = 0
+    return replace(cfg, **values) if values else cfg
+
+
+def _effective_data_mode(cfg: OrderbookContextFeatureConfig) -> str:
+    mode = str(cfg.data_mode or "historical").strip().lower()
+    if mode in {"dry_run", "live_run", "livestream", "live_stream"}:
+        mode = "live"
+    if mode == "backtest" or mode == "hyperopt":
+        mode = "historical"
+    if mode != "auto":
+        return mode
+    runmode = str(cfg.runmode or "").strip().lower()
+    if cfg.enable_live_stream and runmode in {"dry_run", "dry-run", "live", "live_run", "live-run"}:
+        return "live"
+    return "historical"
+
+
 def _validate_config(cfg: OrderbookContextFeatureConfig) -> None:
+    mode = _effective_data_mode(cfg)
+    if mode not in {"historical", "live"}:
+        raise ValueError("Orderbook data_mode must be 'historical', 'live', or 'auto'.")
+    if mode == "live" and not cfg.enable_live_stream:
+        raise ValueError("Orderbook live mode requires enable_live_stream=True.")
     if not cfg.market_keys:
         raise ValueError("Orderbook market_keys must not be empty.")
     if cfg.primary_market_key not in cfg.market_keys:
         raise ValueError("Orderbook primary_market_key must be included in market_keys.")
     if cfg.bar_timeframe_seconds < 1:
         raise ValueError("Orderbook bar_timeframe_seconds must be >= 1.")
+    if cfg.live_bar_timeframe_seconds < 1:
+        raise ValueError("Orderbook live_bar_timeframe_seconds must be >= 1.")
     if cfg.availability_lag_candles < 0:
         raise ValueError("Orderbook availability_lag_candles must be >= 0.")
     if cfg.short_window < 1 or cfg.medium_window < 1 or cfg.long_window < 1:
@@ -302,6 +387,8 @@ def _validate_config(cfg: OrderbookContextFeatureConfig) -> None:
         raise ValueError("Orderbook microprice/spread scales must be > 0.")
     if cfg.max_bar_age_seconds is not None and cfg.max_bar_age_seconds < 0:
         raise ValueError("Orderbook max_bar_age_seconds must be >= 0 when provided.")
+    if cfg.live_max_bar_age_seconds < 0:
+        raise ValueError("Orderbook live_max_bar_age_seconds must be >= 0.")
     if cfg.market_context_max_age_periods < 1:
         raise ValueError("Orderbook market_context_max_age_periods must be >= 1.")
     if not cfg.prefix:
@@ -524,7 +611,12 @@ def _build_orderbook_features(aligned: dict[str, DataFrame], cfg: OrderbookConte
     p = cfg.prefix
     features = DataFrame(index=next(iter(aligned.values())).index)
     primary = aligned[cfg.primary_market_key]
+    valid_primary = primary["gap_flag"].eq(0.0)
+    mode = _effective_data_mode(cfg)
 
+    features[f"{p}_mode_live"] = 1.0 if mode == "live" else 0.0
+    features[f"{p}_live_stream_enabled"] = 1.0 if cfg.enable_live_stream else 0.0
+    features[f"{p}_source_bar_timeframe_seconds"] = float(cfg.bar_timeframe_seconds)
     features[f"{p}_coverage_ratio"] = primary["coverage_ratio"]
     features[f"{p}_missing_ratio"] = primary["missing_ratio"]
     features[f"{p}_gap_flag"] = primary["gap_flag"]
@@ -532,20 +624,45 @@ def _build_orderbook_features(aligned: dict[str, DataFrame], cfg: OrderbookConte
     features[f"{p}_bar_age_seconds"] = primary["bar_age_seconds"]
     features[f"{p}_coverage_roll_medium"] = primary["coverage_ratio"].rolling(cfg.medium_window, min_periods=1).mean()
     features[f"{p}_gap_ratio_roll_medium"] = primary["gap_flag"].rolling(cfg.medium_window, min_periods=1).mean()
+    features[f"{p}_valid_observation_count_roll_medium"] = valid_primary.astype(float).rolling(cfg.medium_window, min_periods=1).sum()
     features[f"{p}_spread_bps_mean"] = primary["spread_bps_mean"]
     features[f"{p}_spread_bps_roll_medium"] = primary["spread_bps_mean"].rolling(cfg.medium_window, min_periods=1).mean()
     features[f"{p}_spread_bps_max_roll_medium"] = primary["spread_bps_max"].rolling(cfg.medium_window, min_periods=1).max()
+    features[f"{p}_spread_widening_bps"] = (primary["spread_bps_max"] - primary["spread_bps_mean"]).clip(lower=0.0)
+    features[f"{p}_spread_widening_bps_roll_medium"] = features[f"{p}_spread_widening_bps"].rolling(cfg.medium_window, min_periods=1).mean()
+    features[f"{p}_spread_volatility_roll_medium"] = primary["spread_bps_mean"].rolling(cfg.medium_window, min_periods=2).std()
+    features[f"{p}_spread_zscore_medium"] = _rolling_zscore(primary["spread_bps_mean"], cfg.medium_window)
+    features[f"{p}_wide_spread_persistence"] = _valid_persistence(
+        primary["spread_bps_mean"].ge(cfg.spread_penalty_bps),
+        valid_primary,
+        cfg.persistence_window,
+    )
     features[f"{p}_microprice_offset_bps_mean"] = primary["microprice_offset_bps_mean"]
     features[f"{p}_microprice_offset_bps_roll_medium"] = primary["microprice_offset_bps_mean"].rolling(cfg.medium_window, min_periods=1).mean()
+    features[f"{p}_microprice_delta_1"] = primary["microprice_offset_bps_mean"].diff()
+    features[f"{p}_microprice_volatility_roll_medium"] = primary["microprice_offset_bps_mean"].rolling(cfg.medium_window, min_periods=2).std()
     features[f"{p}_imbalance_top20_mean"] = primary["imbalance_top20_mean"]
     features[f"{p}_imbalance_roll_short"] = primary["imbalance_top20_mean"].rolling(cfg.short_window, min_periods=1).mean()
     features[f"{p}_imbalance_roll_medium"] = primary["imbalance_top20_mean"].rolling(cfg.medium_window, min_periods=1).mean()
     features[f"{p}_imbalance_roll_long"] = primary["imbalance_top20_mean"].rolling(cfg.long_window, min_periods=1).mean()
+    features[f"{p}_imbalance_coverage_weighted_roll_medium"] = _rolling_weighted_mean(
+        primary["imbalance_top20_mean"],
+        primary["coverage_ratio"],
+        cfg.medium_window,
+    )
+    features[f"{p}_imbalance_delta_1"] = primary["imbalance_top20_mean"].diff()
+    features[f"{p}_imbalance_delta_short"] = primary["imbalance_top20_mean"] - primary["imbalance_top20_mean"].shift(cfg.short_window)
+    features[f"{p}_imbalance_volatility_roll_medium"] = primary["imbalance_top20_mean"].rolling(cfg.medium_window, min_periods=2).std()
     features[f"{p}_imbalance_10bps_roll_medium"] = primary["imbalance_10bps_mean"].rolling(cfg.medium_window, min_periods=1).mean()
     features[f"{p}_imbalance_25bps_roll_medium"] = primary["imbalance_25bps_mean"].rolling(cfg.medium_window, min_periods=1).mean()
     features[f"{p}_bid_pressure_ratio"] = primary["bid_pressure_ratio"]
     features[f"{p}_ask_pressure_ratio"] = primary["ask_pressure_ratio"]
-    valid_primary = primary["gap_flag"].eq(0.0)
+    features[f"{p}_bid_pressure_roll_short"] = primary["bid_pressure_ratio"].rolling(cfg.short_window, min_periods=1).mean()
+    features[f"{p}_ask_pressure_roll_short"] = primary["ask_pressure_ratio"].rolling(cfg.short_window, min_periods=1).mean()
+    features[f"{p}_pressure_delta"] = primary["bid_pressure_ratio"] - primary["ask_pressure_ratio"]
+    features[f"{p}_pressure_delta_roll_short"] = features[f"{p}_pressure_delta"].rolling(cfg.short_window, min_periods=1).mean()
+    features[f"{p}_pressure_delta_roll_medium"] = features[f"{p}_pressure_delta"].rolling(cfg.medium_window, min_periods=1).mean()
+    features[f"{p}_pressure_flip_count_roll_medium"] = _rolling_sign_flip_count(features[f"{p}_pressure_delta"], cfg.medium_window)
     features[f"{p}_bid_pressure_persistence"] = _valid_persistence(
         primary["bid_pressure_ratio"].ge(cfg.pressure_threshold),
         valid_primary,
@@ -566,8 +683,30 @@ def _build_orderbook_features(aligned: dict[str, DataFrame], cfg: OrderbookConte
         valid_primary,
         cfg.persistence_window,
     )
+    features[f"{p}_wall_distance_delta_bps"] = (
+        primary["nearest_ask_wall_min_distance_bps"] - primary["nearest_bid_wall_min_distance_bps"]
+    )
+    features[f"{p}_wall_support_score"] = _near_wall_score(primary["nearest_bid_wall_min_distance_bps"], cfg.wall_near_threshold_bps)
+    features[f"{p}_wall_resistance_score"] = _near_wall_score(primary["nearest_ask_wall_min_distance_bps"], cfg.wall_near_threshold_bps)
+    features[f"{p}_wall_support_resistance_delta"] = features[f"{p}_wall_support_score"] - features[f"{p}_wall_resistance_score"]
     features[f"{p}_bid_wall_score_roll_medium"] = primary["strongest_bid_wall_score"].rolling(cfg.medium_window, min_periods=1).mean()
     features[f"{p}_ask_wall_score_roll_medium"] = primary["strongest_ask_wall_score"].rolling(cfg.medium_window, min_periods=1).mean()
+    features[f"{p}_liquidity_stress_score"] = _clip01(
+        (0.35 * primary["gap_flag"])
+        + (0.30 * (primary["spread_bps_mean"] / cfg.spread_penalty_bps).clip(0.0, 1.0))
+        + (0.20 * primary["ask_pressure_ratio"].clip(0.0, 1.0))
+        + (0.15 * features[f"{p}_wall_resistance_score"])
+    )
+    features[f"{p}_support_pressure_score"] = _clip01(
+        (0.45 * primary["bid_pressure_ratio"].clip(0.0, 1.0))
+        + (0.30 * features[f"{p}_wall_support_score"])
+        + (0.25 * ((primary["imbalance_top20_mean"].clip(-1.0, 1.0) + 1.0) / 2.0))
+    ).where(valid_primary)
+    features[f"{p}_resistance_pressure_score"] = _clip01(
+        (0.45 * primary["ask_pressure_ratio"].clip(0.0, 1.0))
+        + (0.30 * features[f"{p}_wall_resistance_score"])
+        + (0.25 * ((1.0 - primary["imbalance_top20_mean"].clip(-1.0, 1.0)) / 2.0))
+    ).where(valid_primary)
 
     _append_per_market_features(features, aligned, cfg)
     _append_comparison_features(features, aligned, cfg)
@@ -605,6 +744,9 @@ def _append_comparison_features(features: DataFrame, aligned: dict[str, DataFram
         ).min(axis=1)
         features[f"{p}_cmp_{name}_gap_flag"] = (~both_valid).astype(float)
         features[f"{p}_cmp_{name}_spread_diff_bps"] = (right["spread_bps_mean"] - left["spread_bps_mean"]).where(both_valid)
+        features[f"{p}_cmp_{name}_spread_ratio"] = (
+            right["spread_bps_mean"] / left["spread_bps_mean"].replace(0.0, np.nan)
+        ).where(both_valid)
         features[f"{p}_cmp_{name}_imbalance_divergence"] = (
             right["imbalance_top20_mean"] - left["imbalance_top20_mean"]
         ).where(both_valid)
@@ -613,12 +755,21 @@ def _append_comparison_features(features: DataFrame, aligned: dict[str, DataFram
         ).where(both_valid)
         features[f"{p}_cmp_{name}_bid_pressure_diff"] = (right["bid_pressure_ratio"] - left["bid_pressure_ratio"]).where(both_valid)
         features[f"{p}_cmp_{name}_ask_pressure_diff"] = (right["ask_pressure_ratio"] - left["ask_pressure_ratio"]).where(both_valid)
+        left_pressure_delta = left["bid_pressure_ratio"] - left["ask_pressure_ratio"]
+        right_pressure_delta = right["bid_pressure_ratio"] - right["ask_pressure_ratio"]
+        features[f"{p}_cmp_{name}_pressure_delta_diff"] = (right_pressure_delta - left_pressure_delta).where(both_valid)
+        features[f"{p}_cmp_{name}_pressure_direction_disagree"] = (
+            np.sign(left_pressure_delta).ne(np.sign(right_pressure_delta)).astype(float)
+        ).where(both_valid)
         features[f"{p}_cmp_{name}_bid_wall_distance_diff_bps"] = (
             right["nearest_bid_wall_min_distance_bps"] - left["nearest_bid_wall_min_distance_bps"]
         ).where(both_valid)
         features[f"{p}_cmp_{name}_ask_wall_distance_diff_bps"] = (
             right["nearest_ask_wall_min_distance_bps"] - left["nearest_ask_wall_min_distance_bps"]
         ).where(both_valid)
+        left_wall_delta = left["nearest_ask_wall_min_distance_bps"] - left["nearest_bid_wall_min_distance_bps"]
+        right_wall_delta = right["nearest_ask_wall_min_distance_bps"] - right["nearest_bid_wall_min_distance_bps"]
+        features[f"{p}_cmp_{name}_wall_delta_divergence_bps"] = (right_wall_delta - left_wall_delta).where(both_valid)
 
 
 def _append_score_features(features: DataFrame, primary: DataFrame, cfg: OrderbookContextFeatureConfig) -> None:
@@ -764,6 +915,9 @@ def _append_empty_features(dataframe: DataFrame, cfg: OrderbookContextFeatureCon
     empty = DataFrame(index=frame.index)
     p = cfg.prefix
     base_columns = (
+        f"{p}_mode_live",
+        f"{p}_live_stream_enabled",
+        f"{p}_source_bar_timeframe_seconds",
         f"{p}_coverage_ratio",
         f"{p}_missing_ratio",
         f"{p}_gap_flag",
@@ -771,25 +925,50 @@ def _append_empty_features(dataframe: DataFrame, cfg: OrderbookContextFeatureCon
         f"{p}_bar_age_seconds",
         f"{p}_coverage_roll_medium",
         f"{p}_gap_ratio_roll_medium",
+        f"{p}_valid_observation_count_roll_medium",
         f"{p}_spread_bps_mean",
         f"{p}_spread_bps_roll_medium",
         f"{p}_spread_bps_max_roll_medium",
+        f"{p}_spread_widening_bps",
+        f"{p}_spread_widening_bps_roll_medium",
+        f"{p}_spread_volatility_roll_medium",
+        f"{p}_spread_zscore_medium",
+        f"{p}_wide_spread_persistence",
         f"{p}_microprice_offset_bps_mean",
         f"{p}_microprice_offset_bps_roll_medium",
+        f"{p}_microprice_delta_1",
+        f"{p}_microprice_volatility_roll_medium",
         f"{p}_imbalance_top20_mean",
         f"{p}_imbalance_roll_short",
         f"{p}_imbalance_roll_medium",
         f"{p}_imbalance_roll_long",
+        f"{p}_imbalance_coverage_weighted_roll_medium",
+        f"{p}_imbalance_delta_1",
+        f"{p}_imbalance_delta_short",
+        f"{p}_imbalance_volatility_roll_medium",
         f"{p}_imbalance_10bps_roll_medium",
         f"{p}_imbalance_25bps_roll_medium",
         f"{p}_bid_pressure_ratio",
         f"{p}_ask_pressure_ratio",
+        f"{p}_bid_pressure_roll_short",
+        f"{p}_ask_pressure_roll_short",
+        f"{p}_pressure_delta",
+        f"{p}_pressure_delta_roll_short",
+        f"{p}_pressure_delta_roll_medium",
+        f"{p}_pressure_flip_count_roll_medium",
         f"{p}_bid_pressure_persistence",
         f"{p}_ask_pressure_persistence",
         f"{p}_bid_wall_near_persistence",
         f"{p}_ask_wall_near_persistence",
+        f"{p}_wall_distance_delta_bps",
+        f"{p}_wall_support_score",
+        f"{p}_wall_resistance_score",
+        f"{p}_wall_support_resistance_delta",
         f"{p}_bid_wall_score_roll_medium",
         f"{p}_ask_wall_score_roll_medium",
+        f"{p}_liquidity_stress_score",
+        f"{p}_support_pressure_score",
+        f"{p}_resistance_pressure_score",
         f"{p}_score_long",
         f"{p}_score_short",
         f"{p}_score_abs",
@@ -797,6 +976,9 @@ def _append_empty_features(dataframe: DataFrame, cfg: OrderbookContextFeatureCon
     )
     for column in base_columns:
         empty[column] = np.nan
+    empty[f"{p}_mode_live"] = 1.0 if _effective_data_mode(cfg) == "live" else 0.0
+    empty[f"{p}_live_stream_enabled"] = 1.0 if cfg.enable_live_stream else 0.0
+    empty[f"{p}_source_bar_timeframe_seconds"] = float(cfg.bar_timeframe_seconds)
     for market_key in cfg.market_keys:
         market = _safe_column_part(market_key)
         for suffix in (
@@ -822,12 +1004,16 @@ def _append_empty_features(dataframe: DataFrame, cfg: OrderbookContextFeatureCon
             "coverage_min",
             "gap_flag",
             "spread_diff_bps",
+            "spread_ratio",
             "imbalance_divergence",
             "microprice_divergence_bps",
             "bid_pressure_diff",
             "ask_pressure_diff",
+            "pressure_delta_diff",
+            "pressure_direction_disagree",
             "bid_wall_distance_diff_bps",
             "ask_wall_distance_diff_bps",
+            "wall_delta_divergence_bps",
         ):
             empty[f"{p}_cmp_{name}_{suffix}"] = np.nan
     return pd.concat([frame, empty], axis=1)
@@ -846,6 +1032,29 @@ def _near_wall_score(distance_bps: Series, threshold_bps: float) -> Series:
     if threshold_bps <= 0:
         return distance.le(0).astype(float)
     return (1.0 - (distance / threshold_bps)).clip(0.0, 1.0).fillna(0.0)
+
+
+def _rolling_weighted_mean(values: Series, weights: Series, window: int) -> Series:
+    clean_values = pd.to_numeric(values, errors="coerce")
+    clean_weights = pd.to_numeric(weights, errors="coerce").fillna(0.0).clip(lower=0.0)
+    clean_weights = clean_weights.where(clean_values.notna(), 0.0)
+    numerator = (clean_values.fillna(0.0) * clean_weights).rolling(window, min_periods=1).sum()
+    denominator = clean_weights.rolling(window, min_periods=1).sum()
+    return numerator / denominator.replace(0.0, np.nan)
+
+
+def _rolling_zscore(series: Series, window: int) -> Series:
+    numeric = pd.to_numeric(series, errors="coerce")
+    rolling_mean = numeric.rolling(window, min_periods=2).mean()
+    rolling_std = numeric.rolling(window, min_periods=2).std()
+    return (numeric - rolling_mean) / rolling_std.replace(0.0, np.nan)
+
+
+def _rolling_sign_flip_count(series: Series, window: int) -> Series:
+    numeric = pd.to_numeric(series, errors="coerce")
+    sign = Series(np.sign(numeric), index=numeric.index).replace(0.0, np.nan)
+    flip = sign.ne(sign.shift()) & sign.notna() & sign.shift().notna()
+    return flip.astype(float).rolling(window, min_periods=1).sum()
 
 
 def _valid_persistence(condition: Series, valid: Series, window: int) -> Series:
