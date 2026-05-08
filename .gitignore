@@ -17,6 +17,7 @@ user_data/hyperopts/*
 !user_data/strategies/**
 !user_data/Indicators/
 !user_data/Indicators/**
+user_data/Indicators/development_support/
 !user_data/Custom_Launcher/
 user_data/Custom_Launcher/*
 !user_data/Custom_Launcher/*.py

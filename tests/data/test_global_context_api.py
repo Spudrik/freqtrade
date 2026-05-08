@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -29,6 +30,16 @@ from research.collectors.global_context_store import (
     insert_context_tick,
     upsert_source_status,
 )
+
+
+def test_default_global_context_config_enables_fred_with_json_key_path() -> None:
+    config_path = LAUNCHER_DIR / "research" / "config" / "global_context_sources.json"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    fred_sources = [source for source in config["sources"] if source["type"] == "fred_series_basket"]
+
+    assert config["fred_api_key_json_path"] == "fred.api_key"
+    assert fred_sources
+    assert all(source["enabled"] is True for source in fred_sources)
 
 
 def test_global_context_normalizers_score_and_note_payloads() -> None:

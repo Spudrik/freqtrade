@@ -5,7 +5,17 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = "2"
+SCHEMA_VERSION = "3"
+
+
+JSON_COLUMNS = {
+    "bid_wall_candidates_json",
+    "ask_wall_candidates_json",
+    "bid_wall_blocks_json",
+    "ask_wall_blocks_json",
+    "bid_liquidity_zones_json",
+    "ask_liquidity_zones_json",
+}
 
 
 def utc_now() -> str:
@@ -138,6 +148,10 @@ def init_db(db_path: Path) -> None:
                 strongest_bid_wall_score_50bps REAL,
                 strongest_ask_wall_price_50bps REAL,
                 strongest_ask_wall_score_50bps REAL,
+                bid_wall_candidates_json TEXT,
+                ask_wall_candidates_json TEXT,
+                bid_liquidity_zones_json TEXT,
+                ask_liquidity_zones_json TEXT,
                 strong_bid_pressure INTEGER,
                 strong_ask_pressure INTEGER,
                 extreme_bid_pressure INTEGER,
@@ -183,6 +197,10 @@ def init_db(db_path: Path) -> None:
                 nearest_ask_wall_min_distance_bps REAL,
                 strongest_bid_wall_score REAL,
                 strongest_ask_wall_score REAL,
+                bid_wall_blocks_json TEXT,
+                ask_wall_blocks_json TEXT,
+                bid_liquidity_zones_json TEXT,
+                ask_liquidity_zones_json TEXT,
                 created_at TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_orderbook_metric_bars_pair_tf_ts ON orderbook_metric_bars(pair, timeframe_seconds, ts_start);
@@ -278,6 +296,10 @@ def _ensure_schema_columns(conn: sqlite3.Connection) -> None:
             "margin_type": "TEXT NOT NULL DEFAULT ''",
             "quote_asset": "TEXT NOT NULL DEFAULT ''",
             "canonical_pair": "TEXT NOT NULL DEFAULT ''",
+            "bid_wall_candidates_json": "TEXT",
+            "ask_wall_candidates_json": "TEXT",
+            "bid_liquidity_zones_json": "TEXT",
+            "ask_liquidity_zones_json": "TEXT",
         },
         "orderbook_metric_bars": {
             "stream_id": "TEXT NOT NULL DEFAULT ''",
@@ -286,6 +308,10 @@ def _ensure_schema_columns(conn: sqlite3.Connection) -> None:
             "margin_type": "TEXT NOT NULL DEFAULT ''",
             "quote_asset": "TEXT NOT NULL DEFAULT ''",
             "canonical_pair": "TEXT NOT NULL DEFAULT ''",
+            "bid_wall_blocks_json": "TEXT",
+            "ask_wall_blocks_json": "TEXT",
+            "bid_liquidity_zones_json": "TEXT",
+            "ask_liquidity_zones_json": "TEXT",
         },
         "orderbook_snapshots": {
             "stream_id": "TEXT NOT NULL DEFAULT ''",
@@ -374,6 +400,7 @@ def update_stream_status(conn: sqlite3.Connection, payload: dict[str, Any]) -> N
 
 def insert_metric_tick(conn: sqlite3.Connection, payload: dict[str, Any]) -> None:
     payload = dict(payload)
+    _serialize_json_columns(payload)
     payload.setdefault("created_at", utc_now())
     columns = list(payload.keys())
     values = [payload[key] for key in columns]
@@ -385,12 +412,23 @@ def insert_metric_tick(conn: sqlite3.Connection, payload: dict[str, Any]) -> Non
 
 def insert_metric_bar(conn: sqlite3.Connection, payload: dict[str, Any]) -> None:
     payload = dict(payload)
+    _serialize_json_columns(payload)
     payload.setdefault("created_at", utc_now())
     columns = list(payload.keys())
     conn.execute(
         f"INSERT INTO orderbook_metric_bars({', '.join(columns)}) VALUES({', '.join('?' for _ in columns)})",
         [payload[key] for key in columns],
     )
+
+
+def _serialize_json_columns(payload: dict[str, Any]) -> None:
+    for column in JSON_COLUMNS:
+        if column not in payload:
+            continue
+        value = payload[column]
+        if value is None or isinstance(value, str):
+            continue
+        payload[column] = json.dumps(value, separators=(",", ":"), sort_keys=True)
 
 
 def insert_snapshot(conn: sqlite3.Connection, payload: dict[str, Any]) -> None:

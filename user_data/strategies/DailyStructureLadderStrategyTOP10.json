@@ -85,7 +85,7 @@
     "saved_at": "2026-04-23T17:11:51.270741+01:00",
     "run_id": "09d8328565",
     "run_started_at": "2026-04-23T16:47:25.952678+01:00",
-    "run_file": "C:\\FreqTradeStuff\\_worktrees\\freqtrade-new2026-clean\\user_data\\runtime\\explorer_metadata\\runs\\explorer_run_20260423T16472595267_09d8328565.json",
+    "run_file": "C:\\FreqTradeStuff\\user_data\\runtime\\explorer_metadata\\runs\\explorer_run_20260423T16472595267_09d8328565.json",
     "loop_index": 2,
     "selection_mode": "random_families",
     "target_label": "family:add_rules",
@@ -319,8 +319,8 @@
         "direction": "same"
       }
     ],
-    "strategy_param_file": "C:\\FreqTradeStuff\\_worktrees\\freqtrade-new2026-clean\\user_data\\strategies\\DailyStructureLadderStrategy.json",
+    "strategy_param_file": "C:\\FreqTradeStuff\\user_data\\strategies\\DailyStructureLadderStrategy.json",
     "applied_to_current_json_at": "2026-04-23T17:11:51.270741+01:00",
-    "applied_to_current_json_path": "C:\\FreqTradeStuff\\_worktrees\\freqtrade-new2026-clean\\user_data\\strategies\\DailyStructureLadderStrategy.json"
+    "applied_to_current_json_path": "C:\\FreqTradeStuff\\user_data\\strategies\\DailyStructureLadderStrategy.json"
   }
 }

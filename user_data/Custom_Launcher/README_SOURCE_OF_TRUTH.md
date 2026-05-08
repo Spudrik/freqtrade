@@ -31,14 +31,11 @@ research/config/
 
 FreqUI launch surface is the Run tab utility (`Launch FreqUI`), not a standalone tab.
 
-Indicator External Validator is available as a dedicated LauncherV2 tab and remains draft/experimental.
-
 ## Root Policy (`Custom_Launcher/`)
 
 Keep only:
 
 ```text
-indicator_validation_runner.py
 README_SOURCE_OF_TRUTH.md
 MIGRATION_NOTES.md
 ```
@@ -54,7 +51,6 @@ user_data/research_news_data/news
 user_data/research_news_data/web
 user_data/orderbook_data/live
 user_data/explorer_reports
-user_data/Indicator_External_Validator
 ```
 
 `user_data/runtime/` is no longer a mixed source of truth for these tools.

@@ -17,7 +17,6 @@ Mixed `user_data/runtime/` storage was split into isolated folders:
 - Orderbook data: `user_data/orderbook_data/live`
 - Explorer summaries/audits/state: `user_data/explorer_reports/`
 - Launcher state: `user_data/Custom_Launcher/launcher_v2/runtime/launcher_v2_state.json`
-- Indicator external validator runtime output: `user_data/Indicator_External_Validator/`
 
 Removed as obsolete runtime clutter:
 
@@ -46,19 +45,9 @@ Removed as obsolete runtime clutter:
 - News/Web collector defaults now target `user_data/research_news_data/*`.
 - Orderbook collector defaults target `user_data/orderbook_data/live`.
 
-## Indicator External Validator (Draft)
-
-- Launcher tab: `Indicator External Validator`
-- Runner: `Custom_Launcher/indicator_validation_runner.py`
-- Runtime output: `user_data/Indicator_External_Validator/`
-- Draft documentation: `Custom_Launcher/docs/INDICATOR_EXTERNAL_VALIDATOR_DRAFT.md`
-
-This feature is explicitly marked as draft and subject to deletion/rework.
-
 ## Root Policy
 
 Only these source-of-truth files stay at `Custom_Launcher` root:
 
-- `indicator_validation_runner.py`
 - `README_SOURCE_OF_TRUTH.md`
 - `MIGRATION_NOTES.md`

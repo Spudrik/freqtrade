@@ -131,7 +131,7 @@
     {
       "id": "fred_us_equity_daily",
       "type": "fred_series_basket",
-      "enabled": false,
+      "enabled": true,
       "source_group": "equity_indices",
       "market_relevance": "high",
       "url": "https://api.stlouisfed.org/fred/series/observations",
@@ -154,12 +154,12 @@
         "NASDAQ100": "Nasdaq 100",
         "VIXCLS": "VIX"
       },
-      "notes": "Optional keyed FRED daily US market context. Set FRED_API_KEY or select a key file, then enable this source."
+      "notes": "Keyed FRED daily US market context. Set FRED_API_KEY or select a key file with the configured JSON path."
     },
     {
       "id": "fred_rates_risk_daily",
       "type": "fred_series_basket",
-      "enabled": false,
+      "enabled": true,
       "source_group": "rates_fx",
       "market_relevance": "medium",
       "url": "https://api.stlouisfed.org/fred/series/observations",
@@ -180,7 +180,7 @@
         "DGS10": "US 10Y",
         "DTWEXBGS": "Broad USD"
       },
-      "notes": "Optional keyed FRED rates/dollar risk context. Set FRED_API_KEY or select a key file, then enable this source."
+      "notes": "Keyed FRED rates/dollar risk context. Set FRED_API_KEY or select a key file with the configured JSON path."
     }
   ]
 }

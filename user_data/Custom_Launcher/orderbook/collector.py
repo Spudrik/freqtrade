@@ -476,6 +476,7 @@ def main() -> int:
                             reduced = {
                                 "ts": now_iso,
                                 "book_valid": metrics.get("book_valid"),
+                                "mid_price": metrics.get("mid_price"),
                                 "spread_bps": metrics.get("spread_bps"),
                                 "microprice_offset_bps": metrics.get("microprice_offset_bps"),
                                 "imbalance_top20": metrics.get("imbalance_top20"),
@@ -487,6 +488,10 @@ def main() -> int:
                                 "nearest_ask_wall_distance_bps": metrics.get("nearest_ask_wall_distance_bps"),
                                 "strongest_bid_wall_score_50bps": metrics.get("strongest_bid_wall_score_50bps"),
                                 "strongest_ask_wall_score_50bps": metrics.get("strongest_ask_wall_score_50bps"),
+                                "bid_wall_candidates_json": metrics.get("bid_wall_candidates_json"),
+                                "ask_wall_candidates_json": metrics.get("ask_wall_candidates_json"),
+                                "bid_liquidity_zones_json": metrics.get("bid_liquidity_zones_json"),
+                                "ask_liquidity_zones_json": metrics.get("ask_liquidity_zones_json"),
                             }
                             state["recent_ticks"].append(reduced)
                             max_keep = max(bar_intervals) if bar_intervals else 3600

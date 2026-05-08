@@ -18,6 +18,7 @@ from orderbook.markets import (
     normalize_market_profile_keys,
     normalize_pairs_for_profiles,
 )
+from orderbook.metrics import aggregate_metric_ticks, calculate_orderbook_metrics, parse_book_side
 from orderbook.store import connect_db, init_db, insert_metric_tick, insert_market_context, update_stream_status
 from orderbook.streams import apply_book_update, build_stream_url, build_subscribe_message, parse_stream_message
 
@@ -200,6 +201,79 @@ def test_comparison_rows_calculate_spot_perp_basis(tmp_path: Path) -> None:
     assert rows[0][10] == "futures_bid_leads"
 
 
+def test_metric_calculation_emits_wall_candidates_and_liquidity_zones() -> None:
+    bids = parse_book_side(
+        [["100.0", "1.0"], ["99.9", "12.0"], ["99.8", "1.0"], ["99.7", "8.0"], ["99.6", "0.2"]],
+        reverse=True,
+    )
+    asks = parse_book_side(
+        [["100.1", "1.0"], ["100.2", "15.0"], ["100.3", "1.0"], ["100.4", "9.0"], ["100.5", "0.2"]],
+        reverse=False,
+    )
+
+    metrics = calculate_orderbook_metrics(
+        "BTC/USDT",
+        "BTCUSDT",
+        bids,
+        asks,
+        {
+            "wall_candidate_min_score": 2.0,
+            "wall_candidate_max_distance_bps": 80,
+            "liquidity_zone_width_bps": 10,
+            "liquidity_zone_max_bps": 50,
+        },
+        message_count_interval=3,
+    )
+
+    assert metrics["bid_wall_candidates_json"][0]["price"] == 99.9
+    assert metrics["ask_wall_candidates_json"][0]["price"] == 100.2
+    assert {zone["kind"] for zone in metrics["bid_liquidity_zones_json"]} == {"high", "low"}
+    assert {zone["kind"] for zone in metrics["ask_liquidity_zones_json"]} == {"high", "low"}
+
+
+def test_metric_bar_aggregation_preserves_wall_resilience_and_liquidity_zones() -> None:
+    ticks = []
+    for second in range(3):
+        tick = {
+            "ts": f"2026-01-01T00:00:0{second}+00:00",
+            "book_valid": 1,
+            "spread_bps": 1.0,
+            "microprice_offset_bps": 0.0,
+            "imbalance_top20": 0.2,
+            "imbalance_10bps": 0.1,
+            "imbalance_25bps": 0.1,
+            "strong_bid_pressure": 0,
+            "strong_ask_pressure": 0,
+            "nearest_bid_wall_distance_bps": 10.0,
+            "nearest_ask_wall_distance_bps": 12.0,
+            "strongest_bid_wall_score_50bps": 8.0,
+            "strongest_ask_wall_score_50bps": 9.0,
+            "bid_wall_candidates_json": [
+                {"side": "bid", "price": 99.9, "distance_bps": 10.0, "notional": 1200.0, "score": 8.0}
+            ],
+            "ask_wall_candidates_json": [
+                {"side": "ask", "price": 100.2, "distance_bps": 15.0, "notional": 1500.0, "score": 9.0}
+            ],
+            "bid_liquidity_zones_json": [
+                {"side": "bid", "kind": "high", "bucket_index": 1, "lower_price": 99.8, "upper_price": 99.9, "mid_price": 99.85, "distance_bps": 15.0, "notional": 1200.0, "score": 2.5},
+                {"side": "bid", "kind": "low", "bucket_index": 3, "lower_price": 99.6, "upper_price": 99.7, "mid_price": 99.65, "distance_bps": 35.0, "notional": 20.0, "score": 0.1},
+            ],
+            "ask_liquidity_zones_json": [
+                {"side": "ask", "kind": "high", "bucket_index": 1, "lower_price": 100.1, "upper_price": 100.2, "mid_price": 100.15, "distance_bps": 15.0, "notional": 1500.0, "score": 2.7},
+                {"side": "ask", "kind": "low", "bucket_index": 3, "lower_price": 100.3, "upper_price": 100.4, "mid_price": 100.35, "distance_bps": 35.0, "notional": 25.0, "score": 0.1},
+            ],
+        }
+        ticks.append(tick)
+
+    bar = aggregate_metric_ticks(ticks, timeframe_seconds=60, expected_samples=3)
+
+    assert round(float(bar["bid_wall_blocks_json"][0]["price"]), 4) == 99.9
+    assert bar["bid_wall_blocks_json"][0]["persistence"] == 1.0
+    assert bar["bid_wall_blocks_json"][0]["age_seconds"] == 2.0
+    assert bar["ask_wall_blocks_json"][0]["score_max"] == 9.0
+    assert {zone["kind"] for zone in bar["bid_liquidity_zones_json"]} == {"high", "low"}
+
+
 def test_init_db_migrates_old_schema_before_new_indexes(tmp_path: Path) -> None:
     db_path = tmp_path / "old.sqlite"
     with sqlite3.connect(str(db_path)) as conn:
@@ -259,8 +333,11 @@ def test_init_db_migrates_old_schema_before_new_indexes(tmp_path: Path) -> None:
 
     with sqlite3.connect(str(db_path)) as conn:
         tick_columns = {row[1] for row in conn.execute("PRAGMA table_info(orderbook_metric_ticks)").fetchall()}
+        bar_columns = {row[1] for row in conn.execute("PRAGMA table_info(orderbook_metric_bars)").fetchall()}
         indexes = {row[1] for row in conn.execute("PRAGMA index_list(orderbook_metric_ticks)").fetchall()}
     assert {"stream_id", "market_key", "canonical_pair"}.issubset(tick_columns)
+    assert {"bid_wall_candidates_json", "ask_liquidity_zones_json"}.issubset(tick_columns)
+    assert {"bid_wall_blocks_json", "ask_liquidity_zones_json"}.issubset(bar_columns)
     assert "idx_orderbook_metric_ticks_stream_ts" in indexes
 
 

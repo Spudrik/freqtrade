@@ -39,6 +39,19 @@ def parse_minutes_to_seconds(value: str, default_minutes: int) -> int:
 def is_process_running(pid: int) -> bool:
     if pid <= 0:
         return False
+    if sys.platform == "win32":
+        import ctypes
+
+        synchronize = 0x00100000
+        wait_timeout = 0x00000102
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(synchronize, False, pid)
+        if not handle:
+            return False
+        try:
+            return kernel32.WaitForSingleObject(handle, 0) == wait_timeout
+        finally:
+            kernel32.CloseHandle(handle)
     try:
         os.kill(pid, 0)
         return True

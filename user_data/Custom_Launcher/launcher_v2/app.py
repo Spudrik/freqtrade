@@ -23,7 +23,6 @@ from .tabs.explorer_tab import ExplorerTab
 from .tabs.explorer_summary_tab import ExplorerSummaryTab
 from .tabs.review_tab import ReviewTab
 from .tabs.file_converter_tab import FileConverterTab
-from .tabs.indicator_external_validator_tab import IndicatorExternalValidatorTab
 
 
 APP_TITLE = "Freqtrade Launcher V2"
@@ -49,7 +48,6 @@ class LauncherV2(tk.Tk):
         ExplorerSummaryTab,
         ReviewTab,
         FileConverterTab,
-        IndicatorExternalValidatorTab,
     ]
 
     def __init__(self) -> None:
@@ -287,6 +285,9 @@ class LauncherV2(tk.Tk):
                 "config_path": preset.get("global_context_config_path"),
                 "data_dir": preset.get("global_context_data_dir"),
                 "db_path": preset.get("global_context_db_path"),
+                "key_file": preset.get("global_context_key_file"),
+                "fred_key_json_path": preset.get("global_context_fred_key_json_path"),
+                "enable_fred": preset.get("global_context_enable_fred"),
                 "interval_minutes": preset.get("global_context_interval_minutes"),
                 "once": preset.get("global_context_once"),
             },
@@ -324,26 +325,6 @@ class LauncherV2(tk.Tk):
                 "replace_existing": preset.get("file_converter_replace_existing"),
                 "console": preset.get("file_converter_console"),
             },
-            "indicator_external_validator": {
-                "datadir": preset.get("indicator_validator_datadir"),
-                "pairs": preset.get("indicator_validator_pairs"),
-                "timeframes": preset.get("indicator_validator_timeframes"),
-                "timerange": preset.get("indicator_validator_timerange"),
-                "indicators": preset.get("indicator_validator_indicators"),
-                "score_scope": preset.get("indicator_validator_score_scope"),
-                "benchmark": preset.get("indicator_validator_benchmark"),
-                "forward_windows": preset.get("indicator_validator_forward_windows"),
-                "deciles": preset.get("indicator_validator_deciles"),
-                "score_threshold": preset.get("indicator_validator_score_threshold"),
-                "max_pairs": preset.get("indicator_validator_max_pairs"),
-                "min_rows": preset.get("indicator_validator_min_rows"),
-                "output_dir": preset.get("indicator_validator_output_dir"),
-                "profile_window": preset.get("indicator_validator_profile_window"),
-                "profile_bins": preset.get("indicator_validator_profile_bins"),
-                "profile_chunk_size": preset.get("indicator_validator_profile_chunk_size"),
-                "quiet": preset.get("indicator_validator_quiet"),
-                "console": preset.get("indicator_validator_console"),
-            },
         }
         for tab_key, state in mapping.items():
             tab = self.tabs.get(tab_key)
@@ -367,7 +348,6 @@ class LauncherV2(tk.Tk):
         global_context = tabs.get("global_context", {})
         orderbook = tabs.get("orderbook", {})
         file_converter = tabs.get("file_converter", {})
-        indicator_validator = tabs.get("indicator_external_validator", {})
         run = tabs.get("run", {})
         preset = {
             "run_type": run.get("run_type", "Backtest"),
@@ -469,6 +449,9 @@ class LauncherV2(tk.Tk):
             "global_context_config_path": global_context.get("config_path", ""),
             "global_context_data_dir": global_context.get("data_dir", ""),
             "global_context_db_path": global_context.get("db_path", ""),
+            "global_context_key_file": global_context.get("key_file", ""),
+            "global_context_fred_key_json_path": global_context.get("fred_key_json_path", "fred.api_key"),
+            "global_context_enable_fred": bool(global_context.get("enable_fred", True)),
             "global_context_interval_minutes": global_context.get("interval_minutes", ""),
             "global_context_once": bool(global_context.get("once", False)),
             "orderbook_config_path": orderbook.get("config_path", ""),
@@ -501,24 +484,6 @@ class LauncherV2(tk.Tk):
             "file_converter_filter": file_converter.get("filter", "All"),
             "file_converter_replace_existing": bool(file_converter.get("replace_existing", True)),
             "file_converter_console": dict(file_converter.get("console") or {}),
-            "indicator_validator_datadir": indicator_validator.get("datadir", ""),
-            "indicator_validator_pairs": indicator_validator.get("pairs", ""),
-            "indicator_validator_timeframes": indicator_validator.get("timeframes", "1h"),
-            "indicator_validator_timerange": indicator_validator.get("timerange", ""),
-            "indicator_validator_indicators": indicator_validator.get("indicators", "all"),
-            "indicator_validator_score_scope": indicator_validator.get("score_scope", "base"),
-            "indicator_validator_benchmark": indicator_validator.get("benchmark", "BTC/USDT:USDT"),
-            "indicator_validator_forward_windows": indicator_validator.get("forward_windows", "3 6 12 24"),
-            "indicator_validator_deciles": indicator_validator.get("deciles", "10"),
-            "indicator_validator_score_threshold": indicator_validator.get("score_threshold", "0.70"),
-            "indicator_validator_max_pairs": indicator_validator.get("max_pairs", "20"),
-            "indicator_validator_min_rows": indicator_validator.get("min_rows", "250"),
-            "indicator_validator_output_dir": indicator_validator.get("output_dir", ""),
-            "indicator_validator_profile_window": indicator_validator.get("profile_window", "96"),
-            "indicator_validator_profile_bins": indicator_validator.get("profile_bins", "48"),
-            "indicator_validator_profile_chunk_size": indicator_validator.get("profile_chunk_size", "512"),
-            "indicator_validator_quiet": bool(indicator_validator.get("quiet", False)),
-            "indicator_validator_console": dict(indicator_validator.get("console") or {}),
         }
         presets[AUTO_PRESET_NAME] = preset
         path = self._preset_path()
