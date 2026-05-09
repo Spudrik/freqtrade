@@ -8,11 +8,28 @@ from pandas import DataFrame, Series
 
 from pattern_common import (
     _clip_value,
+    _carry_values_while_state,
     _lifecycle_state_from_events,
     _line_value_at,
     _pattern_geometry_arrays,
+    _bottom_base_is_held,
+    _bottom_p1_dominance_score,
+    _peak_confirmation_state,
+    _peak_retest_quality,
+    _dynamic_height_tolerance_pct,
+    _num,
     _prior_pattern_move,
+    _prior_impulse_score,
+    _prior_opposite_pivot_context,
     _proof_line_columns,
+    _reaction_level_between,
+    _rolling_atr_pct,
+    _rolling_body_pct,
+    _rolling_pivot_prominence_pct,
+    _threshold_body_pct,
+    _threshold_scale_pct,
+    _top_base_is_held,
+    _top_p1_dominance_score,
 )
 
 
@@ -23,6 +40,7 @@ def _double_reversal_columns(frame: DataFrame, cfg: PatternStructureConfig) -> d
     arrays = _double_reversal_arrays(frame, cfg)
     raw_top = pd.Series(arrays["double_top_structure_short"], index=frame.index, dtype="bool").fillna(False)
     raw_bottom = pd.Series(arrays["double_bottom_structure_long"], index=frame.index, dtype="bool").fillna(False)
+    close = _num(frame["close"]).to_numpy(dtype="float64")
     top = pd.Series(
         _dedupe_double_events(
             arrays["double_top_structure_short"],
@@ -49,6 +67,24 @@ def _double_reversal_columns(frame: DataFrame, cfg: PatternStructureConfig) -> d
         index=frame.index,
         dtype="bool",
     )
+    top_confirmation = _peak_confirmation_state(
+        close,
+        top,
+        arrays["double_top_neckline"],
+        arrays["double_top_quality"],
+        int(cfg.pattern_lifecycle_mature_bars),
+        int(cfg.pattern_lifecycle_stale_bars),
+        top=True,
+    )
+    bottom_confirmation = _peak_confirmation_state(
+        close,
+        bottom,
+        arrays["double_bottom_neckline"],
+        arrays["double_bottom_quality"],
+        int(cfg.pattern_lifecycle_mature_bars),
+        int(cfg.pattern_lifecycle_stale_bars),
+        top=False,
+    )
     top_neckline_score = pd.Series(arrays["double_top_neckline_score"], index=frame.index, dtype="float64")
     bottom_neckline_score = pd.Series(arrays["double_bottom_neckline_score"], index=frame.index, dtype="float64")
     top_reaction_score = pd.Series(arrays["double_top_reaction_score"], index=frame.index, dtype="float64")
@@ -57,59 +93,68 @@ def _double_reversal_columns(frame: DataFrame, cfg: PatternStructureConfig) -> d
     bottom_cleanliness_score = pd.Series(arrays["double_bottom_between_cleanliness_score"], index=frame.index, dtype="float64")
     top_quality = pd.Series(arrays["double_top_quality"], index=frame.index, dtype="float64")
     bottom_quality = pd.Series(arrays["double_bottom_quality"], index=frame.index, dtype="float64")
+    top_developing = pd.Series(top_confirmation["developing"], index=frame.index, dtype="bool")
+    bottom_developing = pd.Series(bottom_confirmation["developing"], index=frame.index, dtype="bool")
+    top_confirmed = pd.Series(top_confirmation["confirmed"], index=frame.index, dtype="bool")
+    bottom_confirmed = pd.Series(bottom_confirmation["confirmed"], index=frame.index, dtype="bool")
+    top_current_quality = pd.Series(top_confirmation["quality"], index=frame.index, dtype="float64")
+    bottom_current_quality = pd.Series(bottom_confirmation["quality"], index=frame.index, dtype="float64")
+    top_state = pd.Series(top_confirmation["state"], index=frame.index, dtype="int8")
+    bottom_state = pd.Series(bottom_confirmation["state"], index=frame.index, dtype="int8")
+    top_carried = _carry_values_while_state(
+        top,
+        top_state,
+        {
+            "p1_index": arrays["double_top_first_index"],
+            "p2_index": arrays["double_top_second_index"],
+            "neckline": arrays["double_top_neckline"],
+        },
+    )
+    bottom_carried = _carry_values_while_state(
+        bottom,
+        bottom_state,
+        {
+            "p1_index": arrays["double_bottom_first_index"],
+            "p2_index": arrays["double_bottom_second_index"],
+            "neckline": arrays["double_bottom_neckline"],
+        },
+    )
     clean_top = (
-        top
-        & top_neckline_score.ge(0.55)
-        & top_reaction_score.ge(float(cfg.min_double_reaction_score) + 0.20)
-        & top_cleanliness_score.ge(float(cfg.min_double_between_cleanliness_score) + 0.20)
-        & top_quality.ge(float(cfg.min_double_quality) + 0.06)
+        top_confirmed
+        & top_current_quality.ge(float(cfg.min_double_quality) + 0.06)
     ).fillna(False)
     clean_bottom = (
-        bottom
-        & bottom_neckline_score.ge(0.55)
-        & bottom_reaction_score.ge(float(cfg.min_double_reaction_score) + 0.20)
-        & bottom_cleanliness_score.ge(float(cfg.min_double_between_cleanliness_score) + 0.20)
-        & bottom_quality.ge(float(cfg.min_double_quality) + 0.06)
+        bottom_confirmed
+        & bottom_current_quality.ge(float(cfg.min_double_quality) + 0.06)
     ).fillna(False)
-    range_top = (top & ~clean_top).fillna(False)
-    range_bottom = (bottom & ~clean_bottom).fillna(False)
     columns = {
         f"{p}_double_top_structure_quality": top_quality.where(raw_top, 0.0),
         f"{p}_double_bottom_structure_quality": bottom_quality.where(raw_bottom, 0.0),
-        f"{p}_double_top_quality": top_quality.where(top, 0.0),
-        f"{p}_double_bottom_quality": bottom_quality.where(bottom, 0.0),
+        f"{p}_double_top_quality": top_current_quality.where(top_developing | top_confirmed, 0.0),
+        f"{p}_double_bottom_quality": bottom_current_quality.where(bottom_developing | bottom_confirmed, 0.0),
         f"{p}_double_top_structure_short": raw_top,
         f"{p}_double_bottom_structure_long": raw_bottom,
         f"{p}_double_top_setup_short": top.fillna(False),
         f"{p}_double_bottom_setup_long": bottom.fillna(False),
-        f"{p}_double_top_state": pd.Series(
-            _lifecycle_state_from_events(
-                top,
-                int(cfg.pattern_lifecycle_mature_bars),
-                int(cfg.pattern_lifecycle_stale_bars),
-            ),
-            index=frame.index,
-            dtype="int8",
-        ),
-        f"{p}_double_bottom_state": pd.Series(
-            _lifecycle_state_from_events(
-                bottom,
-                int(cfg.pattern_lifecycle_mature_bars),
-                int(cfg.pattern_lifecycle_stale_bars),
-            ),
-            index=frame.index,
-            dtype="int8",
-        ),
+        f"{p}_double_top_peak": pd.Series(np.where(top_state.gt(0), 2.0, 0.0), index=frame.index, dtype="float64"),
+        f"{p}_double_bottom_peak": pd.Series(np.where(bottom_state.gt(0), 2.0, 0.0), index=frame.index, dtype="float64"),
+        f"{p}_double_top_state": top_state,
+        f"{p}_double_bottom_state": bottom_state,
+        f"{p}_double_top_p1_index": pd.Series(top_carried["p1_index"], index=frame.index, dtype="float64"),
+        f"{p}_double_top_p2_index": pd.Series(top_carried["p2_index"], index=frame.index, dtype="float64"),
+        f"{p}_double_top_p3_index": pd.Series(np.nan, index=frame.index, dtype="float64"),
+        f"{p}_double_top_neckline": pd.Series(top_carried["neckline"], index=frame.index, dtype="float64"),
+        f"{p}_double_bottom_p1_index": pd.Series(bottom_carried["p1_index"], index=frame.index, dtype="float64"),
+        f"{p}_double_bottom_p2_index": pd.Series(bottom_carried["p2_index"], index=frame.index, dtype="float64"),
+        f"{p}_double_bottom_p3_index": pd.Series(np.nan, index=frame.index, dtype="float64"),
+        f"{p}_double_bottom_neckline": pd.Series(bottom_carried["neckline"], index=frame.index, dtype="float64"),
         f"{p}_double_top_clean_short": clean_top,
         f"{p}_double_bottom_clean_long": clean_bottom,
-        f"{p}_double_top_range_retest_short": range_top,
-        f"{p}_double_bottom_range_retest_long": range_bottom,
         f"{p}_double_top_first_index": pd.Series(arrays["double_top_first_index"], index=frame.index, dtype="float64"),
         f"{p}_double_top_second_index": pd.Series(arrays["double_top_second_index"], index=frame.index, dtype="float64"),
         f"{p}_double_top_first_price": pd.Series(arrays["double_top_first_price"], index=frame.index, dtype="float64"),
         f"{p}_double_top_second_price": pd.Series(arrays["double_top_second_price"], index=frame.index, dtype="float64"),
         f"{p}_double_top_neckline_index": pd.Series(arrays["double_top_neckline_index"], index=frame.index, dtype="float64"),
-        f"{p}_double_top_neckline": pd.Series(arrays["double_top_neckline"], index=frame.index, dtype="float64"),
         f"{p}_double_top_neckline_score": top_neckline_score.where(raw_top, 0.0),
         f"{p}_double_top_reaction_score": top_reaction_score.where(raw_top, 0.0),
         f"{p}_double_top_between_cleanliness_score": top_cleanliness_score.where(raw_top, 0.0),
@@ -118,7 +163,6 @@ def _double_reversal_columns(frame: DataFrame, cfg: PatternStructureConfig) -> d
         f"{p}_double_bottom_first_price": pd.Series(arrays["double_bottom_first_price"], index=frame.index, dtype="float64"),
         f"{p}_double_bottom_second_price": pd.Series(arrays["double_bottom_second_price"], index=frame.index, dtype="float64"),
         f"{p}_double_bottom_neckline_index": pd.Series(arrays["double_bottom_neckline_index"], index=frame.index, dtype="float64"),
-        f"{p}_double_bottom_neckline": pd.Series(arrays["double_bottom_neckline"], index=frame.index, dtype="float64"),
         f"{p}_double_bottom_neckline_score": bottom_neckline_score.where(raw_bottom, 0.0),
         f"{p}_double_bottom_reaction_score": bottom_reaction_score.where(raw_bottom, 0.0),
         f"{p}_double_bottom_between_cleanliness_score": bottom_cleanliness_score.where(raw_bottom, 0.0),
@@ -170,7 +214,7 @@ def _double_reversal_columns(frame: DataFrame, cfg: PatternStructureConfig) -> d
 
 
 def _double_reversal_arrays(frame: DataFrame, cfg: PatternStructureConfig) -> dict[str, np.ndarray]:
-    close, _, _, high_pivot, high_index, low_pivot, low_index = _pattern_geometry_arrays(frame, cfg)
+    close, body_high, body_low, high_pivot, high_index, low_pivot, low_index = _pattern_geometry_arrays(frame, cfg)
     rows = len(frame)
     out = {
         "double_top_quality": np.zeros(rows, dtype="float64"),
@@ -203,16 +247,26 @@ def _double_reversal_arrays(frame: DataFrame, cfg: PatternStructureConfig) -> di
     max_bars = int(cfg.max_double_pattern_bars)
     tolerance_pct = float(cfg.double_peak_tolerance_pct)
     min_depth = float(cfg.min_double_neckline_depth_pct)
-    min_neckline_position = float(cfg.double_min_neckline_position)
     min_prior_move = float(cfg.min_double_prior_move_pct)
+    scale_window = int(getattr(cfg, "peak_dynamic_scale_window", cfg.peak_dynamic_body_window))
+    body_pct = _rolling_body_pct(frame, scale_window)
+    atr_pct = _rolling_atr_pct(frame, scale_window)
+    prominence_pct = _rolling_pivot_prominence_pct(frame, str(cfg.pivot_prefix), scale_window)
 
-    for row in range(rows):
-        if not np.isfinite(close[row]) or close[row] == 0.0:
-            continue
+    valid_close = np.isfinite(close) & (close != 0.0)
+    candidate_rows = np.flatnonzero(
+        valid_close
+        & (
+            (np.isfinite(high_pivot) & np.isfinite(high_index))
+            | (np.isfinite(low_pivot) & np.isfinite(low_index))
+        )
+    )
+    for row in candidate_rows:
         if np.isfinite(high_pivot[row]) and np.isfinite(high_index[row]):
             top = _score_double_top(
                 row,
                 close,
+                body_low,
                 high_pivot,
                 high_index,
                 low_pivot,
@@ -222,10 +276,22 @@ def _double_reversal_arrays(frame: DataFrame, cfg: PatternStructureConfig) -> di
                 max_bars,
                 tolerance_pct,
                 min_depth,
-                min_neckline_position,
                 min_prior_move,
+                float(cfg.min_double_first_pivot_move_pct),
+                int(cfg.double_reaction_max_bars),
                 float(cfg.min_double_reaction_score),
                 float(cfg.min_double_between_cleanliness_score),
+                body_pct,
+                atr_pct,
+                prominence_pct,
+                float(cfg.peak_premove_body_mult),
+                float(cfg.peak_level_tolerance_body_mult),
+                float(cfg.peak_level_tolerance_atr_mult),
+                float(cfg.peak_level_tolerance_prominence_mult),
+                float(cfg.peak_reaction_body_mult),
+                float(cfg.peak_base_return_buffer_body_mult),
+                float(getattr(cfg, "peak_prior_impulse_min_efficiency", 0.0)),
+                int(getattr(cfg, "peak_prior_impulse_min_bars", 1)),
             )
             if top["quality"] >= float(cfg.min_double_quality):
                 out["double_top_quality"][row] = float(top["quality"])
@@ -244,6 +310,7 @@ def _double_reversal_arrays(frame: DataFrame, cfg: PatternStructureConfig) -> di
             bottom = _score_double_bottom(
                 row,
                 close,
+                body_high,
                 high_pivot,
                 high_index,
                 low_pivot,
@@ -253,10 +320,22 @@ def _double_reversal_arrays(frame: DataFrame, cfg: PatternStructureConfig) -> di
                 max_bars,
                 tolerance_pct,
                 min_depth,
-                min_neckline_position,
                 min_prior_move,
+                float(cfg.min_double_first_pivot_move_pct),
+                int(cfg.double_reaction_max_bars),
                 float(cfg.min_double_reaction_score),
                 float(cfg.min_double_between_cleanliness_score),
+                body_pct,
+                atr_pct,
+                prominence_pct,
+                float(cfg.peak_premove_body_mult),
+                float(cfg.peak_level_tolerance_body_mult),
+                float(cfg.peak_level_tolerance_atr_mult),
+                float(cfg.peak_level_tolerance_prominence_mult),
+                float(cfg.peak_reaction_body_mult),
+                float(cfg.peak_base_return_buffer_body_mult),
+                float(getattr(cfg, "peak_prior_impulse_min_efficiency", 0.0)),
+                int(getattr(cfg, "peak_prior_impulse_min_bars", 1)),
             )
             if bottom["quality"] >= float(cfg.min_double_quality):
                 out["double_bottom_quality"][row] = float(bottom["quality"])
@@ -277,6 +356,7 @@ def _double_reversal_arrays(frame: DataFrame, cfg: PatternStructureConfig) -> di
 def _score_double_top(
     row: int,
     close: np.ndarray,
+    body_low: np.ndarray,
     high_pivot: np.ndarray,
     high_index: np.ndarray,
     low_pivot: np.ndarray,
@@ -286,10 +366,22 @@ def _score_double_top(
     max_bars: int,
     tolerance_pct: float,
     min_depth: float,
-    min_neckline_position: float,
     min_prior_move: float,
+    min_first_pivot_move: float,
+    reaction_max_bars: int,
     min_reaction_score: float,
     min_between_cleanliness_score: float,
+    body_pct: np.ndarray,
+    atr_pct: np.ndarray,
+    prominence_pct: np.ndarray,
+    premove_body_mult: float,
+    level_body_mult: float,
+    level_atr_mult: float,
+    level_prominence_mult: float,
+    reaction_body_mult: float,
+    base_buffer_body_mult: float,
+    prior_impulse_min_efficiency: float,
+    prior_impulse_min_bars: int,
 ) -> dict[str, float]:
     second_x = float(high_index[row])
     second_y = float(high_pivot[row])
@@ -307,6 +399,21 @@ def _score_double_top(
         "reaction_score": 0.0,
         "between_cleanliness_score": 0.0,
     }
+    body_ref = _threshold_body_pct(body_pct, row)
+    atr_ref = _threshold_scale_pct(atr_pct, row, minimum=0.0005)
+    prominence_ref = _threshold_scale_pct(prominence_pct, row)
+    level_tolerance_pct = _dynamic_height_tolerance_pct(
+        float(tolerance_pct),
+        body_ref,
+        atr_ref,
+        prominence_ref,
+        float(level_body_mult),
+        float(level_atr_mult),
+        float(level_prominence_mult),
+    )
+    move_threshold = max(float(min_prior_move), float(min_first_pivot_move), body_ref * float(premove_body_mult))
+    reaction_threshold = max(float(min_depth) * 0.55, body_ref * float(reaction_body_mult))
+    base_buffer_pct = body_ref * float(base_buffer_body_mult)
     for candidate in candidates:
         first_x = float(high_index[candidate])
         span = second_x - first_x
@@ -314,7 +421,7 @@ def _score_double_top(
             continue
         first_y = float(high_pivot[candidate])
         peak_ref = max((first_y + second_y) / 2.0, 1e-9)
-        similarity = 1.0 - abs(second_y - first_y) / max(peak_ref * tolerance_pct, 1e-9)
+        similarity = 1.0 - abs(second_y - first_y) / max(peak_ref * level_tolerance_pct, 1e-9)
         if similarity <= 0.0:
             continue
         between_cleanliness_score = _double_top_between_cleanliness_score(
@@ -325,40 +432,59 @@ def _score_double_top(
             second_x,
             max(first_y, second_y),
             peak_ref,
-            tolerance_pct,
+            level_tolerance_pct,
         )
         if between_cleanliness_score < float(min_between_cleanliness_score):
             continue
-        confirmed_rows = np.arange(len(low_pivot)) <= row
-        between = confirmed_rows & np.isfinite(low_pivot) & np.isfinite(low_index) & (low_index > first_x) & (low_index < second_x)
-        if not between.any():
+        prior = _prior_opposite_pivot_context(
+            low_pivot,
+            low_index,
+            first_x,
+            first_y,
+            window,
+            top=True,
+        )
+        first_move_pct = float(prior["move_pct"])
+        if first_move_pct < max(float(min_prior_move), float(min_first_pivot_move)):
             continue
-        neckline_rows = np.flatnonzero(between)
-        neckline_row = int(neckline_rows[int(np.nanargmin(low_pivot[neckline_rows]))])
-        neckline = float(low_pivot[neckline_row])
-        neckline_index = float(low_index[neckline_row])
-        neckline_position = (neckline_index - first_x) / max(span, 1e-9)
-        if neckline_position < min_neckline_position or neckline_position > 1.0 - min_neckline_position:
+        if first_move_pct < move_threshold:
             continue
-        neckline_score = _double_neckline_score(neckline_position, min_neckline_position)
+        impulse_score = _prior_impulse_score(
+            close,
+            prior["index"],
+            prior["price"],
+            first_x,
+            first_y,
+            top=True,
+            min_bars=prior_impulse_min_bars,
+        )
+        if impulse_score < float(prior_impulse_min_efficiency):
+            continue
+        dominance_score = _top_p1_dominance_score(high_pivot, high_index, row, prior["index"], first_x, first_y, level_tolerance_pct)
+        dominance_score = min(dominance_score, impulse_score)
+        if dominance_score <= 0.0:
+            continue
+        if not _top_base_is_held(body_low, first_x, second_x, prior["price"], base_buffer_pct):
+            continue
+        first_reaction_pct = _top_body_reaction_pct(body_low, first_x, second_x, peak_ref, reaction_max_bars)
+        if first_reaction_pct < reaction_threshold:
+            continue
+        neckline_index, neckline = _reaction_level_between(body_low, first_x, second_x, find_low=True)
+        if not np.isfinite([neckline_index, neckline]).all():
+            continue
         depth_pct = (peak_ref - neckline) / max(abs(close[row]), 1e-9)
-        if depth_pct < min_depth:
-            continue
-        prior_direction, prior_move_pct = _prior_pattern_move(close, first_x, span)
-        if prior_direction <= 0 or prior_move_pct < min_prior_move:
-            continue
         turn_pct = max((second_y - float(close[row])) / max(abs(float(close[row])), 1e-9), 0.0)
-        reaction_score = _clip_value(turn_pct / max(min_depth * 0.75, 1e-9))
+        reaction_score = _clip_value(first_reaction_pct / max(reaction_threshold, 1e-9))
         if reaction_score < float(min_reaction_score):
             continue
-        quality = _double_quality(
+        quality = _peak_retest_quality(
             similarity,
             depth_pct,
-            min_depth,
-            prior_move_pct,
-            min_prior_move,
-            turn_pct,
-            neckline_score,
+            reaction_threshold,
+            first_move_pct,
+            move_threshold,
+            max(turn_pct, first_reaction_pct * 0.35),
+            dominance_score,
             between_cleanliness_score,
             span,
             min_bars,
@@ -373,7 +499,7 @@ def _score_double_top(
                 "second_price": second_y,
                 "neckline_index": neckline_index,
                 "neckline": neckline,
-                "neckline_score": neckline_score,
+                "neckline_score": dominance_score,
                 "reaction_score": reaction_score,
                 "between_cleanliness_score": between_cleanliness_score,
             }
@@ -383,6 +509,7 @@ def _score_double_top(
 def _score_double_bottom(
     row: int,
     close: np.ndarray,
+    body_high: np.ndarray,
     high_pivot: np.ndarray,
     high_index: np.ndarray,
     low_pivot: np.ndarray,
@@ -392,10 +519,22 @@ def _score_double_bottom(
     max_bars: int,
     tolerance_pct: float,
     min_depth: float,
-    min_neckline_position: float,
     min_prior_move: float,
+    min_first_pivot_move: float,
+    reaction_max_bars: int,
     min_reaction_score: float,
     min_between_cleanliness_score: float,
+    body_pct: np.ndarray,
+    atr_pct: np.ndarray,
+    prominence_pct: np.ndarray,
+    premove_body_mult: float,
+    level_body_mult: float,
+    level_atr_mult: float,
+    level_prominence_mult: float,
+    reaction_body_mult: float,
+    base_buffer_body_mult: float,
+    prior_impulse_min_efficiency: float,
+    prior_impulse_min_bars: int,
 ) -> dict[str, float]:
     second_x = float(low_index[row])
     second_y = float(low_pivot[row])
@@ -413,6 +552,21 @@ def _score_double_bottom(
         "reaction_score": 0.0,
         "between_cleanliness_score": 0.0,
     }
+    body_ref = _threshold_body_pct(body_pct, row)
+    atr_ref = _threshold_scale_pct(atr_pct, row, minimum=0.0005)
+    prominence_ref = _threshold_scale_pct(prominence_pct, row)
+    level_tolerance_pct = _dynamic_height_tolerance_pct(
+        float(tolerance_pct),
+        body_ref,
+        atr_ref,
+        prominence_ref,
+        float(level_body_mult),
+        float(level_atr_mult),
+        float(level_prominence_mult),
+    )
+    move_threshold = max(float(min_prior_move), float(min_first_pivot_move), body_ref * float(premove_body_mult))
+    reaction_threshold = max(float(min_depth) * 0.55, body_ref * float(reaction_body_mult))
+    base_buffer_pct = body_ref * float(base_buffer_body_mult)
     for candidate in candidates:
         first_x = float(low_index[candidate])
         span = second_x - first_x
@@ -420,7 +574,7 @@ def _score_double_bottom(
             continue
         first_y = float(low_pivot[candidate])
         trough_ref = max((first_y + second_y) / 2.0, 1e-9)
-        similarity = 1.0 - abs(second_y - first_y) / max(trough_ref * tolerance_pct, 1e-9)
+        similarity = 1.0 - abs(second_y - first_y) / max(trough_ref * level_tolerance_pct, 1e-9)
         if similarity <= 0.0:
             continue
         between_cleanliness_score = _double_bottom_between_cleanliness_score(
@@ -431,40 +585,59 @@ def _score_double_bottom(
             second_x,
             min(first_y, second_y),
             trough_ref,
-            tolerance_pct,
+            level_tolerance_pct,
         )
         if between_cleanliness_score < float(min_between_cleanliness_score):
             continue
-        confirmed_rows = np.arange(len(high_pivot)) <= row
-        between = confirmed_rows & np.isfinite(high_pivot) & np.isfinite(high_index) & (high_index > first_x) & (high_index < second_x)
-        if not between.any():
+        prior = _prior_opposite_pivot_context(
+            high_pivot,
+            high_index,
+            first_x,
+            first_y,
+            window,
+            top=False,
+        )
+        first_move_pct = float(prior["move_pct"])
+        if first_move_pct < max(float(min_prior_move), float(min_first_pivot_move)):
             continue
-        neckline_rows = np.flatnonzero(between)
-        neckline_row = int(neckline_rows[int(np.nanargmax(high_pivot[neckline_rows]))])
-        neckline = float(high_pivot[neckline_row])
-        neckline_index = float(high_index[neckline_row])
-        neckline_position = (neckline_index - first_x) / max(span, 1e-9)
-        if neckline_position < min_neckline_position or neckline_position > 1.0 - min_neckline_position:
+        if first_move_pct < move_threshold:
             continue
-        neckline_score = _double_neckline_score(neckline_position, min_neckline_position)
+        impulse_score = _prior_impulse_score(
+            close,
+            prior["index"],
+            prior["price"],
+            first_x,
+            first_y,
+            top=False,
+            min_bars=prior_impulse_min_bars,
+        )
+        if impulse_score < float(prior_impulse_min_efficiency):
+            continue
+        dominance_score = _bottom_p1_dominance_score(low_pivot, low_index, row, prior["index"], first_x, first_y, level_tolerance_pct)
+        dominance_score = min(dominance_score, impulse_score)
+        if dominance_score <= 0.0:
+            continue
+        if not _bottom_base_is_held(body_high, first_x, second_x, prior["price"], base_buffer_pct):
+            continue
+        first_reaction_pct = _bottom_body_reaction_pct(body_high, first_x, second_x, trough_ref, reaction_max_bars)
+        if first_reaction_pct < reaction_threshold:
+            continue
+        neckline_index, neckline = _reaction_level_between(body_high, first_x, second_x, find_low=False)
+        if not np.isfinite([neckline_index, neckline]).all():
+            continue
         depth_pct = (neckline - trough_ref) / max(abs(close[row]), 1e-9)
-        if depth_pct < min_depth:
-            continue
-        prior_direction, prior_move_pct = _prior_pattern_move(close, first_x, span)
-        if prior_direction >= 0 or prior_move_pct < min_prior_move:
-            continue
         turn_pct = max((float(close[row]) - second_y) / max(abs(float(close[row])), 1e-9), 0.0)
-        reaction_score = _clip_value(turn_pct / max(min_depth * 0.75, 1e-9))
+        reaction_score = _clip_value(first_reaction_pct / max(reaction_threshold, 1e-9))
         if reaction_score < float(min_reaction_score):
             continue
-        quality = _double_quality(
+        quality = _peak_retest_quality(
             similarity,
             depth_pct,
-            min_depth,
-            prior_move_pct,
-            min_prior_move,
-            turn_pct,
-            neckline_score,
+            reaction_threshold,
+            first_move_pct,
+            move_threshold,
+            max(turn_pct, first_reaction_pct * 0.35),
+            dominance_score,
             between_cleanliness_score,
             span,
             min_bars,
@@ -479,11 +652,45 @@ def _score_double_bottom(
                 "second_price": second_y,
                 "neckline_index": neckline_index,
                 "neckline": neckline,
-                "neckline_score": neckline_score,
+                "neckline_score": dominance_score,
                 "reaction_score": reaction_score,
                 "between_cleanliness_score": between_cleanliness_score,
             }
     return best
+
+
+def _top_body_reaction_pct(
+    body_low: np.ndarray,
+    first_x: float,
+    second_x: float,
+    reference_price: float,
+    reaction_max_bars: int,
+) -> float:
+    start = int(max(np.floor(first_x), 0))
+    stop = int(min(np.ceil(min(float(second_x), float(first_x) + float(reaction_max_bars))), len(body_low) - 1))
+    if stop <= start or not np.isfinite(reference_price) or reference_price == 0.0:
+        return 0.0
+    lows = np.asarray(body_low[start : stop + 1], dtype="float64")
+    if not np.isfinite(lows).any():
+        return 0.0
+    return max((float(reference_price) - float(np.nanmin(lows))) / max(abs(float(reference_price)), 1e-9), 0.0)
+
+
+def _bottom_body_reaction_pct(
+    body_high: np.ndarray,
+    first_x: float,
+    second_x: float,
+    reference_price: float,
+    reaction_max_bars: int,
+) -> float:
+    start = int(max(np.floor(first_x), 0))
+    stop = int(min(np.ceil(min(float(second_x), float(first_x) + float(reaction_max_bars))), len(body_high) - 1))
+    if stop <= start or not np.isfinite(reference_price) or reference_price == 0.0:
+        return 0.0
+    highs = np.asarray(body_high[start : stop + 1], dtype="float64")
+    if not np.isfinite(highs).any():
+        return 0.0
+    return max((float(np.nanmax(highs)) - float(reference_price)) / max(abs(float(reference_price)), 1e-9), 0.0)
 
 
 def _double_top_between_cleanliness_score(
@@ -524,40 +731,6 @@ def _double_bottom_between_cleanliness_score(
     undershoot = max(float(allowed_trough) - min_between, 0.0)
     tolerance = max(abs(float(trough_ref)) * float(tolerance_pct) * 0.50, 1e-9)
     return _clip_value(1.0 - undershoot / tolerance)
-
-
-def _double_quality(
-    similarity: float,
-    depth_pct: float,
-    min_depth: float,
-    prior_move_pct: float,
-    min_prior_move: float,
-    turn_pct: float,
-    neckline_score: float,
-    between_cleanliness_score: float,
-    span: float,
-    min_bars: int,
-    max_bars: int,
-) -> float:
-    span_mid = (float(min_bars) + float(max_bars)) / 2.0
-    span_score = _clip_value(1.0 - abs(float(span) - span_mid) / max(span_mid, 1.0))
-    depth_score = _clip_value(depth_pct / max(min_depth * 2.5, 1e-9))
-    prior_score = _clip_value(prior_move_pct / max(min_prior_move * 2.5, 1e-9))
-    turn_score = _clip_value(turn_pct / max(min_depth * 0.75, 1e-9))
-    return _clip_value(
-        0.23 * similarity
-        + 0.20 * depth_score
-        + 0.14 * prior_score
-        + 0.10 * span_score
-        + 0.12 * turn_score
-        + 0.09 * neckline_score
-        + 0.12 * between_cleanliness_score
-    )
-
-
-def _double_neckline_score(position: float, min_position: float) -> float:
-    edge_room = min(float(position), 1.0 - float(position))
-    return _clip_value((edge_room - float(min_position)) / max(0.5 - float(min_position), 1e-9))
 
 
 def _dedupe_double_events(
@@ -920,7 +1093,9 @@ def _score_head_shoulders(
 
     min_bars = int(cfg.min_head_shoulders_bars)
     max_bars = int(cfg.max_head_shoulders_bars)
-    for left_pos in range(max(0, len(recent) - 8), len(recent) - 1):
+    max_candidates = max(int(getattr(cfg, "head_shoulders_max_candidate_pivots", 18)), 3)
+    candidate_start = max(0, len(recent) - max_candidates)
+    for left_pos in range(candidate_start, len(recent) - 1):
         left = recent[left_pos]
         for head_pos in range(left_pos + 1, len(recent)):
             head = recent[head_pos]

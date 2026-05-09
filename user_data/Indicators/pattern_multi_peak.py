@@ -7,12 +7,26 @@ import pandas as pd
 from pandas import DataFrame, Series
 
 from pattern_common import (
+    _bottom_base_is_held,
+    _bottom_p1_dominance_score,
+    _carry_values_while_state,
     _clip_value,
     _dedupe_interval_level_events,
-    _lifecycle_state_from_events,
+    _dynamic_height_tolerance_pct,
+    _num,
     _pattern_geometry_arrays,
-    _prior_pattern_move,
+    _peak_confirmation_state,
+    _peak_retest_quality,
+    _prior_impulse_score,
+    _prior_opposite_pivot_context,
     _proof_line_columns,
+    _rolling_atr_pct,
+    _rolling_body_pct,
+    _rolling_pivot_prominence_pct,
+    _threshold_body_pct,
+    _threshold_scale_pct,
+    _top_base_is_held,
+    _top_p1_dominance_score,
 )
 
 
@@ -27,6 +41,7 @@ def _triple_reversal_columns(frame: DataFrame, cfg: PatternStructureConfig) -> d
 
     p = cfg.output_prefix
     arrays = _triple_reversal_arrays(frame, cfg)
+    close = _num(frame["close"]).to_numpy(dtype="float64")
     top_raw = pd.Series(arrays["triple_top_setup_short"], index=frame.index, dtype="bool").fillna(False)
     bottom_raw = pd.Series(arrays["triple_bottom_setup_long"], index=frame.index, dtype="bool").fillna(False)
     top = pd.Series(
@@ -57,9 +72,55 @@ def _triple_reversal_columns(frame: DataFrame, cfg: PatternStructureConfig) -> d
         index=frame.index,
         dtype="bool",
     ).fillna(False)
+    top_confirmation = _peak_confirmation_state(
+        close,
+        top,
+        arrays["triple_top_neckline"],
+        arrays["triple_top_quality"],
+        int(cfg.pattern_lifecycle_mature_bars),
+        int(cfg.pattern_lifecycle_stale_bars),
+        top=True,
+    )
+    bottom_confirmation = _peak_confirmation_state(
+        close,
+        bottom,
+        arrays["triple_bottom_neckline"],
+        arrays["triple_bottom_quality"],
+        int(cfg.pattern_lifecycle_mature_bars),
+        int(cfg.pattern_lifecycle_stale_bars),
+        top=False,
+    )
+    top_developing = pd.Series(top_confirmation["developing"], index=frame.index, dtype="bool")
+    bottom_developing = pd.Series(bottom_confirmation["developing"], index=frame.index, dtype="bool")
+    top_confirmed = pd.Series(top_confirmation["confirmed"], index=frame.index, dtype="bool")
+    bottom_confirmed = pd.Series(bottom_confirmation["confirmed"], index=frame.index, dtype="bool")
+    top_current_quality = pd.Series(top_confirmation["quality"], index=frame.index, dtype="float64")
+    bottom_current_quality = pd.Series(bottom_confirmation["quality"], index=frame.index, dtype="float64")
+    top_state = pd.Series(top_confirmation["state"], index=frame.index, dtype="int8")
+    bottom_state = pd.Series(bottom_confirmation["state"], index=frame.index, dtype="int8")
+    top_carried = _carry_values_while_state(
+        top,
+        top_state,
+        {
+            "p1_index": arrays["triple_top_first_index"],
+            "p2_index": arrays["triple_top_second_index"],
+            "p3_index": arrays["triple_top_third_index"],
+            "neckline": arrays["triple_top_neckline"],
+        },
+    )
+    bottom_carried = _carry_values_while_state(
+        bottom,
+        bottom_state,
+        {
+            "p1_index": arrays["triple_bottom_first_index"],
+            "p2_index": arrays["triple_bottom_second_index"],
+            "p3_index": arrays["triple_bottom_third_index"],
+            "neckline": arrays["triple_bottom_neckline"],
+        },
+    )
     columns = {
-        f"{p}_triple_top_quality": pd.Series(arrays["triple_top_quality"], index=frame.index, dtype="float64").where(top, 0.0),
-        f"{p}_triple_bottom_quality": pd.Series(arrays["triple_bottom_quality"], index=frame.index, dtype="float64").where(bottom, 0.0),
+        f"{p}_triple_top_quality": top_current_quality.where(top_developing | top_confirmed, 0.0),
+        f"{p}_triple_bottom_quality": bottom_current_quality.where(bottom_developing | bottom_confirmed, 0.0),
         f"{p}_triple_top_structure_quality": pd.Series(
             arrays["triple_top_quality"], index=frame.index, dtype="float64"
         ).where(top_raw, 0.0),
@@ -68,24 +129,18 @@ def _triple_reversal_columns(frame: DataFrame, cfg: PatternStructureConfig) -> d
         ).where(bottom_raw, 0.0),
         f"{p}_triple_top_setup_short": top,
         f"{p}_triple_bottom_setup_long": bottom,
-        f"{p}_triple_top_state": pd.Series(
-            _lifecycle_state_from_events(
-                top,
-                int(cfg.pattern_lifecycle_mature_bars),
-                int(cfg.pattern_lifecycle_stale_bars),
-            ),
-            index=frame.index,
-            dtype="int8",
-        ),
-        f"{p}_triple_bottom_state": pd.Series(
-            _lifecycle_state_from_events(
-                bottom,
-                int(cfg.pattern_lifecycle_mature_bars),
-                int(cfg.pattern_lifecycle_stale_bars),
-            ),
-            index=frame.index,
-            dtype="int8",
-        ),
+        f"{p}_triple_top_peak": pd.Series(np.where(top_state.gt(0), 3.0, 0.0), index=frame.index, dtype="float64"),
+        f"{p}_triple_bottom_peak": pd.Series(np.where(bottom_state.gt(0), 3.0, 0.0), index=frame.index, dtype="float64"),
+        f"{p}_triple_top_state": top_state,
+        f"{p}_triple_bottom_state": bottom_state,
+        f"{p}_triple_top_p1_index": pd.Series(top_carried["p1_index"], index=frame.index, dtype="float64"),
+        f"{p}_triple_top_p2_index": pd.Series(top_carried["p2_index"], index=frame.index, dtype="float64"),
+        f"{p}_triple_top_p3_index": pd.Series(top_carried["p3_index"], index=frame.index, dtype="float64"),
+        f"{p}_triple_top_neckline": pd.Series(top_carried["neckline"], index=frame.index, dtype="float64"),
+        f"{p}_triple_bottom_p1_index": pd.Series(bottom_carried["p1_index"], index=frame.index, dtype="float64"),
+        f"{p}_triple_bottom_p2_index": pd.Series(bottom_carried["p2_index"], index=frame.index, dtype="float64"),
+        f"{p}_triple_bottom_p3_index": pd.Series(bottom_carried["p3_index"], index=frame.index, dtype="float64"),
+        f"{p}_triple_bottom_neckline": pd.Series(bottom_carried["neckline"], index=frame.index, dtype="float64"),
         f"{p}_triple_top_structure_short": top_raw,
         f"{p}_triple_bottom_structure_long": bottom_raw,
         f"{p}_triple_top_first_index": pd.Series(arrays["triple_top_first_index"], index=frame.index, dtype="float64"),
@@ -94,7 +149,6 @@ def _triple_reversal_columns(frame: DataFrame, cfg: PatternStructureConfig) -> d
         f"{p}_triple_top_first_price": pd.Series(arrays["triple_top_first_price"], index=frame.index, dtype="float64"),
         f"{p}_triple_top_second_price": pd.Series(arrays["triple_top_second_price"], index=frame.index, dtype="float64"),
         f"{p}_triple_top_third_price": pd.Series(arrays["triple_top_third_price"], index=frame.index, dtype="float64"),
-        f"{p}_triple_top_neckline": pd.Series(arrays["triple_top_neckline"], index=frame.index, dtype="float64"),
         f"{p}_triple_top_neckline_index": pd.Series(arrays["triple_top_neckline_index"], index=frame.index, dtype="float64"),
         f"{p}_triple_top_resistance": pd.Series(arrays["triple_top_level"], index=frame.index, dtype="float64"),
         f"{p}_triple_top_reaction_score": pd.Series(arrays["triple_top_reaction_score"], index=frame.index, dtype="float64").where(
@@ -106,7 +160,6 @@ def _triple_reversal_columns(frame: DataFrame, cfg: PatternStructureConfig) -> d
         f"{p}_triple_bottom_first_price": pd.Series(arrays["triple_bottom_first_price"], index=frame.index, dtype="float64"),
         f"{p}_triple_bottom_second_price": pd.Series(arrays["triple_bottom_second_price"], index=frame.index, dtype="float64"),
         f"{p}_triple_bottom_third_price": pd.Series(arrays["triple_bottom_third_price"], index=frame.index, dtype="float64"),
-        f"{p}_triple_bottom_neckline": pd.Series(arrays["triple_bottom_neckline"], index=frame.index, dtype="float64"),
         f"{p}_triple_bottom_neckline_index": pd.Series(arrays["triple_bottom_neckline_index"], index=frame.index, dtype="float64"),
         f"{p}_triple_bottom_support": pd.Series(arrays["triple_bottom_level"], index=frame.index, dtype="float64"),
         f"{p}_triple_bottom_reaction_score": pd.Series(
@@ -160,7 +213,7 @@ def _triple_reversal_columns(frame: DataFrame, cfg: PatternStructureConfig) -> d
 
 
 def _triple_reversal_arrays(frame: DataFrame, cfg: PatternStructureConfig) -> dict[str, np.ndarray]:
-    close, _, _, high_pivot, high_index, low_pivot, low_index = _pattern_geometry_arrays(frame, cfg)
+    close, body_high, body_low, high_pivot, high_index, low_pivot, low_index = _pattern_geometry_arrays(frame, cfg)
     rows = len(frame)
     out = _empty_triple_output(rows)
     window = int(cfg.triple_pattern_window)
@@ -168,14 +221,25 @@ def _triple_reversal_arrays(frame: DataFrame, cfg: PatternStructureConfig) -> di
     max_bars = int(cfg.max_triple_pattern_bars)
     min_spacing = int(cfg.min_triple_spacing_bars)
     max_candidates = int(cfg.triple_max_candidate_pivots)
+    scale_window = int(getattr(cfg, "peak_dynamic_scale_window", cfg.peak_dynamic_body_window))
+    body_pct = _rolling_body_pct(frame, scale_window)
+    atr_pct = _rolling_atr_pct(frame, scale_window)
+    prominence_pct = _rolling_pivot_prominence_pct(frame, str(cfg.pivot_prefix), scale_window)
 
-    for row in range(rows):
-        if not np.isfinite(close[row]) or float(close[row]) == 0.0:
-            continue
+    valid_close = np.isfinite(close) & (close != 0.0)
+    candidate_rows = np.flatnonzero(
+        valid_close
+        & (
+            (np.isfinite(high_pivot) & np.isfinite(high_index))
+            | (np.isfinite(low_pivot) & np.isfinite(low_index))
+        )
+    )
+    for row in candidate_rows:
         if np.isfinite(high_pivot[row]) and np.isfinite(high_index[row]):
             top = _score_triple_top(
                 row,
                 close,
+                body_low,
                 high_pivot,
                 high_index,
                 low_pivot,
@@ -188,7 +252,20 @@ def _triple_reversal_arrays(frame: DataFrame, cfg: PatternStructureConfig) -> di
                 float(cfg.triple_peak_tolerance_pct),
                 float(cfg.min_triple_neckline_depth_pct),
                 float(cfg.min_triple_prior_move_pct),
+                float(cfg.min_triple_first_pivot_move_pct),
+                int(cfg.triple_reaction_max_bars),
                 float(cfg.min_triple_reaction_score),
+                body_pct,
+                atr_pct,
+                prominence_pct,
+                float(cfg.peak_premove_body_mult),
+                float(cfg.peak_level_tolerance_body_mult),
+                float(cfg.peak_level_tolerance_atr_mult),
+                float(cfg.peak_level_tolerance_prominence_mult),
+                float(cfg.peak_reaction_body_mult),
+                float(cfg.peak_base_return_buffer_body_mult),
+                float(getattr(cfg, "peak_prior_impulse_min_efficiency", 0.0)),
+                int(getattr(cfg, "peak_prior_impulse_min_bars", 1)),
             )
             if top["quality"] >= float(cfg.min_triple_quality):
                 _store_triple(out, row, "triple_top", top)
@@ -196,6 +273,7 @@ def _triple_reversal_arrays(frame: DataFrame, cfg: PatternStructureConfig) -> di
             bottom = _score_triple_bottom(
                 row,
                 close,
+                body_high,
                 high_pivot,
                 high_index,
                 low_pivot,
@@ -208,7 +286,20 @@ def _triple_reversal_arrays(frame: DataFrame, cfg: PatternStructureConfig) -> di
                 float(cfg.triple_peak_tolerance_pct),
                 float(cfg.min_triple_neckline_depth_pct),
                 float(cfg.min_triple_prior_move_pct),
+                float(cfg.min_triple_first_pivot_move_pct),
+                int(cfg.triple_reaction_max_bars),
                 float(cfg.min_triple_reaction_score),
+                body_pct,
+                atr_pct,
+                prominence_pct,
+                float(cfg.peak_premove_body_mult),
+                float(cfg.peak_level_tolerance_body_mult),
+                float(cfg.peak_level_tolerance_atr_mult),
+                float(cfg.peak_level_tolerance_prominence_mult),
+                float(cfg.peak_reaction_body_mult),
+                float(cfg.peak_base_return_buffer_body_mult),
+                float(getattr(cfg, "peak_prior_impulse_min_efficiency", 0.0)),
+                int(getattr(cfg, "peak_prior_impulse_min_bars", 1)),
             )
             if bottom["quality"] >= float(cfg.min_triple_quality):
                 _store_triple(out, row, "triple_bottom", bottom)
@@ -232,6 +323,7 @@ def _empty_triple_output(rows: int) -> dict[str, np.ndarray]:
 def _score_triple_top(
     row: int,
     close: np.ndarray,
+    body_low: np.ndarray,
     high_pivot: np.ndarray,
     high_index: np.ndarray,
     low_pivot: np.ndarray,
@@ -244,7 +336,20 @@ def _score_triple_top(
     tolerance_pct: float,
     min_depth: float,
     min_prior_move: float,
+    min_first_pivot_move: float,
+    reaction_max_bars: int,
     min_reaction_score: float,
+    body_pct: np.ndarray,
+    atr_pct: np.ndarray,
+    prominence_pct: np.ndarray,
+    premove_body_mult: float,
+    level_body_mult: float,
+    level_atr_mult: float,
+    level_prominence_mult: float,
+    reaction_body_mult: float,
+    base_buffer_body_mult: float,
+    prior_impulse_min_efficiency: float,
+    prior_impulse_min_bars: int,
 ) -> dict[str, float]:
     third_x = float(high_index[row])
     third_y = float(high_pivot[row])
@@ -253,6 +358,21 @@ def _score_triple_top(
     if prior_rows.size > max_candidates:
         prior_rows = prior_rows[-max_candidates:]
     best = _empty_triple_candidate(third_x, third_y)
+    body_ref = _threshold_body_pct(body_pct, row)
+    atr_ref = _threshold_scale_pct(atr_pct, row, minimum=0.0005)
+    prominence_ref = _threshold_scale_pct(prominence_pct, row)
+    level_tolerance_pct = _dynamic_height_tolerance_pct(
+        float(tolerance_pct),
+        body_ref,
+        atr_ref,
+        prominence_ref,
+        float(level_body_mult),
+        float(level_atr_mult),
+        float(level_prominence_mult),
+    )
+    move_threshold = max(float(min_prior_move), float(min_first_pivot_move), body_ref * float(premove_body_mult))
+    reaction_threshold = max(float(min_depth) * 0.55, body_ref * float(reaction_body_mult))
+    base_buffer_pct = body_ref * float(base_buffer_body_mult)
     for second_row in prior_rows:
         second_x = float(high_index[second_row])
         if third_x - second_x < min_spacing:
@@ -265,25 +385,79 @@ def _score_triple_top(
                 continue
             prices = np.asarray([float(high_pivot[first_row]), float(high_pivot[second_row]), third_y], dtype="float64")
             level = float(np.nanmedian(prices))
-            similarity = _same_level_score(prices, level, tolerance_pct)
+            similarity = _same_level_score(prices, level, level_tolerance_pct)
             if similarity <= 0.0:
                 continue
-            if _triple_top_overshoot_score(high_pivot, high_index, row, first_x, third_x, level, tolerance_pct) <= 0.0:
+            overshoot_score = _triple_top_overshoot_score(high_pivot, high_index, row, first_x, third_x, level, level_tolerance_pct)
+            if overshoot_score <= 0.0:
                 continue
-            neckline = _triple_top_neckline(low_pivot, low_index, row, first_x, second_x, third_x)
+            prior = _prior_opposite_pivot_context(
+                low_pivot,
+                low_index,
+                first_x,
+                float(high_pivot[first_row]),
+                window,
+                top=True,
+            )
+            first_move_pct = float(prior["move_pct"])
+            if first_move_pct < move_threshold:
+                continue
+            impulse_score = _prior_impulse_score(
+                close,
+                prior["index"],
+                prior["price"],
+                first_x,
+                float(high_pivot[first_row]),
+                top=True,
+                min_bars=prior_impulse_min_bars,
+            )
+            if impulse_score < float(prior_impulse_min_efficiency):
+                continue
+            dominance_score = _top_p1_dominance_score(
+                high_pivot,
+                high_index,
+                row,
+                prior["index"],
+                first_x,
+                float(high_pivot[first_row]),
+                level_tolerance_pct,
+            )
+            dominance_score = min(dominance_score, impulse_score)
+            if dominance_score <= 0.0:
+                continue
+            if not _top_base_is_held(body_low, first_x, third_x, prior["price"], base_buffer_pct):
+                continue
+            neckline = _triple_top_body_reaction(
+                body_low,
+                first_x,
+                second_x,
+                third_x,
+                level,
+                reaction_threshold,
+                reaction_max_bars,
+            )
             if not np.isfinite([neckline["price"], neckline["index"]]).all():
                 continue
             depth_pct = (level - neckline["price"]) / max(abs(float(close[row])), 1e-9)
-            if depth_pct < min_depth:
-                continue
-            prior_direction, prior_move_pct = _prior_pattern_move(close, first_x, span)
-            if prior_direction <= 0 or prior_move_pct < min_prior_move:
+            if depth_pct < reaction_threshold:
                 continue
             reaction_pct = max((third_y - float(close[row])) / max(abs(float(close[row])), 1e-9), 0.0)
-            reaction_score = _clip_value(reaction_pct / max(min_depth * 0.65, 1e-9))
+            reaction_score = _clip_value(max(reaction_pct, depth_pct * 0.35) / max(reaction_threshold, 1e-9))
             if reaction_score < min_reaction_score:
                 continue
-            quality = _triple_quality(similarity, depth_pct, min_depth, prior_move_pct, min_prior_move, reaction_score, span, min_bars, max_bars)
+            quality = _peak_retest_quality(
+                similarity,
+                depth_pct,
+                reaction_threshold,
+                first_move_pct,
+                move_threshold,
+                max(reaction_pct, depth_pct * 0.35),
+                dominance_score,
+                overshoot_score,
+                span,
+                min_bars,
+                max_bars,
+            )
             if quality > best["quality"]:
                 best = {
                     "quality": quality,
@@ -304,6 +478,7 @@ def _score_triple_top(
 def _score_triple_bottom(
     row: int,
     close: np.ndarray,
+    body_high: np.ndarray,
     high_pivot: np.ndarray,
     high_index: np.ndarray,
     low_pivot: np.ndarray,
@@ -316,7 +491,20 @@ def _score_triple_bottom(
     tolerance_pct: float,
     min_depth: float,
     min_prior_move: float,
+    min_first_pivot_move: float,
+    reaction_max_bars: int,
     min_reaction_score: float,
+    body_pct: np.ndarray,
+    atr_pct: np.ndarray,
+    prominence_pct: np.ndarray,
+    premove_body_mult: float,
+    level_body_mult: float,
+    level_atr_mult: float,
+    level_prominence_mult: float,
+    reaction_body_mult: float,
+    base_buffer_body_mult: float,
+    prior_impulse_min_efficiency: float,
+    prior_impulse_min_bars: int,
 ) -> dict[str, float]:
     third_x = float(low_index[row])
     third_y = float(low_pivot[row])
@@ -325,6 +513,21 @@ def _score_triple_bottom(
     if prior_rows.size > max_candidates:
         prior_rows = prior_rows[-max_candidates:]
     best = _empty_triple_candidate(third_x, third_y)
+    body_ref = _threshold_body_pct(body_pct, row)
+    atr_ref = _threshold_scale_pct(atr_pct, row, minimum=0.0005)
+    prominence_ref = _threshold_scale_pct(prominence_pct, row)
+    level_tolerance_pct = _dynamic_height_tolerance_pct(
+        float(tolerance_pct),
+        body_ref,
+        atr_ref,
+        prominence_ref,
+        float(level_body_mult),
+        float(level_atr_mult),
+        float(level_prominence_mult),
+    )
+    move_threshold = max(float(min_prior_move), float(min_first_pivot_move), body_ref * float(premove_body_mult))
+    reaction_threshold = max(float(min_depth) * 0.55, body_ref * float(reaction_body_mult))
+    base_buffer_pct = body_ref * float(base_buffer_body_mult)
     for second_row in prior_rows:
         second_x = float(low_index[second_row])
         if third_x - second_x < min_spacing:
@@ -337,25 +540,79 @@ def _score_triple_bottom(
                 continue
             prices = np.asarray([float(low_pivot[first_row]), float(low_pivot[second_row]), third_y], dtype="float64")
             level = float(np.nanmedian(prices))
-            similarity = _same_level_score(prices, level, tolerance_pct)
+            similarity = _same_level_score(prices, level, level_tolerance_pct)
             if similarity <= 0.0:
                 continue
-            if _triple_bottom_undershoot_score(low_pivot, low_index, row, first_x, third_x, level, tolerance_pct) <= 0.0:
+            undershoot_score = _triple_bottom_undershoot_score(low_pivot, low_index, row, first_x, third_x, level, level_tolerance_pct)
+            if undershoot_score <= 0.0:
                 continue
-            neckline = _triple_bottom_neckline(high_pivot, high_index, row, first_x, second_x, third_x)
+            prior = _prior_opposite_pivot_context(
+                high_pivot,
+                high_index,
+                first_x,
+                float(low_pivot[first_row]),
+                window,
+                top=False,
+            )
+            first_move_pct = float(prior["move_pct"])
+            if first_move_pct < move_threshold:
+                continue
+            impulse_score = _prior_impulse_score(
+                close,
+                prior["index"],
+                prior["price"],
+                first_x,
+                float(low_pivot[first_row]),
+                top=False,
+                min_bars=prior_impulse_min_bars,
+            )
+            if impulse_score < float(prior_impulse_min_efficiency):
+                continue
+            dominance_score = _bottom_p1_dominance_score(
+                low_pivot,
+                low_index,
+                row,
+                prior["index"],
+                first_x,
+                float(low_pivot[first_row]),
+                level_tolerance_pct,
+            )
+            dominance_score = min(dominance_score, impulse_score)
+            if dominance_score <= 0.0:
+                continue
+            if not _bottom_base_is_held(body_high, first_x, third_x, prior["price"], base_buffer_pct):
+                continue
+            neckline = _triple_bottom_body_reaction(
+                body_high,
+                first_x,
+                second_x,
+                third_x,
+                level,
+                reaction_threshold,
+                reaction_max_bars,
+            )
             if not np.isfinite([neckline["price"], neckline["index"]]).all():
                 continue
             depth_pct = (neckline["price"] - level) / max(abs(float(close[row])), 1e-9)
-            if depth_pct < min_depth:
-                continue
-            prior_direction, prior_move_pct = _prior_pattern_move(close, first_x, span)
-            if prior_direction >= 0 or prior_move_pct < min_prior_move:
+            if depth_pct < reaction_threshold:
                 continue
             reaction_pct = max((float(close[row]) - third_y) / max(abs(float(close[row])), 1e-9), 0.0)
-            reaction_score = _clip_value(reaction_pct / max(min_depth * 0.65, 1e-9))
+            reaction_score = _clip_value(max(reaction_pct, depth_pct * 0.35) / max(reaction_threshold, 1e-9))
             if reaction_score < min_reaction_score:
                 continue
-            quality = _triple_quality(similarity, depth_pct, min_depth, prior_move_pct, min_prior_move, reaction_score, span, min_bars, max_bars)
+            quality = _peak_retest_quality(
+                similarity,
+                depth_pct,
+                reaction_threshold,
+                first_move_pct,
+                move_threshold,
+                max(reaction_pct, depth_pct * 0.35),
+                dominance_score,
+                undershoot_score,
+                span,
+                min_bars,
+                max_bars,
+            )
             if quality > best["quality"]:
                 best = {
                     "quality": quality,
@@ -429,68 +686,78 @@ def _triple_bottom_undershoot_score(
     return _clip_value(1.0 - undershoot / max(abs(float(level)) * float(tolerance_pct), 1e-9))
 
 
-def _triple_top_neckline(
-    low_pivot: np.ndarray,
-    low_index: np.ndarray,
-    row: int,
+def _triple_top_body_reaction(
+    body_low: np.ndarray,
     first_x: float,
     second_x: float,
     third_x: float,
-) -> dict[str, float]:
-    confirmed = np.arange(len(low_pivot)) <= row
-    left = confirmed & np.isfinite(low_pivot) & np.isfinite(low_index) & (low_index > first_x) & (low_index < second_x)
-    right = confirmed & np.isfinite(low_pivot) & np.isfinite(low_index) & (low_index > second_x) & (low_index < third_x)
-    if not left.any() or not right.any():
-        return {"price": np.nan, "index": np.nan}
-    left_row = int(np.flatnonzero(left)[int(np.nanargmin(low_pivot[left]))])
-    right_row = int(np.flatnonzero(right)[int(np.nanargmin(low_pivot[right]))])
-    prices = np.asarray([float(low_pivot[left_row]), float(low_pivot[right_row])], dtype="float64")
-    indexes = np.asarray([float(low_index[left_row]), float(low_index[right_row])], dtype="float64")
-    return {"price": float(np.nanmedian(prices)), "index": float(np.nanmean(indexes))}
-
-
-def _triple_bottom_neckline(
-    high_pivot: np.ndarray,
-    high_index: np.ndarray,
-    row: int,
-    first_x: float,
-    second_x: float,
-    third_x: float,
-) -> dict[str, float]:
-    confirmed = np.arange(len(high_pivot)) <= row
-    left = confirmed & np.isfinite(high_pivot) & np.isfinite(high_index) & (high_index > first_x) & (high_index < second_x)
-    right = confirmed & np.isfinite(high_pivot) & np.isfinite(high_index) & (high_index > second_x) & (high_index < third_x)
-    if not left.any() or not right.any():
-        return {"price": np.nan, "index": np.nan}
-    left_row = int(np.flatnonzero(left)[int(np.nanargmax(high_pivot[left]))])
-    right_row = int(np.flatnonzero(right)[int(np.nanargmax(high_pivot[right]))])
-    prices = np.asarray([float(high_pivot[left_row]), float(high_pivot[right_row])], dtype="float64")
-    indexes = np.asarray([float(high_index[left_row]), float(high_index[right_row])], dtype="float64")
-    return {"price": float(np.nanmedian(prices)), "index": float(np.nanmean(indexes))}
-
-
-def _triple_quality(
-    similarity: float,
-    depth_pct: float,
+    level: float,
     min_depth: float,
-    prior_move_pct: float,
-    min_prior_move: float,
-    reaction_score: float,
-    span: float,
-    min_bars: int,
-    max_bars: int,
-) -> float:
-    span_mid = (float(min_bars) + float(max_bars)) / 2.0
-    span_score = _clip_value(1.0 - abs(float(span) - span_mid) / max(span_mid, 1.0))
-    depth_score = _clip_value(depth_pct / max(float(min_depth) * 2.2, 1e-9))
-    prior_score = _clip_value(prior_move_pct / max(float(min_prior_move) * 2.2, 1e-9))
-    return _clip_value(
-        0.30 * float(similarity)
-        + 0.22 * depth_score
-        + 0.16 * prior_score
-        + 0.12 * float(reaction_score)
-        + 0.20 * span_score
-    )
+    reaction_max_bars: int,
+) -> dict[str, float]:
+    left = _body_low_reaction(body_low, first_x, second_x, level, reaction_max_bars)
+    right = _body_low_reaction(body_low, second_x, third_x, level, reaction_max_bars)
+    if left["depth_pct"] < float(min_depth) or right["depth_pct"] < float(min_depth):
+        return {"price": np.nan, "index": np.nan}
+    prices = np.asarray([left["price"], right["price"]], dtype="float64")
+    indexes = np.asarray([left["index"], right["index"]], dtype="float64")
+    return {"price": float(np.nanmedian(prices)), "index": float(np.nanmean(indexes))}
+
+
+def _triple_bottom_body_reaction(
+    body_high: np.ndarray,
+    first_x: float,
+    second_x: float,
+    third_x: float,
+    level: float,
+    min_depth: float,
+    reaction_max_bars: int,
+) -> dict[str, float]:
+    left = _body_high_reaction(body_high, first_x, second_x, level, reaction_max_bars)
+    right = _body_high_reaction(body_high, second_x, third_x, level, reaction_max_bars)
+    if left["depth_pct"] < float(min_depth) or right["depth_pct"] < float(min_depth):
+        return {"price": np.nan, "index": np.nan}
+    prices = np.asarray([left["price"], right["price"]], dtype="float64")
+    indexes = np.asarray([left["index"], right["index"]], dtype="float64")
+    return {"price": float(np.nanmedian(prices)), "index": float(np.nanmean(indexes))}
+
+
+def _body_low_reaction(
+    body_low: np.ndarray,
+    start_x: float,
+    end_x: float,
+    level: float,
+    reaction_max_bars: int,
+) -> dict[str, float]:
+    start = int(max(np.floor(start_x), 0))
+    stop = int(min(np.ceil(min(float(end_x), float(start_x) + float(reaction_max_bars))), len(body_low) - 1))
+    if stop <= start or not np.isfinite(level) or level == 0.0:
+        return {"price": np.nan, "index": np.nan, "depth_pct": 0.0}
+    lows = np.asarray(body_low[start : stop + 1], dtype="float64")
+    if not np.isfinite(lows).any():
+        return {"price": np.nan, "index": np.nan, "depth_pct": 0.0}
+    local = int(np.nanargmin(lows))
+    price = float(lows[local])
+    return {"price": price, "index": float(start + local), "depth_pct": max((float(level) - price) / max(abs(float(level)), 1e-9), 0.0)}
+
+
+def _body_high_reaction(
+    body_high: np.ndarray,
+    start_x: float,
+    end_x: float,
+    level: float,
+    reaction_max_bars: int,
+) -> dict[str, float]:
+    start = int(max(np.floor(start_x), 0))
+    stop = int(min(np.ceil(min(float(end_x), float(start_x) + float(reaction_max_bars))), len(body_high) - 1))
+    if stop <= start or not np.isfinite(level) or level == 0.0:
+        return {"price": np.nan, "index": np.nan, "depth_pct": 0.0}
+    highs = np.asarray(body_high[start : stop + 1], dtype="float64")
+    if not np.isfinite(highs).any():
+        return {"price": np.nan, "index": np.nan, "depth_pct": 0.0}
+    local = int(np.nanargmax(highs))
+    price = float(highs[local])
+    return {"price": price, "index": float(start + local), "depth_pct": max((price - float(level)) / max(abs(float(level)), 1e-9), 0.0)}
 
 
 def _store_triple(out: dict[str, np.ndarray], row: int, name: str, candidate: dict[str, float]) -> None:
