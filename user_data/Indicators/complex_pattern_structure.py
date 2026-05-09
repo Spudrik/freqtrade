@@ -98,6 +98,7 @@ class PatternStructureConfig:
     min_triangle_prior_move_pct: float = 0.025
     min_geometry_containment_ratio: float = 0.68
     min_geometry_contraction_score: float = 0.16
+    min_geometry_candidate_score: float = 5.0
     max_geometry_fit_error_atr: float = 2.0
     max_geometry_body_excursion_pct: float = 0.018
     # Boundary-respect is stricter than broad containment. Containment asks
@@ -118,7 +119,7 @@ class PatternStructureConfig:
     min_compression_anchor_balance_score: float = 0.45
     min_compression_touch_balance_score: float = 0.42
     min_compression_contraction_score: float = 0.28
-    min_geometry_side_switches: int = 3
+    min_geometry_side_switches: int = 2
     min_geometry_recent_touch_score: float = 0.24
     min_geometry_anchor_balance_score: float = 0.18
     min_geometry_touch_balance_score: float = 0.20
@@ -129,9 +130,9 @@ class PatternStructureConfig:
     geometry_candidate_min_span_mult: float = 0.45
     geometry_candidate_min_span_bars: int = 2
     geometry_line_fit_tolerance_mult: float = 2.0
-    geometry_envelope_eval_step: int = 8
+    geometry_envelope_eval_step: int = 2
     geometry_envelope_min_span_mult: float = 2.5
-    geometry_envelope_start_count: int = 16
+    geometry_envelope_start_count: int = 40
     geometry_envelope_pair_min_span_mult: float = 0.38
     geometry_envelope_touch_atr_mult: float = 0.95
     geometry_envelope_max_width_atr: float = 11.5
@@ -139,13 +140,21 @@ class PatternStructureConfig:
     geometry_envelope_max_pair_options: int = 7
     geometry_envelope_min_touch_span_ratio: float = 0.25
     geometry_envelope_merge_slope_tolerance_pct: float = 0.018
+    geometry_envelope_proximity_atr_mult: float = 1.10
+    geometry_envelope_proximity_grace_bars: int = 14
+    geometry_envelope_proximity_ramp_bars: int = 3
+    geometry_envelope_proximity_penalty_weight: float = 1.0
+    geometry_pivot_dominance_bars: int = 24
+    geometry_pivot_dominance_atr_mult: float = 0.16
+    geometry_pivot_merge_bars: int = 10
+    geometry_pivot_merge_atr_mult: float = 0.45
     geometry_line_touch_weight: float = 0.38
     geometry_line_fit_weight: float = 0.30
     geometry_line_span_weight: float = 0.18
     geometry_line_recency_weight: float = 0.14
     geometry_slot_duplicate_price_tolerance_pct: float = 0.010
     geometry_slot_duplicate_start_tolerance: float = 0.20
-    geometry_wick_invalidation_atr: float = 0.25
+    geometry_body_invalidation_atr: float = 0.25
     # Experimental lower-timeframe normalization. Defaults are neutral. When
     # enabled, short-candle data can expand the triangle/wedge lookback so a
     # 1h chart can inspect a similar calendar structure to a 4h chart without
@@ -964,6 +973,8 @@ def _validate_config(cfg: PatternStructureConfig) -> None:
         raise ValueError("min_geometry_containment_ratio must be between 0 and 1")
     if not 0.0 <= float(cfg.min_geometry_contraction_score) <= 1.0:
         raise ValueError("min_geometry_contraction_score must be between 0 and 1")
+    if float(cfg.min_geometry_candidate_score) < 0.0:
+        raise ValueError("min_geometry_candidate_score must be non-negative")
     if float(cfg.max_geometry_fit_error_atr) <= 0.0:
         raise ValueError("max_geometry_fit_error_atr must be positive")
     if float(cfg.max_geometry_body_excursion_pct) < 0.0:
@@ -1039,6 +1050,22 @@ def _validate_config(cfg: PatternStructureConfig) -> None:
         raise ValueError("geometry_envelope_min_touch_span_ratio must be between 0 and 1")
     if float(cfg.geometry_envelope_merge_slope_tolerance_pct) < 0.0:
         raise ValueError("geometry_envelope_merge_slope_tolerance_pct must be non-negative")
+    if float(cfg.geometry_envelope_proximity_atr_mult) <= 0.0:
+        raise ValueError("geometry_envelope_proximity_atr_mult must be positive")
+    if int(cfg.geometry_envelope_proximity_grace_bars) < 0:
+        raise ValueError("geometry_envelope_proximity_grace_bars must be non-negative")
+    if int(cfg.geometry_envelope_proximity_ramp_bars) < 1:
+        raise ValueError("geometry_envelope_proximity_ramp_bars must be at least 1")
+    if float(cfg.geometry_envelope_proximity_penalty_weight) < 0.0:
+        raise ValueError("geometry_envelope_proximity_penalty_weight must be non-negative")
+    if int(cfg.geometry_pivot_dominance_bars) < 0:
+        raise ValueError("geometry_pivot_dominance_bars must be non-negative")
+    if float(cfg.geometry_pivot_dominance_atr_mult) < 0.0:
+        raise ValueError("geometry_pivot_dominance_atr_mult must be non-negative")
+    if int(cfg.geometry_pivot_merge_bars) < 0:
+        raise ValueError("geometry_pivot_merge_bars must be non-negative")
+    if float(cfg.geometry_pivot_merge_atr_mult) < 0.0:
+        raise ValueError("geometry_pivot_merge_atr_mult must be non-negative")
     line_weights = [
         float(cfg.geometry_line_touch_weight),
         float(cfg.geometry_line_fit_weight),
@@ -1053,8 +1080,8 @@ def _validate_config(cfg: PatternStructureConfig) -> None:
         raise ValueError("geometry_slot_duplicate_price_tolerance_pct must be non-negative")
     if not 0.0 <= float(cfg.geometry_slot_duplicate_start_tolerance) <= 1.0:
         raise ValueError("geometry_slot_duplicate_start_tolerance must be between 0 and 1")
-    if float(cfg.geometry_wick_invalidation_atr) <= 0.0:
-        raise ValueError("geometry_wick_invalidation_atr must be positive")
+    if float(cfg.geometry_body_invalidation_atr) <= 0.0:
+        raise ValueError("geometry_body_invalidation_atr must be positive")
     if float(cfg.geometry_window_time_scale_power) < 0.0:
         raise ValueError("geometry_window_time_scale_power must be non-negative")
     if float(cfg.geometry_window_reference_seconds) <= 0.0:

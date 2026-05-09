@@ -8,7 +8,6 @@ from pandas import DataFrame, Series
 
 from pattern_common import (
     _clip_value,
-    _geometry_boundary_proof_columns,
     _pattern_geometry_arrays,
     _prior_pattern_move,
     _recent_confirmed_pattern_pivots,
@@ -16,16 +15,31 @@ from pattern_common import (
 
 
 _GEOMETRY_SLOT_FAMILIES = ("triangle", "wedge", "compression")
-_GEOMETRY_SLOT_FIELDS = (
-    "quality",
+_GEOMETRY_SLOT_OUTPUT_FIELDS = (
+    "active",
+    "type",
     "upper",
     "lower",
-    "upper_start",
-    "lower_start",
-    "upper_start_index",
-    "lower_start_index",
-    "start_index",
-    "end_index",
+    "close_to_upper_atr",
+    "close_to_lower_atr",
+    "width_atr",
+    "age",
+    "upper_touch_count",
+    "lower_touch_count",
+    "upper_fit_error_atr",
+    "lower_fit_error_atr",
+)
+_GEOMETRY_SLOT_INTERNAL_FIELDS = (
+    "event_row",
+    "event_type",
+    "upper_slope",
+    "upper_intercept",
+    "lower_slope",
+    "lower_intercept",
+    "start_x",
+    "strength_touch_count",
+    "strength_fit_error_atr",
+    "strength_span",
 )
 
 
@@ -39,258 +53,40 @@ def _triangle_wedge_columns(frame: DataFrame, sequence: dict[str, Series], cfg: 
     to be simplified like the double/triple peak detectors.
 
     This path is intentionally independent from the flag/pennant impulse
-    detector and from TLV2 trendlines so it can be split into its own module
-    later. It does not require breakout confirmation; it emits attention when
-    pivot-envelope boundaries look visually defensible and current price remains
-    inside/near the pattern.
+    detector and from TLV2 trendlines. It does not require breakout
+    confirmation; it emits only current pattern evidence for strategy use.
 
-    Shape labels are mutually exclusive:
-    - Ascending triangle: flat resistance plus rising support.
-    - Descending triangle: falling resistance plus flat support.
-    - Symmetric triangle: falling resistance plus rising support.
-    - Falling wedge: both rails falling, with the upper rail falling faster.
-    - Rising wedge: both rails rising, with the lower rail rising faster.
-    - Compression: broad contraction that is not clean enough for a named
-      triangle/wedge label.
+    Output families are triangle, wedge, and compression. Each slot has a
+    direction ``type`` where ``1`` is upward, ``-1`` is downward, ``0`` is
+    neutral, and ``9`` is unknown.
     """
 
     p = cfg.output_prefix
     _ = sequence
     arrays = _triangle_wedge_arrays(frame, cfg)
-    ascending_quality = pd.Series(arrays["triangle_ascending_quality"], index=frame.index, dtype="float64")
-    descending_quality = pd.Series(arrays["triangle_descending_quality"], index=frame.index, dtype="float64")
-    symmetric_quality = pd.Series(arrays["triangle_symmetric_quality"], index=frame.index, dtype="float64")
-    falling_wedge_quality = pd.Series(arrays["wedge_falling_quality"], index=frame.index, dtype="float64")
-    rising_wedge_quality = pd.Series(arrays["wedge_rising_quality"], index=frame.index, dtype="float64")
-    compression_quality = pd.Series(arrays["compression_quality"], index=frame.index, dtype="float64")
-    ascending_raw = pd.Series(arrays["triangle_ascending_setup_long"], index=frame.index, dtype="bool")
-    descending_raw = pd.Series(arrays["triangle_descending_setup_short"], index=frame.index, dtype="bool")
-    symmetric_long_raw = pd.Series(arrays["triangle_symmetric_setup_long"], index=frame.index, dtype="bool")
-    symmetric_short_raw = pd.Series(arrays["triangle_symmetric_setup_short"], index=frame.index, dtype="bool")
-    falling_wedge_raw = pd.Series(arrays["wedge_falling_setup_long"], index=frame.index, dtype="bool")
-    rising_wedge_raw = pd.Series(arrays["wedge_rising_setup_short"], index=frame.index, dtype="bool")
-    compression_long_raw = pd.Series(arrays["compression_setup_long"], index=frame.index, dtype="bool")
-    compression_short_raw = pd.Series(arrays["compression_setup_short"], index=frame.index, dtype="bool")
-    ascending = _dedupe_geometry_events(ascending_raw, int(cfg.entry_cooldown_bars))
-    descending = _dedupe_geometry_events(descending_raw, int(cfg.entry_cooldown_bars))
-    symmetric_long = _dedupe_geometry_events(symmetric_long_raw, int(cfg.entry_cooldown_bars))
-    symmetric_short = _dedupe_geometry_events(symmetric_short_raw, int(cfg.entry_cooldown_bars))
-    falling_wedge = _dedupe_geometry_events(falling_wedge_raw, int(cfg.entry_cooldown_bars))
-    rising_wedge = _dedupe_geometry_events(rising_wedge_raw, int(cfg.entry_cooldown_bars))
-    compression_long = _dedupe_geometry_events(compression_long_raw, int(cfg.entry_cooldown_bars))
-    compression_short = _dedupe_geometry_events(compression_short_raw, int(cfg.entry_cooldown_bars))
-    symmetric = symmetric_long | symmetric_short
-    triangle_setup_long = (ascending | symmetric_long).fillna(False)
-    triangle_setup_short = (descending | symmetric_short).fillna(False)
-    triangle_quality_long = pd.concat(
-        [ascending_quality.where(ascending, 0.0), symmetric_quality.where(symmetric_long, 0.0)],
-        axis=1,
-    ).max(axis=1)
-    triangle_quality_short = pd.concat(
-        [descending_quality.where(descending, 0.0), symmetric_quality.where(symmetric_short, 0.0)],
-        axis=1,
-    ).max(axis=1)
-    wedge_quality_long = falling_wedge_quality.where(falling_wedge, 0.0)
-    wedge_quality_short = rising_wedge_quality.where(rising_wedge, 0.0)
-    management = _geometry_management_columns(frame, arrays, cfg)
-    slot_count = min(max(int(getattr(cfg, "geometry_output_slots", 3)), 0), 3)
-
-    columns = {
-        f"{p}_triangle_ascending_quality": ascending_quality.where(ascending, 0.0),
-        f"{p}_triangle_descending_quality": descending_quality.where(descending, 0.0),
-        f"{p}_triangle_symmetric_quality": symmetric_quality.where(symmetric, 0.0),
-        f"{p}_wedge_falling_quality": falling_wedge_quality.where(falling_wedge, 0.0),
-        f"{p}_wedge_rising_quality": rising_wedge_quality.where(rising_wedge, 0.0),
-        f"{p}_triangle_quality_long": triangle_quality_long,
-        f"{p}_triangle_quality_short": triangle_quality_short,
-        f"{p}_wedge_quality_long": wedge_quality_long,
-        f"{p}_wedge_quality_short": wedge_quality_short,
-        f"{p}_compression_quality_long": compression_quality.where(compression_long, 0.0),
-        f"{p}_compression_quality_short": compression_quality.where(compression_short, 0.0),
-        f"{p}_triangle_ascending_setup_long": ascending.fillna(False),
-        f"{p}_triangle_descending_setup_short": descending.fillna(False),
-        f"{p}_triangle_symmetric_setup": symmetric.fillna(False),
-        f"{p}_wedge_falling_setup_long": falling_wedge.fillna(False),
-        f"{p}_wedge_rising_setup_short": rising_wedge.fillna(False),
-        f"{p}_triangle_setup_long": triangle_setup_long,
-        f"{p}_triangle_setup_short": triangle_setup_short,
-        f"{p}_wedge_setup_long": falling_wedge.fillna(False),
-        f"{p}_wedge_setup_short": rising_wedge.fillna(False),
-        f"{p}_compression_setup_long": compression_long.fillna(False),
-        f"{p}_compression_setup_short": compression_short.fillna(False),
-        f"{p}_geometry_active": pd.Series(management["active"], index=frame.index, dtype="bool").fillna(False),
-        f"{p}_geometry_bias": pd.Series(management["bias"], index=frame.index, dtype="int8"),
-        f"{p}_geometry_quality": pd.Series(management["quality"], index=frame.index, dtype="float64"),
-        f"{p}_geometry_candidate_count": pd.Series(management["candidate_count"], index=frame.index, dtype="float64"),
-        f"{p}_geometry_confirmation_count": pd.Series(
-            management["confirmation_count"], index=frame.index, dtype="float64"
-        ),
-        f"{p}_geometry_upper": pd.Series(management["upper"], index=frame.index, dtype="float64"),
-        f"{p}_geometry_lower": pd.Series(management["lower"], index=frame.index, dtype="float64"),
-        f"{p}_geometry_width_pct": pd.Series(management["width_pct"], index=frame.index, dtype="float64"),
-        f"{p}_geometry_stop_ref_long": pd.Series(management["stop_ref_long"], index=frame.index, dtype="float64"),
-        f"{p}_geometry_stop_ref_short": pd.Series(management["stop_ref_short"], index=frame.index, dtype="float64"),
-        f"{p}_geometry_target_ref_long": pd.Series(management["target_ref_long"], index=frame.index, dtype="float64"),
-        f"{p}_geometry_target_ref_short": pd.Series(management["target_ref_short"], index=frame.index, dtype="float64"),
-        f"{p}_geometry_long_bounce_support": pd.Series(
-            management["long_bounce_support"], index=frame.index, dtype="bool"
-        ).fillna(False),
-        f"{p}_geometry_long_breakout": pd.Series(management["long_breakout"], index=frame.index, dtype="bool").fillna(False),
-        f"{p}_geometry_go_long": pd.Series(management["go_long"], index=frame.index, dtype="bool").fillna(False),
-        f"{p}_geometry_short_reject_resistance": pd.Series(
-            management["short_reject_resistance"], index=frame.index, dtype="bool"
-        ).fillna(False),
-        f"{p}_geometry_short_breakdown": pd.Series(management["short_breakdown"], index=frame.index, dtype="bool").fillna(False),
-        f"{p}_geometry_go_short": pd.Series(management["go_short"], index=frame.index, dtype="bool").fillna(False),
-        f"{p}_geometry_breakout_up": pd.Series(management["breakout_up"], index=frame.index, dtype="bool").fillna(False),
-        f"{p}_geometry_breakdown_down": pd.Series(management["breakdown_down"], index=frame.index, dtype="bool").fillna(False),
-        f"{p}_geometry_invalid_long": pd.Series(management["invalid_long"], index=frame.index, dtype="bool").fillna(False),
-        f"{p}_geometry_invalid_short": pd.Series(management["invalid_short"], index=frame.index, dtype="bool").fillna(False),
-        f"{p}_geometry_exit_long": pd.Series(management["exit_long"], index=frame.index, dtype="bool").fillna(False),
-        f"{p}_geometry_exit_short": pd.Series(management["exit_short"], index=frame.index, dtype="bool").fillna(False),
-    }
-    for slot in range(1, slot_count + 1):
-        columns.update(
-            {
-                f"{p}_geometry_slot_{slot}_quality": pd.Series(
-                    arrays[f"geometry_slot_{slot}_quality"], index=frame.index, dtype="float64"
-                ),
-                f"{p}_geometry_slot_{slot}_upper": pd.Series(
-                    arrays[f"geometry_slot_{slot}_upper"], index=frame.index, dtype="float64"
-                ),
-                f"{p}_geometry_slot_{slot}_lower": pd.Series(
-                    arrays[f"geometry_slot_{slot}_lower"], index=frame.index, dtype="float64"
-                ),
-                f"{p}_geometry_slot_{slot}_start_index": pd.Series(
-                    arrays[f"geometry_slot_{slot}_start_index"], index=frame.index, dtype="float64"
-                ),
-                f"{p}_geometry_slot_{slot}_end_index": pd.Series(
-                    arrays[f"geometry_slot_{slot}_end_index"], index=frame.index, dtype="float64"
-                ),
-            }
-        )
+    slot_count = _geometry_slot_count(cfg)
+    columns: dict[str, Series] = {}
     for family in _GEOMETRY_SLOT_FAMILIES:
-        family_qualities = []
         for slot in range(1, slot_count + 1):
-            slot_quality = pd.Series(arrays[f"{family}_slot_{slot}_quality"], index=frame.index, dtype="float64")
-            family_qualities.append(slot_quality)
-            columns.update(
-                {
-                    f"{p}_{family}_slot_{slot}_quality": slot_quality,
-                    f"{p}_{family}_slot_{slot}_upper": pd.Series(
-                        arrays[f"{family}_slot_{slot}_upper"], index=frame.index, dtype="float64"
-                    ),
-                    f"{p}_{family}_slot_{slot}_lower": pd.Series(
-                        arrays[f"{family}_slot_{slot}_lower"], index=frame.index, dtype="float64"
-                    ),
-                    f"{p}_{family}_slot_{slot}_start_index": pd.Series(
-                        arrays[f"{family}_slot_{slot}_start_index"], index=frame.index, dtype="float64"
-                    ),
-                    f"{p}_{family}_slot_{slot}_end_index": pd.Series(
-                        arrays[f"{family}_slot_{slot}_end_index"], index=frame.index, dtype="float64"
-                    ),
-                }
-            )
-        family_quality = (
-            pd.concat(family_qualities, axis=1).max(axis=1)
-            if family_qualities
-            else pd.Series(0.0, index=frame.index, dtype="float64")
-        )
-        columns[f"{p}_{family}_quality"] = family_quality
-        columns[f"{p}_{family}_active"] = family_quality.gt(0.0).fillna(False)
-    if bool(getattr(cfg, "include_pattern_diagnostics", False)):
-        columns.update(
-            {
-                f"{p}_geometry_upper_start": pd.Series(arrays["geometry_upper_start"], index=frame.index, dtype="float64"),
-                f"{p}_geometry_lower_start": pd.Series(arrays["geometry_lower_start"], index=frame.index, dtype="float64"),
-                f"{p}_geometry_start_index": pd.Series(arrays["geometry_start_index"], index=frame.index, dtype="float64"),
-                f"{p}_geometry_end_index": pd.Series(arrays["geometry_end_index"], index=frame.index, dtype="float64"),
-                f"{p}_range_contraction_score": pd.Series(arrays["range_contraction_score"], index=frame.index, dtype="float64"),
-                f"{p}_geometry_recent_touch_score": pd.Series(
-                    arrays["geometry_recent_touch_score"], index=frame.index, dtype="float64"
-                ),
-                f"{p}_geometry_anchor_balance_score": pd.Series(
-                    arrays["geometry_anchor_balance_score"], index=frame.index, dtype="float64"
-                ),
-                f"{p}_geometry_touch_balance_score": pd.Series(
-                    arrays["geometry_touch_balance_score"], index=frame.index, dtype="float64"
-                ),
-                f"{p}_geometry_upper_touch_count": pd.Series(
-                    arrays["geometry_upper_touch_count"], index=frame.index, dtype="float64"
-                ),
-                f"{p}_geometry_lower_touch_count": pd.Series(
-                    arrays["geometry_lower_touch_count"], index=frame.index, dtype="float64"
-                ),
-                f"{p}_geometry_tlv2_source": pd.Series(arrays["geometry_tlv2_source"], index=frame.index, dtype="bool").fillna(False),
-                f"{p}_geometry_source_count": pd.Series(arrays["geometry_source_count"], index=frame.index, dtype="float64"),
-                f"{p}_geometry_experimental_confluence_score": pd.Series(
-                    arrays["geometry_experimental_confluence_score"], index=frame.index, dtype="float64"
-                ),
-                f"{p}_geometry_experimental_confluence_bonus": pd.Series(
-                    arrays["geometry_experimental_confluence_bonus"], index=frame.index, dtype="float64"
-                ),
-                **_geometry_boundary_proof_columns(frame.index, f"{p}_triangle_long", triangle_setup_long, arrays),
-                **_geometry_boundary_proof_columns(frame.index, f"{p}_triangle_short", triangle_setup_short, arrays),
-                **_geometry_boundary_proof_columns(frame.index, f"{p}_wedge_long", falling_wedge, arrays),
-                **_geometry_boundary_proof_columns(frame.index, f"{p}_wedge_short", rising_wedge, arrays),
-                **_geometry_boundary_proof_columns(frame.index, f"{p}_compression_long", compression_long, arrays),
-                **_geometry_boundary_proof_columns(frame.index, f"{p}_compression_short", compression_short, arrays),
-            }
-        )
-        for slot in range(1, slot_count + 1):
-            slot_active = pd.Series(arrays[f"geometry_slot_{slot}_quality"], index=frame.index, dtype="float64").gt(0.0)
-            columns.update(
-                _geometry_boundary_proof_columns(
-                    frame.index,
-                    f"{p}_geometry_slot_{slot}",
-                    slot_active,
-                    {
-                        "geometry_start_index": arrays[f"geometry_slot_{slot}_start_index"],
-                        "geometry_upper_start_index": arrays[f"geometry_slot_{slot}_upper_start_index"],
-                        "geometry_upper_start": arrays[f"geometry_slot_{slot}_upper_start"],
-                        "geometry_upper_anchor_start": arrays[f"geometry_slot_{slot}_upper_start"],
-                        "geometry_end_index": arrays[f"geometry_slot_{slot}_end_index"],
-                        "geometry_upper": arrays[f"geometry_slot_{slot}_upper"],
-                        "geometry_lower_start_index": arrays[f"geometry_slot_{slot}_lower_start_index"],
-                        "geometry_lower_start": arrays[f"geometry_slot_{slot}_lower_start"],
-                        "geometry_lower_anchor_start": arrays[f"geometry_slot_{slot}_lower_start"],
-                        "geometry_lower": arrays[f"geometry_slot_{slot}_lower"],
-                    },
-                )
-            )
-        for family in _GEOMETRY_SLOT_FAMILIES:
-            for slot in range(1, slot_count + 1):
-                slot_active = pd.Series(
-                    arrays[f"{family}_slot_{slot}_quality"], index=frame.index, dtype="float64"
-                ).gt(0.0)
-                columns.update(
-                    _geometry_boundary_proof_columns(
-                        frame.index,
-                        f"{p}_{family}_slot_{slot}",
-                        slot_active,
-                        {
-                            "geometry_start_index": arrays[f"{family}_slot_{slot}_start_index"],
-                            "geometry_upper_start_index": arrays[f"{family}_slot_{slot}_upper_start_index"],
-                            "geometry_upper_start": arrays[f"{family}_slot_{slot}_upper_start"],
-                            "geometry_upper_anchor_start": arrays[f"{family}_slot_{slot}_upper_start"],
-                            "geometry_end_index": arrays[f"{family}_slot_{slot}_end_index"],
-                            "geometry_upper": arrays[f"{family}_slot_{slot}_upper"],
-                            "geometry_lower_start_index": arrays[f"{family}_slot_{slot}_lower_start_index"],
-                            "geometry_lower_start": arrays[f"{family}_slot_{slot}_lower_start"],
-                            "geometry_lower_anchor_start": arrays[f"{family}_slot_{slot}_lower_start"],
-                            "geometry_lower": arrays[f"{family}_slot_{slot}_lower"],
-                        },
-                    )
-                )
+            for field in _GEOMETRY_SLOT_OUTPUT_FIELDS:
+                dtype = "bool" if field == "active" else "int8" if field == "type" else "float64"
+                series = pd.Series(arrays[f"{family}_slot_{slot}_{field}"], index=frame.index, dtype=dtype)
+                columns[f"{p}_{family}_{slot}_{field}"] = series.fillna(False) if field == "active" else series
     return columns
+
+
+def _geometry_slot_count(cfg: PatternStructureConfig) -> int:
+    return min(max(int(getattr(cfg, "geometry_output_slots", 1)), 1), 4)
 
 
 def _init_geometry_slot_arrays(out: dict[str, np.ndarray], rows: int, prefix: str, slot_count: int) -> None:
     for slot in range(1, slot_count + 1):
-        for field in _GEOMETRY_SLOT_FIELDS:
+        for field in _GEOMETRY_SLOT_OUTPUT_FIELDS + _GEOMETRY_SLOT_INTERNAL_FIELDS:
             key = f"{prefix}_slot_{slot}_{field}"
-            if field == "quality":
-                out[key] = np.zeros(rows, dtype="float64")
+            if field == "active":
+                out[key] = np.zeros(rows, dtype=bool)
+            elif field in {"type", "event_type"}:
+                out[key] = np.zeros(rows, dtype="int8")
             else:
                 out[key] = np.full(rows, np.nan, dtype="float64")
 
@@ -298,70 +94,43 @@ def _init_geometry_slot_arrays(out: dict[str, np.ndarray], rows: int, prefix: st
 def _triangle_wedge_arrays(frame: DataFrame, cfg: PatternStructureConfig) -> dict[str, np.ndarray]:
     close, body_high, body_low, high_pivot, high_index, low_pivot, low_index = _pattern_geometry_arrays(frame, cfg)
     rows = len(frame)
-    out = {
-        "triangle_ascending_quality": np.zeros(rows, dtype="float64"),
-        "triangle_descending_quality": np.zeros(rows, dtype="float64"),
-        "triangle_symmetric_quality": np.zeros(rows, dtype="float64"),
-        "wedge_falling_quality": np.zeros(rows, dtype="float64"),
-        "wedge_rising_quality": np.zeros(rows, dtype="float64"),
-        "compression_quality": np.zeros(rows, dtype="float64"),
-        "range_contraction_score": np.zeros(rows, dtype="float64"),
-        "geometry_recent_touch_score": np.zeros(rows, dtype="float64"),
-        "geometry_anchor_balance_score": np.zeros(rows, dtype="float64"),
-        "geometry_touch_balance_score": np.zeros(rows, dtype="float64"),
-        "geometry_tlv2_source": np.zeros(rows, dtype=bool),
-        "geometry_source_count": np.zeros(rows, dtype="float64"),
-        "geometry_experimental_confluence_score": np.zeros(rows, dtype="float64"),
-        "geometry_experimental_confluence_bonus": np.zeros(rows, dtype="float64"),
-        "geometry_bias": np.zeros(rows, dtype="int8"),
-        "geometry_quality": np.zeros(rows, dtype="float64"),
-        "geometry_candidate_count": np.zeros(rows, dtype="float64"),
-        "geometry_confirmation_count": np.zeros(rows, dtype="float64"),
-        "geometry_upper_touch_count": np.zeros(rows, dtype="float64"),
-        "geometry_lower_touch_count": np.zeros(rows, dtype="float64"),
-        "geometry_upper": np.full(rows, np.nan, dtype="float64"),
-        "geometry_lower": np.full(rows, np.nan, dtype="float64"),
-        "geometry_upper_start": np.full(rows, np.nan, dtype="float64"),
-        "geometry_lower_start": np.full(rows, np.nan, dtype="float64"),
-        "geometry_upper_anchor_start": np.full(rows, np.nan, dtype="float64"),
-        "geometry_lower_anchor_start": np.full(rows, np.nan, dtype="float64"),
-        "geometry_upper_start_index": np.full(rows, np.nan, dtype="float64"),
-        "geometry_lower_start_index": np.full(rows, np.nan, dtype="float64"),
-        "geometry_start_index": np.full(rows, np.nan, dtype="float64"),
-        "geometry_end_index": np.full(rows, np.nan, dtype="float64"),
-        "geometry_width_pct": np.full(rows, np.nan, dtype="float64"),
-        "triangle_ascending_setup_long": np.zeros(rows, dtype=bool),
-        "triangle_descending_setup_short": np.zeros(rows, dtype=bool),
-        "triangle_symmetric_setup_long": np.zeros(rows, dtype=bool),
-        "triangle_symmetric_setup_short": np.zeros(rows, dtype=bool),
-        "wedge_falling_setup_long": np.zeros(rows, dtype=bool),
-        "wedge_rising_setup_short": np.zeros(rows, dtype=bool),
-        "compression_setup_long": np.zeros(rows, dtype=bool),
-        "compression_setup_short": np.zeros(rows, dtype=bool),
-    }
-    slot_count = min(max(int(getattr(cfg, "geometry_output_slots", 3)), 0), 3)
-    _init_geometry_slot_arrays(out, rows, "geometry", slot_count)
+    atr = _geometry_atr(frame)
+    high_pivot, high_index, low_pivot, low_index = _reduce_geometry_pivots(
+        high_pivot,
+        high_index,
+        low_pivot,
+        low_index,
+        atr,
+        cfg,
+    )
+    out: dict[str, np.ndarray] = {}
+    slot_count = _geometry_slot_count(cfg)
     for family in _GEOMETRY_SLOT_FAMILIES:
         _init_geometry_slot_arrays(out, rows, family, slot_count)
     window, min_bars = _effective_geometry_window(frame, cfg)
+    min_span = max(int(min_bars), int(round(float(min_bars) * float(cfg.geometry_envelope_min_span_mult))))
     min_side_pivots = int(cfg.min_pattern_side_pivots)
     min_slope = float(cfg.min_boundary_slope_pct_per_bar)
     flat_tolerance = float(cfg.flat_boundary_slope_pct_per_bar)
-    max_fit_error = float(cfg.max_triangle_fit_error_pct)
     min_width = float(cfg.min_triangle_width_pct)
     max_width = float(cfg.max_triangle_width_pct)
-    breakout_tolerance = float(cfg.triangle_breakout_tolerance_pct)
-    min_shape_score = float(cfg.min_geometry_shape_score)
     min_containment = float(cfg.min_geometry_containment_ratio)
+    min_contraction = float(cfg.min_geometry_contraction_score)
+    max_fit_error_atr = float(cfg.max_geometry_fit_error_atr) * float(cfg.geometry_line_fit_tolerance_mult)
     max_body_excursion = float(cfg.max_geometry_body_excursion_pct)
     min_side_switches = int(cfg.min_geometry_side_switches)
-    min_recent_touch = float(cfg.min_geometry_recent_touch_score)
-    min_anchor_balance = float(cfg.min_geometry_anchor_balance_score)
-    min_touch_balance = float(cfg.min_geometry_touch_balance_score)
-    min_compression_quality = _compression_quality_threshold(cfg)
-    min_identification_quality = float(getattr(cfg, "min_geometry_identification_quality", min_compression_quality))
+    eval_step = max(int(cfg.geometry_envelope_eval_step), 1)
+    max_width_atr = float(cfg.geometry_envelope_max_width_atr)
+    pivot_events = np.unique(
+        np.concatenate(
+            [
+                high_index[np.isfinite(high_pivot) & np.isfinite(high_index)],
+                low_index[np.isfinite(low_pivot) & np.isfinite(low_index)],
+            ]
+        ).astype("float64")
+    )
 
-    for row in range(rows):
+    for row in range(min_span, rows, eval_step):
         if not np.isfinite(close[row]) or close[row] == 0.0:
             continue
         search_start = max(0, row - window + 1)
@@ -376,284 +145,181 @@ def _triangle_wedge_arrays(frame: DataFrame, cfg: PatternStructureConfig) -> dic
         if len(all_high_x) < min_side_pivots or len(all_low_x) < min_side_pivots:
             continue
 
-        best: dict[str, float] | None = None
-        identified_candidates: list[dict[str, float]] = []
         family_candidates: dict[str, list[dict[str, float]]] = {family: [] for family in _GEOMETRY_SLOT_FAMILIES}
-        for start_anchor in _geometry_candidate_starts(all_high_x, all_low_x, row, min_bars):
+        for start_anchor in _geometry_envelope_candidate_starts(pivot_events, row, min_span, window, cfg):
             high_mask = all_high_x >= start_anchor
             low_mask = all_low_x >= start_anchor
             high_x = all_high_x[high_mask]
-            high_y = all_high_y[high_mask]
+            high_y = _geometry_body_values_at_pivots(high_x, body_high)
             low_x = all_low_x[low_mask]
-            low_y = all_low_y[low_mask]
+            low_y = _geometry_body_values_at_pivots(low_x, body_low)
             if len(high_x) < min_side_pivots or len(low_x) < min_side_pivots:
                 continue
-            first_anchor = float(min(np.nanmin(high_x), np.nanmin(low_x)))
-            last_anchor = float(max(np.nanmax(high_x), np.nanmax(low_x)))
-            span = last_anchor - first_anchor
-            if span < float(min_bars):
-                continue
-            if row - last_anchor > max(float(min_bars), float(window) * 0.38):
+            start_x = float(max(0.0, round(float(start_anchor))))
+            span = float(row) - start_x
+            if span < float(min_span):
                 continue
             if _pivot_side_switches(high_x, low_x) < min_side_switches:
                 continue
-            prior_direction, prior_move_pct = _prior_pattern_move(close, first_anchor, span)
-            if prior_move_pct < float(cfg.min_triangle_prior_move_pct):
-                continue
 
             reference = max(abs(float(close[row])), 1e-9)
-            touch_tolerance_pct = max(float(breakout_tolerance), 0.004)
-            upper = _best_boundary_line(
+            scan_start = int(start_x)
+            scan_x = np.arange(scan_start, row + 1, dtype="float64")
+            segment = slice(scan_start, row + 1)
+            atr_reference = max(float(atr[row]), 1e-9)
+            upper_options = _geometry_envelope_boundary_options(
                 high_x,
                 high_y,
-                row,
-                reference,
-                touch_tolerance_pct,
-                max_body_excursion,
-                min_bars,
+                scan_x,
+                body_high[segment],
+                body_low[segment],
+                atr_reference,
+                span,
+                cfg,
                 side="upper",
             )
-            lower = _best_boundary_line(
+            lower_options = _geometry_envelope_boundary_options(
                 low_x,
                 low_y,
-                row,
-                reference,
-                touch_tolerance_pct,
-                max_body_excursion,
-                min_bars,
+                scan_x,
+                body_high[segment],
+                body_low[segment],
+                atr_reference,
+                span,
+                cfg,
                 side="lower",
             )
-            if upper is None or lower is None:
-                continue
-            recent_touch_score = min(float(upper["recent_touch_score"]), float(lower["recent_touch_score"]))
-            if recent_touch_score < min_recent_touch:
-                continue
-            anchor_balance_score = _clip_value(1.0 - abs(float(upper["x1"]) - float(lower["x1"])) / max(span, 1.0))
-            touch_balance_score = _clip_value(
-                1.0 - abs(float(upper["last_touch_x"]) - float(lower["last_touch_x"])) / max(span, 1.0)
-            )
-            if anchor_balance_score < min_anchor_balance or touch_balance_score < min_touch_balance:
+            if not upper_options or not lower_options:
                 continue
 
-            high_slope = upper["slope"]
-            high_intercept = upper["intercept"]
-            low_slope = lower["slope"]
-            low_intercept = lower["intercept"]
-            upper_now = high_slope * row + high_intercept
-            lower_now = low_slope * row + low_intercept
-            if not np.isfinite(upper_now) or not np.isfinite(lower_now) or upper_now <= lower_now:
-                continue
-            width_pct = (upper_now - lower_now) / reference
-            if width_pct < min_width or width_pct > max_width:
-                continue
-            tolerance = reference * breakout_tolerance
-            if float(close[row]) > upper_now + tolerance or float(close[row]) < lower_now - tolerance:
-                continue
-            start_x = float(min(upper["x1"], lower["x1"]))
-            upper_start = high_slope * start_x + high_intercept
-            lower_start = low_slope * start_x + low_intercept
-            upper_anchor_start = high_slope * float(upper["x1"]) + high_intercept
-            lower_anchor_start = low_slope * float(lower["x1"]) + low_intercept
-            if not np.isfinite(upper_start) or not np.isfinite(lower_start) or upper_start <= lower_start:
-                continue
-            start_width = max(upper_start - lower_start, 1e-9)
-            contraction_score = _clip_value(1.0 - (upper_now - lower_now) / start_width)
-            if contraction_score < max(0.12, min_shape_score * 0.35):
-                continue
-            containment_ratio, body_excursion_pct = _geometry_containment_metrics(
-                body_high,
-                body_low,
-                close,
-                start_x,
-                row,
-                high_slope,
-                high_intercept,
-                low_slope,
-                low_intercept,
-                touch_tolerance_pct,
-            )
-            if containment_ratio < min_containment or body_excursion_pct > max_body_excursion:
-                continue
-            containment_score = _clip_value((containment_ratio - min_containment) / max(1.0 - min_containment, 1e-9))
-            boundary_respect_ratio, boundary_intrusion_pct = _geometry_boundary_respect_metrics(
-                body_high,
-                body_low,
-                close,
-                start_x,
-                row,
-                high_slope,
-                high_intercept,
-                low_slope,
-                low_intercept,
-                float(cfg.geometry_boundary_tolerance_pct),
-            )
-            if boundary_respect_ratio < float(cfg.min_geometry_boundary_respect_ratio):
-                continue
+            for upper in upper_options:
+                for lower in lower_options:
+                    high_slope = float(upper["slope"])
+                    high_intercept = float(upper["intercept"])
+                    low_slope = float(lower["slope"])
+                    low_intercept = float(lower["intercept"])
+                    upper_now = high_slope * row + high_intercept
+                    lower_now = low_slope * row + low_intercept
+                    upper_start = high_slope * start_x + high_intercept
+                    lower_start = low_slope * start_x + low_intercept
+                    if (
+                        not np.isfinite([upper_now, lower_now, upper_start, lower_start]).all()
+                        or upper_now <= lower_now
+                        or upper_start <= lower_start
+                    ):
+                        continue
+                    width_pct = (upper_now - lower_now) / reference
+                    width_atr = (upper_now - lower_now) / atr_reference
+                    if width_pct < min_width or width_pct > max_width or width_atr > max_width_atr:
+                        continue
+                    start_width = max(upper_start - lower_start, 1e-9)
+                    contraction_score = _clip_value(1.0 - (upper_now - lower_now) / start_width)
+                    if contraction_score < min_contraction:
+                        continue
+                    containment_ratio, body_excursion_pct = _geometry_containment_metrics(
+                        body_high,
+                        body_low,
+                        close,
+                        start_x,
+                        row,
+                        high_slope,
+                        high_intercept,
+                        low_slope,
+                        low_intercept,
+                        float(cfg.geometry_boundary_touch_tolerance_pct),
+                    )
+                    if containment_ratio < min_containment or body_excursion_pct > max_body_excursion:
+                        continue
+                    boundary_respect_ratio, boundary_intrusion_pct = _geometry_boundary_respect_metrics(
+                        body_high,
+                        body_low,
+                        close,
+                        start_x,
+                        row,
+                        high_slope,
+                        high_intercept,
+                        low_slope,
+                        low_intercept,
+                        float(cfg.geometry_boundary_tolerance_pct),
+                    )
+                    if boundary_respect_ratio < float(cfg.min_geometry_boundary_respect_ratio):
+                        continue
+                    high_slope_pct = high_slope / reference
+                    low_slope_pct = low_slope / reference
+                    if low_slope_pct <= high_slope_pct:
+                        continue
+                    max_abs_slope_pct = max(abs(float(high_slope_pct)), abs(float(low_slope_pct)))
+                    if max_abs_slope_pct > float(cfg.max_geometry_boundary_slope_pct_per_bar):
+                        continue
+                    upper_fit_error_atr = float(upper["fit_error_atr"])
+                    lower_fit_error_atr = float(lower["fit_error_atr"])
+                    if max(upper_fit_error_atr, lower_fit_error_atr) > max_fit_error_atr:
+                        continue
+                    min_touch_span_ratio = min(
+                        float(upper["touch_span"]),
+                        float(lower["touch_span"]),
+                    ) / max(span, 1.0)
+                    if min_touch_span_ratio < float(cfg.geometry_envelope_min_touch_span_ratio):
+                        continue
+                    recent_touch_score = min(
+                        _clip_value(1.0 - (float(row) - float(upper["last_touch_x"])) / max(span, 1.0)),
+                        _clip_value(1.0 - (float(row) - float(lower["last_touch_x"])) / max(span, 1.0)),
+                    )
+                    if recent_touch_score < float(cfg.min_geometry_recent_touch_score):
+                        continue
+                    family, pattern_direction = _geometry_envelope_family(
+                        high_slope_pct,
+                        low_slope_pct,
+                        min_slope,
+                        flat_tolerance,
+                    )
+                    if family == "compression" and (
+                        min(float(upper["touch_count"]), float(lower["touch_count"]))
+                        < float(cfg.min_compression_side_touches)
+                        or boundary_intrusion_pct > float(cfg.max_compression_boundary_intrusion_pct)
+                        or contraction_score < float(cfg.min_compression_contraction_score)
+                    ):
+                        continue
+                    touch_balance = _clip_value(
+                        1.0
+                        - abs(float(upper["touch_count"]) - float(lower["touch_count"]))
+                        / max(float(upper["touch_count"]) + float(lower["touch_count"]), 1.0)
+                    )
+                    touch_score = min((float(upper["touch_count"]) + float(lower["touch_count"])) / 8.0, 1.35)
+                    fit_score = max(0.0, 1.0 - max(upper_fit_error_atr, lower_fit_error_atr) / max(max_fit_error_atr, 1e-9))
+                    width_score = max(0.0, 1.0 - width_atr / max(max_width_atr, 1e-9))
+                    score = (
+                        _clip_value(span / max(float(window), 1.0)) * 1.55
+                        + touch_score * 1.25
+                        + fit_score * 1.15
+                        + min(contraction_score / 0.45, 1.35) * 0.95
+                        + touch_balance * 0.50
+                        + width_score * 0.45
+                        + min_touch_span_ratio * 0.55
+                    )
+                    if score < float(cfg.min_geometry_candidate_score):
+                        continue
+                    family_candidates[family].append(
+                        {
+                            "type": float(pattern_direction),
+                            "upper_now": float(upper_now),
+                            "lower_now": float(lower_now),
+                            "upper_start": float(upper_start),
+                            "lower_start": float(lower_start),
+                            "upper_start_x": float(upper["anchor_x"]),
+                            "lower_start_x": float(lower["anchor_x"]),
+                            "upper_slope": high_slope,
+                            "lower_slope": low_slope,
+                            "start_x": float(start_x),
+                            "span": float(span),
+                            "score": float(score),
+                            "upper_touch_count": float(upper["touch_count"]),
+                            "lower_touch_count": float(lower["touch_count"]),
+                            "upper_fit_error_atr": upper_fit_error_atr,
+                            "lower_fit_error_atr": lower_fit_error_atr,
+                        }
+                    )
 
-            high_slope_pct = high_slope / reference
-            low_slope_pct = low_slope / reference
-            max_abs_slope_pct = max(abs(float(high_slope_pct)), abs(float(low_slope_pct)))
-            if max_abs_slope_pct > float(cfg.max_geometry_boundary_slope_pct_per_bar):
-                continue
-            if (
-                float(cfg.aggressive_geometry_slope_pct_per_bar) > 0.0
-                and max_abs_slope_pct > float(cfg.aggressive_geometry_slope_pct_per_bar)
-                and min(float(upper["touch_count"]), float(lower["touch_count"]))
-                < float(cfg.aggressive_geometry_min_side_touches)
-            ):
-                continue
-            convergence_score = _clip_value((low_slope_pct - high_slope_pct) / max(min_slope * 8.0, 1e-9))
-            touch_score = _clip_value(
-                min(float(upper["touch_count"]), float(lower["touch_count"])) / max(float(min_side_pivots) + 1.0, 1.0)
-            )
-            line_score = 0.5 * float(upper["score"]) + 0.5 * float(lower["score"])
-            width_score = _clip_value(1.0 - width_pct / max(max_width, 1e-9))
-            span_score = _clip_value((span - float(min_bars)) / max(float(window - min_bars), 1.0))
-            recency_score = _clip_value(1.0 - (row - last_anchor) / max(float(window), 1.0))
-            base_quality = (
-                0.18 * touch_score
-                + 0.14 * line_score
-                + 0.12 * width_score
-                + 0.13 * contraction_score
-                + 0.08 * span_score
-                + 0.15 * containment_score
-                + 0.06 * recency_score
-                + 0.06 * recent_touch_score
-                + 0.04 * anchor_balance_score
-                + 0.04 * touch_balance_score
-            )
-            compression_quality = _clip_value(0.78 * base_quality + 0.22 * convergence_score)
-            upper_flat = abs(high_slope_pct) <= flat_tolerance
-            lower_flat = abs(low_slope_pct) <= flat_tolerance
-            upper_falling = high_slope_pct <= -min_slope
-            upper_rising = high_slope_pct >= min_slope
-            lower_falling = low_slope_pct <= -min_slope
-            lower_rising = low_slope_pct >= min_slope
-            # These buckets are deliberately non-overlapping. If a shape is
-            # ambiguous, it must survive as broad compression evidence
-            # instead of claiming a triangle/wedge subtype.
-            ascending_shape = 0.0
-            if upper_flat and lower_rising:
-                ascending_shape = _clip_value(1.0 - abs(high_slope_pct) / max(flat_tolerance, 1e-9)) * _clip_value(
-                    low_slope_pct / max(min_slope * 4.0, 1e-9)
-                )
-            descending_shape = 0.0
-            if upper_falling and lower_flat:
-                descending_shape = _clip_value(1.0 - abs(low_slope_pct) / max(flat_tolerance, 1e-9)) * _clip_value(
-                    -high_slope_pct / max(min_slope * 4.0, 1e-9)
-                )
-            symmetric_shape = 0.0
-            if upper_falling and lower_rising:
-                symmetric_shape = (
-                    convergence_score
-                    * _clip_value(-high_slope_pct / max(min_slope * 4.0, 1e-9))
-                    * _clip_value(low_slope_pct / max(min_slope * 4.0, 1e-9))
-                )
-            falling_wedge_shape = 0.0
-            if upper_falling and lower_falling and high_slope_pct < low_slope_pct:
-                falling_wedge_shape = convergence_score * _clip_value(-high_slope_pct / max(min_slope * 4.0, 1e-9))
-            rising_wedge_shape = 0.0
-            if upper_rising and lower_rising and high_slope_pct < low_slope_pct:
-                rising_wedge_shape = convergence_score * _clip_value(low_slope_pct / max(min_slope * 4.0, 1e-9))
-
-            shapes = {
-                "triangle_ascending": ascending_shape,
-                "triangle_descending": descending_shape,
-                "triangle_symmetric": symmetric_shape,
-                "wedge_falling": falling_wedge_shape,
-                "wedge_rising": rising_wedge_shape,
-            }
-            qualities = {name: _clip_value(0.74 * base_quality + 0.26 * shape_score) for name, shape_score in shapes.items()}
-            best_name, best_quality = max(qualities.items(), key=lambda item: item[1])
-            best_shape_score = float(shapes[best_name])
-            identification_quality = _clip_value(0.82 * base_quality + 0.18 * convergence_score)
-            slot_candidate = {
-                "upper_now": float(upper_now),
-                "lower_now": float(lower_now),
-                "upper_start": float(upper_start),
-                "lower_start": float(lower_start),
-                "upper_start_x": float(upper["x1"]),
-                "lower_start_x": float(lower["x1"]),
-                "upper_slope": float(high_slope),
-                "lower_slope": float(low_slope),
-                "start_x": float(start_x),
-                "span": float(span),
-            }
-            if identification_quality >= min_identification_quality:
-                identified_candidates.append({"quality": float(identification_quality), **slot_candidate})
-            named_valid = best_shape_score >= min_shape_score
-            if best_name.startswith("triangle"):
-                named_valid = named_valid and best_quality >= float(cfg.min_triangle_quality)
-            if best_name.startswith("wedge"):
-                named_valid = named_valid and best_quality >= float(cfg.min_wedge_quality)
-            broad_valid = compression_quality >= min_compression_quality
-            # The broad compression label is not a consolation prize for
-            # a triangle/wedge that almost passed. If the shape already looks
-            # named, keep pressure on the named thresholds instead of emitting a
-            # vague fallback signal.
-            broad_valid = broad_valid and best_shape_score < min_shape_score
-            broad_valid = (
-                broad_valid
-                and min(float(upper["touch_count"]), float(lower["touch_count"]))
-                >= float(cfg.min_compression_side_touches)
-                and boundary_intrusion_pct <= float(cfg.max_compression_boundary_intrusion_pct)
-                and anchor_balance_score >= float(cfg.min_compression_anchor_balance_score)
-                and touch_balance_score >= float(cfg.min_compression_touch_balance_score)
-                and contraction_score >= float(cfg.min_compression_contraction_score)
-                and convergence_score >= float(cfg.min_compression_convergence_score)
-            )
-            if not named_valid and not broad_valid:
-                continue
-            if named_valid:
-                named_family = "triangle" if best_name.startswith("triangle") else "wedge"
-                family_candidates[named_family].append({"quality": float(best_quality), **slot_candidate})
-            if broad_valid:
-                family_candidates["compression"].append({"quality": float(compression_quality), **slot_candidate})
-            candidate_quality = best_quality if named_valid else compression_quality
-            candidate_name = best_name if named_valid else "compression"
-            if best is None or candidate_quality > best["quality"]:
-                best = {
-                    "name": candidate_name,
-                    "quality": candidate_quality,
-                    "named_quality": best_quality if named_valid else 0.0,
-                    "prior_direction": float(prior_direction),
-                    "upper_now": float(upper_now),
-                    "lower_now": float(lower_now),
-                    "upper_start": float(upper_start),
-                    "lower_start": float(lower_start),
-                    "upper_start_x": float(upper["x1"]),
-                    "lower_start_x": float(lower["x1"]),
-                    "upper_anchor_start": float(upper_anchor_start),
-                    "lower_anchor_start": float(lower_anchor_start),
-                    "upper_slope": float(high_slope),
-                    "lower_slope": float(low_slope),
-                    "start_x": float(start_x),
-                    "width_pct": float(width_pct),
-                    "contraction_score": float(contraction_score),
-                    "recent_touch_score": float(recent_touch_score),
-                    "anchor_balance_score": float(anchor_balance_score),
-                    "touch_balance_score": float(touch_balance_score),
-                    "boundary_respect_ratio": float(boundary_respect_ratio),
-                    "boundary_intrusion_pct": float(boundary_intrusion_pct),
-                    "compression_quality": float(compression_quality),
-                    "upper_touch_count": float(upper["touch_count"]),
-                    "lower_touch_count": float(lower["touch_count"]),
-                    "source": "pivot",
-                    "source_count": 1.0,
-                    "experimental_confluence_score": 0.0,
-                    "experimental_confluence_bonus": 0.0,
-                }
-
-        _store_geometry_identification_slots(
-            out,
-            row,
-            identified_candidates,
-            body_high,
-            body_low,
-            close,
-            cfg,
-            slot_count,
-        )
         for family, candidates in family_candidates.items():
             _store_geometry_identification_slots(
                 out,
@@ -666,108 +332,291 @@ def _triangle_wedge_arrays(frame: DataFrame, cfg: PatternStructureConfig) -> dic
                 slot_count,
                 prefix=family,
             )
-        if best is None:
-            continue
-
-        display_upper_now = float(best["upper_now"])
-        display_lower_now = float(best["lower_now"])
-        display_upper_start = float(best["upper_start"])
-        display_lower_start = float(best["lower_start"])
-        display_upper_anchor_start = float(best.get("upper_anchor_start", best["upper_start"]))
-        display_lower_anchor_start = float(best.get("lower_anchor_start", best["lower_start"]))
-        upper_start_x = float(best.get("upper_start_x", best["start_x"]))
-        lower_start_x = float(best.get("lower_start_x", best["start_x"]))
-        upper_slope = float(best.get("upper_slope", np.nan))
-        lower_slope = float(best.get("lower_slope", np.nan))
-        if np.isfinite([upper_slope, lower_slope, display_upper_now, display_lower_now]).all():
-            upper_intercept = display_upper_now - upper_slope * float(row)
-            lower_intercept = display_lower_now - lower_slope * float(row)
-            upper_intercept, lower_intercept = _snap_geometry_boundaries_outward(
-                body_high,
-                body_low,
-                close,
-                float(best["start_x"]),
-                row,
-                upper_slope,
-                upper_intercept,
-                lower_slope,
-                lower_intercept,
-                float(cfg.geometry_boundary_snap_max_pct),
-            )
-            display_upper_now = upper_slope * float(row) + upper_intercept
-            display_lower_now = lower_slope * float(row) + lower_intercept
-            display_upper_start = upper_slope * float(best["start_x"]) + upper_intercept
-            display_lower_start = lower_slope * float(best["start_x"]) + lower_intercept
-            display_upper_anchor_start = upper_slope * upper_start_x + upper_intercept
-            display_lower_anchor_start = lower_slope * lower_start_x + lower_intercept
-        display_width_pct = (display_upper_now - display_lower_now) / max(abs(float(close[row])), 1e-9)
-
-        out["range_contraction_score"][row] = max(out["range_contraction_score"][row], best["contraction_score"])
-        out["geometry_upper"][row] = display_upper_now
-        out["geometry_lower"][row] = display_lower_now
-        out["geometry_upper_start"][row] = display_upper_start
-        out["geometry_lower_start"][row] = display_lower_start
-        out["geometry_upper_anchor_start"][row] = display_upper_anchor_start
-        out["geometry_lower_anchor_start"][row] = display_lower_anchor_start
-        out["geometry_upper_start_index"][row] = upper_start_x
-        out["geometry_lower_start_index"][row] = lower_start_x
-        out["geometry_start_index"][row] = best["start_x"]
-        out["geometry_end_index"][row] = float(row)
-        out["geometry_width_pct"][row] = display_width_pct
-        out["geometry_recent_touch_score"][row] = best["recent_touch_score"]
-        out["geometry_anchor_balance_score"][row] = best["anchor_balance_score"]
-        out["geometry_touch_balance_score"][row] = best["touch_balance_score"]
-        out["geometry_tlv2_source"][row] = str(best.get("source", "")) == "tlv2"
-        out["geometry_source_count"][row] = float(best.get("source_count", 1.0))
-        out["geometry_experimental_confluence_score"][row] = float(best.get("experimental_confluence_score", 0.0))
-        out["geometry_experimental_confluence_bonus"][row] = float(best.get("experimental_confluence_bonus", 0.0))
-        out["geometry_quality"][row] = float(best["quality"])
-        out["geometry_candidate_count"][row] = 1.0
-        out["geometry_upper_touch_count"][row] = float(best.get("upper_touch_count", 0.0))
-        out["geometry_lower_touch_count"][row] = float(best.get("lower_touch_count", 0.0))
-        out["geometry_confirmation_count"][row] = float(
-            best.get("upper_touch_count", 0.0) + best.get("lower_touch_count", 0.0)
-        )
-
-        best_name = str(best["name"])
-        best_quality = float(best["quality"])
-        compression_quality = float(best["compression_quality"])
-        if best_name in {"triangle_ascending", "wedge_falling"}:
-            out["geometry_bias"][row] = 1
-        elif best_name in {"triangle_descending", "wedge_rising"}:
-            out["geometry_bias"][row] = -1
-        else:
-            out["geometry_bias"][row] = 1 if best["prior_direction"] >= 0 else -1
-        if best_name == "compression" and compression_quality >= min_compression_quality:
-            out["compression_quality"][row] = compression_quality
-            if best["prior_direction"] >= 0:
-                out["compression_setup_long"][row] = True
-            else:
-                out["compression_setup_short"][row] = True
-        named_quality = float(best.get("named_quality", best_quality))
-        if best_name == "triangle_ascending":
-            out["triangle_ascending_quality"][row] = named_quality
-            out["triangle_ascending_setup_long"][row] = True
-        elif best_name == "triangle_descending":
-            out["triangle_descending_quality"][row] = named_quality
-            out["triangle_descending_setup_short"][row] = True
-        elif best_name == "triangle_symmetric":
-            out["triangle_symmetric_quality"][row] = named_quality
-            if best["prior_direction"] >= 0:
-                out["triangle_symmetric_setup_long"][row] = True
-            else:
-                out["triangle_symmetric_setup_short"][row] = True
-        elif best_name == "wedge_falling":
-            out["wedge_falling_quality"][row] = named_quality
-            out["wedge_falling_setup_long"][row] = True
-        elif best_name == "wedge_rising":
-            out["wedge_rising_quality"][row] = named_quality
-            out["wedge_rising_setup_short"][row] = True
-
-    if bool(getattr(cfg, "merge_geometry_patterns", True)):
-        _merge_geometry_pattern_rows(out, frame, cfg)
+    _project_geometry_slots(out, frame, close, atr, cfg, slot_count)
 
     return out
+
+
+def _geometry_envelope_candidate_starts(
+    pivot_events: np.ndarray,
+    row: int,
+    min_span: int,
+    window: int,
+    cfg: PatternStructureConfig,
+) -> np.ndarray:
+    lower = float(max(0, int(row) - int(window) + 1))
+    upper = float(int(row) - int(min_span))
+    starts = np.unique(pivot_events[(pivot_events >= lower) & (pivot_events <= upper)].astype("float64"))
+    start_count = max(int(cfg.geometry_envelope_start_count), 1)
+    if len(starts) <= start_count:
+        return starts
+    keep = np.unique(np.linspace(0, len(starts) - 1, start_count, dtype=int))
+    return starts[keep]
+
+
+def _geometry_body_values_at_pivots(x: np.ndarray, body_values: np.ndarray) -> np.ndarray:
+    indexes = np.rint(np.asarray(x, dtype="float64")).astype("int64", copy=False)
+    out = np.full(len(indexes), np.nan, dtype="float64")
+    valid = (indexes >= 0) & (indexes < len(body_values))
+    out[valid] = np.asarray(body_values, dtype="float64")[indexes[valid]]
+    return out
+
+
+def _reduce_geometry_pivots(
+    high_pivot: np.ndarray,
+    high_index: np.ndarray,
+    low_pivot: np.ndarray,
+    low_index: np.ndarray,
+    atr: np.ndarray,
+    cfg: PatternStructureConfig,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    high_items = _geometry_pivot_items(high_pivot, high_index)
+    low_items = _geometry_pivot_items(low_pivot, low_index)
+    high_items = _geometry_dominant_pivot_items(high_items, atr, cfg, side="high")
+    low_items = _geometry_dominant_pivot_items(low_items, atr, cfg, side="low")
+    high_items = _merge_nearby_geometry_pivots(high_items, atr, cfg, side="high")
+    low_items = _merge_nearby_geometry_pivots(low_items, atr, cfg, side="low")
+    high_out = np.full_like(high_pivot, np.nan, dtype="float64")
+    high_idx_out = np.full_like(high_index, np.nan, dtype="float64")
+    low_out = np.full_like(low_pivot, np.nan, dtype="float64")
+    low_idx_out = np.full_like(low_index, np.nan, dtype="float64")
+    for array_row, pivot_x, price in high_items:
+        if 0 <= array_row < len(high_out):
+            high_out[array_row] = price
+            high_idx_out[array_row] = float(pivot_x)
+    for array_row, pivot_x, price in low_items:
+        if 0 <= array_row < len(low_out):
+            low_out[array_row] = price
+            low_idx_out[array_row] = float(pivot_x)
+    return high_out, high_idx_out, low_out, low_idx_out
+
+
+def _geometry_pivot_items(pivot: np.ndarray, index: np.ndarray) -> list[tuple[int, int, float]]:
+    mask = np.isfinite(pivot) & np.isfinite(index)
+    items = [
+        (int(array_row), int(pivot_x), float(price))
+        for array_row, pivot_x, price in zip(
+            np.where(mask)[0],
+            index[mask].astype("int64"),
+            pivot[mask].astype("float64"),
+        )
+    ]
+    items.sort(key=lambda item: item[1])
+    return items
+
+
+def _geometry_dominant_pivot_items(
+    items: list[tuple[int, int, float]],
+    atr: np.ndarray,
+    cfg: PatternStructureConfig,
+    *,
+    side: str,
+) -> list[tuple[int, int, float]]:
+    dominance_bars = int(cfg.geometry_pivot_dominance_bars)
+    if dominance_bars <= 0:
+        return items
+    kept: list[tuple[int, int, float]] = []
+    for array_row, pivot_x, price in items:
+        threshold = max(
+            float(atr[min(max(array_row, 0), len(atr) - 1)]) * float(cfg.geometry_pivot_dominance_atr_mult),
+            0.0,
+        )
+        left = [other_price for _, other_x, other_price in items if pivot_x - dominance_bars <= other_x < pivot_x]
+        right = [other_price for _, other_x, other_price in items if pivot_x < other_x <= pivot_x + dominance_bars]
+        if side == "high":
+            dominated = bool(left and right and max(left) > price + threshold and max(right) > price + threshold)
+        else:
+            dominated = bool(left and right and min(left) < price - threshold and min(right) < price - threshold)
+        if not dominated:
+            kept.append((array_row, pivot_x, price))
+    return kept
+
+
+def _merge_nearby_geometry_pivots(
+    items: list[tuple[int, int, float]],
+    atr: np.ndarray,
+    cfg: PatternStructureConfig,
+    *,
+    side: str,
+) -> list[tuple[int, int, float]]:
+    merge_bars = int(cfg.geometry_pivot_merge_bars)
+    if merge_bars <= 0 or not items:
+        return items
+    groups: list[list[tuple[int, int, float]]] = []
+    for item in items:
+        array_row, pivot_x, price = item
+        scale = max(float(atr[min(max(array_row, 0), len(atr) - 1)]) * float(cfg.geometry_pivot_merge_atr_mult), 1e-9)
+        for group in groups:
+            near_time = min(abs(pivot_x - other_x) for _, other_x, _ in group) <= merge_bars
+            near_price = min(abs(price - group_price) for _, _, group_price in group) <= scale
+            if near_time and near_price:
+                group.append(item)
+                break
+        else:
+            groups.append([item])
+    if side == "high":
+        merged = [max(group, key=lambda item: (item[2], -item[1])) for group in groups]
+    else:
+        merged = [min(group, key=lambda item: (item[2], item[1])) for group in groups]
+    merged.sort(key=lambda item: item[1])
+    return merged
+
+
+def _geometry_reduced_boundary_points(
+    x: np.ndarray,
+    y: np.ndarray,
+    cfg: PatternStructureConfig,
+    *,
+    side: str,
+) -> tuple[np.ndarray, np.ndarray]:
+    max_points = max(int(cfg.geometry_envelope_max_side_pivots), 2)
+    if len(x) <= max_points:
+        return x, y
+    extreme_order = np.argsort(y)
+    if side == "upper":
+        extreme_order = extreme_order[::-1]
+    selected: list[int] = []
+
+    def add_indexes(indexes: np.ndarray | list[int]) -> None:
+        for index in indexes:
+            value = int(index)
+            if value not in selected:
+                selected.append(value)
+
+    add_indexes([0, len(x) - 1])
+    add_indexes(extreme_order[: max(3, max_points // 2)])
+    add_indexes(np.linspace(0, len(x) - 1, max_points, dtype=int))
+    if len(selected) > max_points:
+        mandatory = [idx for idx in [0, len(x) - 1] if idx in selected]
+        rest = [idx for idx in selected if idx not in mandatory]
+        selected = mandatory + rest[: max(max_points - len(mandatory), 0)]
+    selected = sorted(selected)
+    return x[selected], y[selected]
+
+
+def _geometry_envelope_boundary_options(
+    x: np.ndarray,
+    y: np.ndarray,
+    scan_x: np.ndarray,
+    scan_body_high: np.ndarray,
+    scan_body_low: np.ndarray,
+    atr: float,
+    span: float,
+    cfg: PatternStructureConfig,
+    *,
+    side: str,
+) -> list[dict[str, float]]:
+    valid = np.isfinite(x) & np.isfinite(y)
+    if valid.sum() < 2:
+        return []
+    xv = x[valid].astype("float64")
+    yv = y[valid].astype("float64")
+    order = np.argsort(xv)
+    xv = xv[order]
+    yv = yv[order]
+    xv, yv = _geometry_reduced_boundary_points(xv, yv, cfg, side=side)
+    min_pair_span = max(float(span) * float(cfg.geometry_envelope_pair_min_span_mult), 2.0)
+    touch_tolerance = max(float(atr) * float(cfg.geometry_envelope_touch_atr_mult), 1e-9)
+    options: list[dict[str, float]] = []
+    for left in range(len(xv) - 1):
+        for right in range(left + 1, len(xv)):
+            pair_span = float(xv[right] - xv[left])
+            if pair_span < min_pair_span:
+                continue
+            slope = float((yv[right] - yv[left]) / max(pair_span, 1e-9))
+            if side == "upper":
+                intercept = float(np.nanmax(scan_body_high - slope * scan_x))
+                pivot_gap = slope * xv + intercept - yv
+                scan_gap = slope * scan_x + intercept - scan_body_high
+                anchor_index = int(np.nanargmin(np.abs(scan_gap)))
+            else:
+                intercept = float(np.nanmin(scan_body_low - slope * scan_x))
+                pivot_gap = yv - (slope * xv + intercept)
+                scan_gap = scan_body_low - (slope * scan_x + intercept)
+                anchor_index = int(np.nanargmin(np.abs(scan_gap)))
+            if not np.isfinite(pivot_gap).all() or float(np.nanmin(pivot_gap)) < -1e-7:
+                continue
+            touch_mask = pivot_gap <= touch_tolerance
+            touch_count = int(np.count_nonzero(touch_mask))
+            if touch_count < int(cfg.min_pattern_side_pivots):
+                continue
+            touch_x = xv[touch_mask]
+            touch_span = float(np.nanmax(touch_x) - np.nanmin(touch_x)) if len(touch_x) else 0.0
+            last_touch_x = float(np.nanmax(touch_x)) if len(touch_x) else float(xv[right])
+            fit_error_atr = float(np.nanmean(np.clip(pivot_gap, 0.0, None))) / max(float(atr), 1e-9)
+            scan_gap_atr = float(np.nanmean(np.clip(scan_gap, 0.0, None))) / max(float(atr), 1e-9)
+            stale_gap_bars = _geometry_longest_stale_proximity_gap(scan_gap, atr, cfg)
+            stale_proximity_penalty = _geometry_stale_proximity_penalty(stale_gap_bars, cfg)
+            score = (
+                min(touch_count / 4.0, 1.5) * 1.35
+                + min(touch_span / max(float(span), 1.0), 1.0) * 1.15
+                + min(pair_span / max(float(span), 1.0), 1.0) * 0.55
+                - fit_error_atr * 0.40
+                - scan_gap_atr * 0.10
+                - stale_proximity_penalty
+            )
+            options.append(
+                {
+                    "slope": slope,
+                    "intercept": intercept,
+                    "touch_count": float(touch_count),
+                    "touch_span": touch_span,
+                    "last_touch_x": last_touch_x,
+                    "fit_error_atr": fit_error_atr,
+                    "stale_proximity_bars": float(stale_gap_bars),
+                    "stale_proximity_penalty": float(stale_proximity_penalty),
+                    "score": float(score),
+                    "anchor_x": float(scan_x[anchor_index]),
+                }
+            )
+    options.sort(key=lambda item: item["score"], reverse=True)
+    return options[: max(int(cfg.geometry_envelope_max_pair_options), 1)]
+
+
+def _geometry_longest_stale_proximity_gap(scan_gap: np.ndarray, atr: float, cfg: PatternStructureConfig) -> int:
+    threshold = max(float(atr) * float(cfg.geometry_envelope_proximity_atr_mult), 1e-9)
+    gaps = np.asarray(scan_gap, dtype="float64")
+    near = np.isfinite(gaps) & (gaps <= threshold)
+    longest = 0
+    current = 0
+    for is_near in near:
+        if bool(is_near):
+            current = 0
+            continue
+        current += 1
+        longest = max(longest, current)
+    return int(longest)
+
+
+def _geometry_stale_proximity_penalty(stale_gap_bars: int, cfg: PatternStructureConfig) -> float:
+    overage = max(int(stale_gap_bars) - int(cfg.geometry_envelope_proximity_grace_bars), 0)
+    if overage <= 0:
+        return 0.0
+    ramp = max(int(cfg.geometry_envelope_proximity_ramp_bars), 1)
+    raw_penalty = np.exp(float(overage) / float(ramp)) - 1.0
+    return float(cfg.geometry_envelope_proximity_penalty_weight) * min(float(raw_penalty), 12.0)
+
+
+def _geometry_envelope_family(
+    upper_slope_pct: float,
+    lower_slope_pct: float,
+    min_slope_pct: float,
+    flat_tolerance_pct: float,
+) -> tuple[str, int]:
+    pattern_direction = _geometry_direction_type(upper_slope_pct, lower_slope_pct, min_slope_pct)
+    upper_flat = abs(float(upper_slope_pct)) <= float(flat_tolerance_pct)
+    lower_flat = abs(float(lower_slope_pct)) <= float(flat_tolerance_pct)
+    upper_falling = float(upper_slope_pct) <= -float(min_slope_pct)
+    upper_rising = float(upper_slope_pct) >= float(min_slope_pct)
+    lower_falling = float(lower_slope_pct) <= -float(min_slope_pct)
+    lower_rising = float(lower_slope_pct) >= float(min_slope_pct)
+    if (upper_flat and lower_rising) or (upper_falling and lower_flat) or (upper_falling and lower_rising):
+        return "triangle", pattern_direction
+    if (upper_falling and lower_falling and upper_slope_pct < lower_slope_pct) or (
+        upper_rising and lower_rising and upper_slope_pct < lower_slope_pct
+    ):
+        return "wedge", pattern_direction
+    return "compression", pattern_direction
 
 
 def _store_geometry_identification_slots(
@@ -783,9 +632,10 @@ def _store_geometry_identification_slots(
 ) -> None:
     if slot_count <= 0 or not candidates:
         return
+    candidates = _merge_similar_geometry_candidates(candidates, close, row, cfg)
     selected: list[dict[str, float]] = []
-    for candidate in sorted(candidates, key=lambda item: float(item["quality"]), reverse=True):
-        if any(_same_identification_slot(candidate, existing, close, row) for existing in selected):
+    for candidate in sorted(candidates, key=_geometry_candidate_sort_key, reverse=True):
+        if any(_same_identification_slot(candidate, existing, close, row, cfg) for existing in selected):
             continue
         selected.append(candidate)
         if len(selected) >= slot_count:
@@ -808,19 +658,294 @@ def _store_geometry_identification_slots(
             lower_intercept,
             float(cfg.geometry_boundary_snap_max_pct),
         )
-        upper_now = upper_slope * float(row) + upper_intercept
-        lower_now = lower_slope * float(row) + lower_intercept
-        upper_start_x = float(candidate["upper_start_x"])
-        lower_start_x = float(candidate["lower_start_x"])
-        out[f"{prefix}_slot_{offset}_quality"][row] = float(candidate["quality"])
-        out[f"{prefix}_slot_{offset}_upper"][row] = upper_now
-        out[f"{prefix}_slot_{offset}_lower"][row] = lower_now
-        out[f"{prefix}_slot_{offset}_upper_start"][row] = upper_slope * upper_start_x + upper_intercept
-        out[f"{prefix}_slot_{offset}_lower_start"][row] = lower_slope * lower_start_x + lower_intercept
-        out[f"{prefix}_slot_{offset}_upper_start_index"][row] = upper_start_x
-        out[f"{prefix}_slot_{offset}_lower_start_index"][row] = lower_start_x
-        out[f"{prefix}_slot_{offset}_start_index"][row] = float(candidate["start_x"])
-        out[f"{prefix}_slot_{offset}_end_index"][row] = float(row)
+        out[f"{prefix}_slot_{offset}_event_row"][row] = float(row)
+        out[f"{prefix}_slot_{offset}_event_type"][row] = int(candidate.get("type", 0.0))
+        out[f"{prefix}_slot_{offset}_upper_slope"][row] = upper_slope
+        out[f"{prefix}_slot_{offset}_upper_intercept"][row] = upper_intercept
+        out[f"{prefix}_slot_{offset}_lower_slope"][row] = lower_slope
+        out[f"{prefix}_slot_{offset}_lower_intercept"][row] = lower_intercept
+        out[f"{prefix}_slot_{offset}_start_x"][row] = float(candidate["start_x"])
+        out[f"{prefix}_slot_{offset}_upper_touch_count"][row] = float(candidate["upper_touch_count"])
+        out[f"{prefix}_slot_{offset}_lower_touch_count"][row] = float(candidate["lower_touch_count"])
+        out[f"{prefix}_slot_{offset}_upper_fit_error_atr"][row] = float(candidate["upper_fit_error_atr"])
+        out[f"{prefix}_slot_{offset}_lower_fit_error_atr"][row] = float(candidate["lower_fit_error_atr"])
+        out[f"{prefix}_slot_{offset}_strength_touch_count"][row] = min(
+            float(candidate["upper_touch_count"]),
+            float(candidate["lower_touch_count"]),
+        )
+        out[f"{prefix}_slot_{offset}_strength_fit_error_atr"][row] = max(
+            float(candidate["upper_fit_error_atr"]),
+            float(candidate["lower_fit_error_atr"]),
+        )
+        out[f"{prefix}_slot_{offset}_strength_span"][row] = float(candidate.get("span", 0.0))
+
+
+def _geometry_candidate_sort_key(candidate: dict[str, float]) -> tuple[float, float, float, float]:
+    side_touches = min(float(candidate["upper_touch_count"]), float(candidate["lower_touch_count"]))
+    fit_error = max(float(candidate["upper_fit_error_atr"]), float(candidate["lower_fit_error_atr"]))
+    return float(candidate.get("score", 0.0)), float(candidate.get("span", 0.0)), side_touches, -fit_error
+
+
+def _merge_similar_geometry_candidates(
+    candidates: list[dict[str, float]],
+    close: np.ndarray,
+    row: int,
+    cfg: PatternStructureConfig,
+) -> list[dict[str, float]]:
+    merged: list[dict[str, float]] = []
+    for candidate in sorted(candidates, key=_geometry_candidate_sort_key, reverse=True):
+        replacement_index = -1
+        for index, existing in enumerate(merged):
+            if _same_or_extendable_geometry(candidate, existing, close, row, cfg):
+                replacement_index = index
+                break
+        if replacement_index < 0:
+            merged.append(candidate)
+            continue
+        existing = merged[replacement_index]
+        if _geometry_candidate_sort_key(candidate) > _geometry_candidate_sort_key(existing):
+            merged[replacement_index] = candidate
+    return merged
+
+
+def _same_or_extendable_geometry(
+    candidate: dict[str, float],
+    existing: dict[str, float],
+    close: np.ndarray,
+    row: int,
+    cfg: PatternStructureConfig,
+) -> bool:
+    reference = max(abs(float(close[row])), 1e-9)
+    span = max(float(candidate.get("span", 1.0)), float(existing.get("span", 1.0)), 1.0)
+    upper_distance = abs(float(candidate["upper_now"]) - float(existing["upper_now"])) / reference
+    lower_distance = abs(float(candidate["lower_now"]) - float(existing["lower_now"])) / reference
+    upper_slope_distance = abs(float(candidate["upper_slope"]) - float(existing["upper_slope"])) * span / reference
+    lower_slope_distance = abs(float(candidate["lower_slope"]) - float(existing["lower_slope"])) * span / reference
+    start_overlap = abs(float(candidate["start_x"]) - float(existing["start_x"])) / span
+    line_tolerance = float(cfg.geometry_slot_duplicate_price_tolerance_pct) * 1.5
+    slope_tolerance = float(cfg.geometry_envelope_merge_slope_tolerance_pct)
+    return (
+        max(upper_distance, lower_distance) <= line_tolerance
+        and max(upper_slope_distance, lower_slope_distance) <= slope_tolerance
+        and start_overlap <= max(float(cfg.geometry_slot_duplicate_start_tolerance), 0.55)
+    )
+
+
+def _geometry_direction_type(upper_slope_pct: float, lower_slope_pct: float, min_slope_pct: float) -> int:
+    if not np.isfinite([upper_slope_pct, lower_slope_pct]).all():
+        return 9
+    mid_slope = 0.5 * (float(upper_slope_pct) + float(lower_slope_pct))
+    if mid_slope >= float(min_slope_pct):
+        return 1
+    if mid_slope <= -float(min_slope_pct):
+        return -1
+    return 0
+
+
+def _project_geometry_slots(
+    out: dict[str, np.ndarray],
+    frame: DataFrame,
+    close: np.ndarray,
+    atr: np.ndarray,
+    cfg: PatternStructureConfig,
+    slot_count: int,
+) -> None:
+    rows = len(frame)
+    max_age = int(cfg.geometry_management_max_age_bars)
+    invalidation_atr = float(cfg.geometry_body_invalidation_atr)
+    body_high = np.maximum(
+        pd.to_numeric(frame["open"], errors="coerce").to_numpy(dtype="float64"),
+        pd.to_numeric(frame["close"], errors="coerce").to_numpy(dtype="float64"),
+    )
+    body_low = np.minimum(
+        pd.to_numeric(frame["open"], errors="coerce").to_numpy(dtype="float64"),
+        pd.to_numeric(frame["close"], errors="coerce").to_numpy(dtype="float64"),
+    )
+    for family in _GEOMETRY_SLOT_FAMILIES:
+        active_slots: list[dict[str, float] | None] = [None] * slot_count
+        for row in range(rows):
+            released_indexes: set[int] = set()
+            for index, state in enumerate(active_slots):
+                if state is None:
+                    continue
+                if row - int(state["event_row"]) > max_age:
+                    active_slots[index] = None
+                    released_indexes.add(index)
+                    continue
+                upper, lower = _geometry_state_lines(state, row)
+                scale = max(float(atr[row]), 1e-9)
+                if (
+                    not np.isfinite(upper)
+                    or not np.isfinite(lower)
+                    or upper <= lower
+                    or not np.isfinite(close[row])
+                    or _geometry_projection_invalidated(upper, lower, body_high[row], body_low[row], scale, invalidation_atr)
+                ):
+                    active_slots[index] = None
+                    released_indexes.add(index)
+
+            replacement_allowed = all(state is not None for state in active_slots)
+            candidates = []
+            for slot in range(1, slot_count + 1):
+                event_row = out[f"{family}_slot_{slot}_event_row"][row]
+                if np.isfinite(event_row):
+                    candidate = _geometry_event_candidate(out, family, slot, row)
+                    if candidate is not None:
+                        candidates.append(candidate)
+
+            for candidate in sorted(candidates, key=_geometry_state_sort_key, reverse=True):
+                upper, lower = _geometry_state_lines(candidate, row)
+                scale = max(float(atr[row]), 1e-9)
+                if (
+                    not np.isfinite(upper)
+                    or not np.isfinite(lower)
+                    or upper <= lower
+                    or not np.isfinite(close[row])
+                    or _geometry_projection_invalidated(upper, lower, body_high[row], body_low[row], scale, invalidation_atr)
+                ):
+                    continue
+                if any(
+                    state is not None and _same_active_geometry_state(candidate, state, close, row, cfg)
+                    for state in active_slots
+                ):
+                    matching_index = next(
+                        idx
+                        for idx, state in enumerate(active_slots)
+                        if state is not None and _same_active_geometry_state(candidate, state, close, row, cfg)
+                    )
+                    if _geometry_state_sort_key(candidate) > _geometry_state_sort_key(active_slots[matching_index]):
+                        active_slots[matching_index] = candidate
+                    continue
+                empty_index = next(
+                    (idx for idx, state in enumerate(active_slots) if state is None and idx not in released_indexes),
+                    -1,
+                )
+                if empty_index >= 0:
+                    active_slots[empty_index] = candidate
+                    continue
+                if not replacement_allowed or any(state is None for state in active_slots):
+                    continue
+                weakest_index, weakest_state = min(
+                    enumerate(active_slots),
+                    key=lambda item: _geometry_state_sort_key(item[1]) if item[1] is not None else (-np.inf, -np.inf, -np.inf),
+                )
+                if weakest_state is not None and _geometry_state_sort_key(candidate) > _geometry_state_sort_key(weakest_state):
+                    active_slots[weakest_index] = candidate
+
+            for index, state in enumerate(active_slots, start=1):
+                if state is None:
+                    continue
+                upper, lower = _geometry_state_lines(state, row)
+                scale = max(float(atr[row]), 1e-9)
+                out[f"{family}_slot_{index}_active"][row] = True
+                out[f"{family}_slot_{index}_type"][row] = int(state["event_type"])
+                out[f"{family}_slot_{index}_upper"][row] = upper
+                out[f"{family}_slot_{index}_lower"][row] = lower
+                out[f"{family}_slot_{index}_close_to_upper_atr"][row] = (upper - float(close[row])) / scale
+                out[f"{family}_slot_{index}_close_to_lower_atr"][row] = (float(close[row]) - lower) / scale
+                out[f"{family}_slot_{index}_width_atr"][row] = (upper - lower) / scale
+                out[f"{family}_slot_{index}_age"][row] = float(row - int(state["event_row"]))
+                out[f"{family}_slot_{index}_upper_touch_count"][row] = float(state["upper_touch_count"])
+                out[f"{family}_slot_{index}_lower_touch_count"][row] = float(state["lower_touch_count"])
+                out[f"{family}_slot_{index}_upper_fit_error_atr"][row] = float(state["upper_fit_error_atr"])
+                out[f"{family}_slot_{index}_lower_fit_error_atr"][row] = float(state["lower_fit_error_atr"])
+
+
+def _geometry_event_candidate(
+    out: dict[str, np.ndarray],
+    family: str,
+    slot: int,
+    row: int,
+) -> dict[str, float] | None:
+    values = {
+        "event_row": float(out[f"{family}_slot_{slot}_event_row"][row]),
+        "event_type": float(out[f"{family}_slot_{slot}_event_type"][row]),
+        "upper_slope": float(out[f"{family}_slot_{slot}_upper_slope"][row]),
+        "upper_intercept": float(out[f"{family}_slot_{slot}_upper_intercept"][row]),
+        "lower_slope": float(out[f"{family}_slot_{slot}_lower_slope"][row]),
+        "lower_intercept": float(out[f"{family}_slot_{slot}_lower_intercept"][row]),
+        "start_x": float(out[f"{family}_slot_{slot}_start_x"][row]),
+        "upper_touch_count": float(out[f"{family}_slot_{slot}_upper_touch_count"][row]),
+        "lower_touch_count": float(out[f"{family}_slot_{slot}_lower_touch_count"][row]),
+        "upper_fit_error_atr": float(out[f"{family}_slot_{slot}_upper_fit_error_atr"][row]),
+        "lower_fit_error_atr": float(out[f"{family}_slot_{slot}_lower_fit_error_atr"][row]),
+        "strength_touch_count": float(out[f"{family}_slot_{slot}_strength_touch_count"][row]),
+        "strength_fit_error_atr": float(out[f"{family}_slot_{slot}_strength_fit_error_atr"][row]),
+        "strength_span": float(out[f"{family}_slot_{slot}_strength_span"][row]),
+    }
+    required = [
+        values["event_row"],
+        values["upper_slope"],
+        values["upper_intercept"],
+        values["lower_slope"],
+        values["lower_intercept"],
+        values["start_x"],
+    ]
+    if not np.isfinite(required).all():
+        return None
+    return values
+
+
+def _geometry_state_lines(state: dict[str, float], row: int) -> tuple[float, float]:
+    x = float(row)
+    upper = float(state["upper_slope"]) * x + float(state["upper_intercept"])
+    lower = float(state["lower_slope"]) * x + float(state["lower_intercept"])
+    return upper, lower
+
+
+def _geometry_state_sort_key(state: dict[str, float]) -> tuple[float, float, float]:
+    return (
+        float(state["strength_touch_count"]),
+        -float(state["strength_fit_error_atr"]),
+        float(state["strength_span"]),
+    )
+
+
+def _same_active_geometry_state(
+    candidate: dict[str, float],
+    state: dict[str, float],
+    close: np.ndarray,
+    row: int,
+    cfg: PatternStructureConfig,
+) -> bool:
+    reference = max(abs(float(close[row])), 1e-9)
+    candidate_upper, candidate_lower = _geometry_state_lines(candidate, row)
+    state_upper, state_lower = _geometry_state_lines(state, row)
+    upper_distance = abs(candidate_upper - state_upper) / reference
+    lower_distance = abs(candidate_lower - state_lower) / reference
+    span = max(abs(float(candidate.get("strength_span", 1.0))), 1.0)
+    start_distance = abs(float(candidate["start_x"]) - float(state["start_x"])) / span
+    return (
+        max(upper_distance, lower_distance) <= float(cfg.geometry_slot_duplicate_price_tolerance_pct)
+        and start_distance <= max(float(cfg.geometry_slot_duplicate_start_tolerance), 0.45)
+    )
+
+
+def _geometry_projection_invalidated(
+    upper: float,
+    lower: float,
+    high: float,
+    low: float,
+    atr: float,
+    invalidation_atr: float,
+) -> bool:
+    if not np.isfinite([upper, lower, high, low, atr]).all():
+        return True
+    tolerance = max(float(atr) * float(invalidation_atr), 0.0)
+    return float(high) > float(upper) + tolerance or float(low) < float(lower) - tolerance
+
+
+def _geometry_atr(frame: DataFrame, period: int = 14) -> np.ndarray:
+    high = pd.to_numeric(frame["high"], errors="coerce")
+    low = pd.to_numeric(frame["low"], errors="coerce")
+    close = pd.to_numeric(frame["close"], errors="coerce")
+    previous_close = close.shift(1)
+    true_range = pd.concat(
+        [(high - low).abs(), (high - previous_close).abs(), (low - previous_close).abs()],
+        axis=1,
+    ).max(axis=1)
+    atr = true_range.rolling(int(period), min_periods=1).mean().bfill().fillna(1e-9)
+    return atr.clip(lower=1e-9).to_numpy(dtype="float64")
 
 
 def _same_identification_slot(
@@ -828,13 +953,17 @@ def _same_identification_slot(
     existing: dict[str, float],
     close: np.ndarray,
     row: int,
+    cfg: PatternStructureConfig,
 ) -> bool:
     reference = max(abs(float(close[row])), 1e-9)
     upper_distance = abs(float(candidate["upper_now"]) - float(existing["upper_now"])) / reference
     lower_distance = abs(float(candidate["lower_now"]) - float(existing["lower_now"])) / reference
     span = max(float(candidate.get("span", 1.0)), 1.0)
     start_distance = abs(float(candidate["start_x"]) - float(existing["start_x"])) / span
-    return max(upper_distance, lower_distance) <= 0.01 and start_distance <= 0.20
+    return (
+        max(upper_distance, lower_distance) <= float(cfg.geometry_slot_duplicate_price_tolerance_pct)
+        and start_distance <= float(cfg.geometry_slot_duplicate_start_tolerance)
+    )
 
 
 def _effective_geometry_window(frame: DataFrame, cfg: PatternStructureConfig) -> tuple[int, int]:
@@ -878,408 +1007,34 @@ def _infer_dataframe_seconds(frame: DataFrame) -> float:
     return float(positive.iloc[: min(len(positive), 8)].median())
 
 
-def _geometry_management_columns(
-    frame: DataFrame,
-    arrays: dict[str, np.ndarray],
+def _geometry_candidate_starts(
+    high_x: np.ndarray,
+    low_x: np.ndarray,
+    row: int,
+    min_bars: int,
     cfg: PatternStructureConfig,
-) -> dict[str, np.ndarray]:
-    """Turn raw geometry candidates into a compact strategy management packet.
-
-    The pattern detector owns "where is this setup wrong?" evidence, while the
-    strategy owns whether to enter, size, stop, or exit. This helper carries the
-    latest valid geometry rails forward for a bounded no-lookahead window and
-    marks boundary interaction states against the current candle.
-
-    Cause columns describe what price did at the rails, such as bouncing from
-    support or rejecting resistance. Advice columns use explicit names:
-    ``go_long``, ``go_short``, ``exit_long``, and ``exit_short``. This keeps the
-    dataframe readable in strategy files and avoids names like "reject short",
-    which can be mistaken for an exit instruction.
-    """
-
-    rows = len(frame)
-    close = pd.to_numeric(frame["close"], errors="coerce").to_numpy(dtype="float64")
-    high = pd.to_numeric(frame["high"], errors="coerce").to_numpy(dtype="float64")
-    low = pd.to_numeric(frame["low"], errors="coerce").to_numpy(dtype="float64")
-    upper_source = arrays["geometry_upper"]
-    lower_source = arrays["geometry_lower"]
-    upper_start_source = arrays["geometry_upper_start"]
-    lower_start_source = arrays["geometry_lower_start"]
-    start_index_source = arrays["geometry_start_index"]
-    width_source = arrays["geometry_width_pct"]
-    bias_source = arrays["geometry_bias"]
-    quality_source = arrays["geometry_quality"]
-    candidate_count_source = arrays["geometry_candidate_count"]
-    confirmation_count_source = arrays["geometry_confirmation_count"]
-    max_age = int(cfg.geometry_management_max_age_bars)
-    buffer_pct = float(cfg.geometry_management_buffer_pct)
-    out = {
-        "active": np.zeros(rows, dtype=bool),
-        "bias": np.zeros(rows, dtype="int8"),
-        "quality": np.zeros(rows, dtype="float64"),
-        "candidate_count": np.zeros(rows, dtype="float64"),
-        "confirmation_count": np.zeros(rows, dtype="float64"),
-        "upper": np.full(rows, np.nan, dtype="float64"),
-        "lower": np.full(rows, np.nan, dtype="float64"),
-        "width_pct": np.full(rows, np.nan, dtype="float64"),
-        "stop_ref_long": np.full(rows, np.nan, dtype="float64"),
-        "stop_ref_short": np.full(rows, np.nan, dtype="float64"),
-        "target_ref_long": np.full(rows, np.nan, dtype="float64"),
-        "target_ref_short": np.full(rows, np.nan, dtype="float64"),
-        "long_bounce_support": np.zeros(rows, dtype=bool),
-        "long_breakout": np.zeros(rows, dtype=bool),
-        "go_long": np.zeros(rows, dtype=bool),
-        "short_reject_resistance": np.zeros(rows, dtype=bool),
-        "short_breakdown": np.zeros(rows, dtype=bool),
-        "go_short": np.zeros(rows, dtype=bool),
-        "breakout_up": np.zeros(rows, dtype=bool),
-        "breakdown_down": np.zeros(rows, dtype=bool),
-        "invalid_long": np.zeros(rows, dtype=bool),
-        "invalid_short": np.zeros(rows, dtype=bool),
-        "exit_long": np.zeros(rows, dtype=bool),
-        "exit_short": np.zeros(rows, dtype=bool),
-    }
-    active_upper = np.nan
-    active_lower = np.nan
-    active_upper_slope = 0.0
-    active_upper_intercept = np.nan
-    active_lower_slope = 0.0
-    active_lower_intercept = np.nan
-    active_width = np.nan
-    active_bias = 0
-    active_quality = 0.0
-    active_candidate_count = 0.0
-    active_confirmation_count = 0.0
-    active_start = -1
-    terminate_after_row = False
-    for row in range(rows):
-        if terminate_after_row:
-            active_upper = np.nan
-            active_lower = np.nan
-            active_upper_slope = 0.0
-            active_upper_intercept = np.nan
-            active_lower_slope = 0.0
-            active_lower_intercept = np.nan
-            active_width = np.nan
-            active_bias = 0
-            active_quality = 0.0
-            active_candidate_count = 0.0
-            active_confirmation_count = 0.0
-            active_start = -1
-            terminate_after_row = False
-        if (
-            np.isfinite(upper_source[row])
-            and np.isfinite(lower_source[row])
-            and upper_source[row] > lower_source[row]
-            and int(bias_source[row]) != 0
-        ):
-            source_start = float(start_index_source[row])
-            source_upper = float(upper_source[row])
-            source_lower = float(lower_source[row])
-            source_upper_start = float(upper_start_source[row])
-            source_lower_start = float(lower_start_source[row])
-            if (
-                np.isfinite(source_start)
-                and row > source_start
-                and np.isfinite(source_upper_start)
-                and np.isfinite(source_lower_start)
-            ):
-                active_upper_slope = (source_upper - source_upper_start) / (float(row) - source_start)
-                active_upper_intercept = source_upper_start - active_upper_slope * source_start
-                active_lower_slope = (source_lower - source_lower_start) / (float(row) - source_start)
-                active_lower_intercept = source_lower_start - active_lower_slope * source_start
-            else:
-                active_upper_slope = 0.0
-                active_upper_intercept = source_upper
-                active_lower_slope = 0.0
-                active_lower_intercept = source_lower
-            active_upper = source_upper
-            active_lower = source_lower
-            active_width = float(width_source[row]) if np.isfinite(width_source[row]) else np.nan
-            active_bias = int(bias_source[row])
-            active_quality = float(quality_source[row]) if np.isfinite(quality_source[row]) else 0.0
-            active_candidate_count = (
-                float(candidate_count_source[row]) if np.isfinite(candidate_count_source[row]) else 0.0
-            )
-            active_confirmation_count = (
-                float(confirmation_count_source[row]) if np.isfinite(confirmation_count_source[row]) else 0.0
-            )
-            active_start = row
-        if active_start < 0 or row - active_start > max_age:
-            continue
-        if not np.isfinite(close[row]) or close[row] == 0.0:
-            continue
-        if np.isfinite(active_upper_intercept) and np.isfinite(active_lower_intercept):
-            active_upper = active_upper_slope * float(row) + active_upper_intercept
-            active_lower = active_lower_slope * float(row) + active_lower_intercept
-        if not np.isfinite(active_upper) or not np.isfinite(active_lower) or active_upper <= active_lower:
-            continue
-        active_width = (active_upper - active_lower) / max(abs(float(close[row])), 1e-9)
-        buffer = abs(float(close[row])) * buffer_pct
-        out["active"][row] = True
-        out["bias"][row] = active_bias
-        out["quality"][row] = active_quality
-        out["candidate_count"][row] = active_candidate_count
-        out["confirmation_count"][row] = active_confirmation_count
-        out["upper"][row] = active_upper
-        out["lower"][row] = active_lower
-        out["width_pct"][row] = active_width
-        if active_bias > 0:
-            out["stop_ref_long"][row] = active_lower - buffer
-            out["target_ref_long"][row] = active_upper
-            long_bounce_support = float(low[row]) <= active_lower + buffer and float(close[row]) >= active_lower - buffer
-            breakout_up = float(close[row]) > active_upper + buffer
-            breakdown_down = float(close[row]) < active_lower - buffer
-            out["long_bounce_support"][row] = long_bounce_support
-            out["long_breakout"][row] = breakout_up
-            out["go_long"][row] = long_bounce_support or breakout_up
-            out["breakout_up"][row] = breakout_up
-            out["breakdown_down"][row] = breakdown_down
-            out["invalid_long"][row] = breakdown_down
-            out["exit_long"][row] = breakdown_down
-            terminate_after_row = breakout_up or breakdown_down
-        elif active_bias < 0:
-            out["stop_ref_short"][row] = active_upper + buffer
-            out["target_ref_short"][row] = active_lower
-            short_reject_resistance = float(high[row]) >= active_upper - buffer and float(close[row]) <= active_upper + buffer
-            breakout_up = float(close[row]) > active_upper + buffer
-            breakdown_down = float(close[row]) < active_lower - buffer
-            out["short_reject_resistance"][row] = short_reject_resistance
-            out["short_breakdown"][row] = breakdown_down
-            out["go_short"][row] = short_reject_resistance or breakdown_down
-            out["breakout_up"][row] = breakout_up
-            out["breakdown_down"][row] = breakdown_down
-            out["invalid_short"][row] = breakout_up
-            out["exit_short"][row] = breakout_up
-            terminate_after_row = breakout_up or breakdown_down
-    return out
-
-
-def _compression_quality_threshold(cfg: PatternStructureConfig) -> float:
-    return float(cfg.min_compression_quality)
-
-
-def _dedupe_geometry_events(mask: Series, cooldown_bars: int) -> Series:
-    clean = mask.fillna(False).astype("bool")
-    cooldown = max(int(cooldown_bars), 1)
-    if cooldown <= 1:
-        return clean
-    recent = clean.shift(1, fill_value=False).rolling(cooldown, min_periods=1).max().astype("bool")
-    return clean & ~recent
-
-
-def _geometry_pattern_family(name: str) -> str:
-    if name.startswith("triangle"):
-        return "triangle"
-    if name.startswith("wedge"):
-        return "wedge"
-    if name.startswith("compression"):
-        return "compression"
-    return "other"
-
-
-def _geometry_price_scale(frame: DataFrame, window: int = 30) -> np.ndarray:
-    height = (pd.to_numeric(frame["high"], errors="coerce") - pd.to_numeric(frame["low"], errors="coerce")).abs()
-    body = (pd.to_numeric(frame["close"], errors="coerce") - pd.to_numeric(frame["open"], errors="coerce")).abs()
-    scale = pd.concat(
-        [height.rolling(window, min_periods=3).mean(), body.rolling(window, min_periods=3).mean() * 1.8],
-        axis=1,
-    ).max(axis=1)
-    scale = scale.bfill().fillna(height.expanding(min_periods=1).mean()).fillna(1e-9)
-    return scale.clip(lower=1e-9).to_numpy(dtype="float64")
-
-
-def _geometry_row_name(out: dict[str, np.ndarray], row: int) -> tuple[str, float]:
-    candidates = [
-        ("triangle_ascending", out["triangle_ascending_quality"][row], out["triangle_ascending_setup_long"][row]),
-        ("triangle_descending", out["triangle_descending_quality"][row], out["triangle_descending_setup_short"][row]),
-        ("triangle_symmetric", out["triangle_symmetric_quality"][row], out["triangle_symmetric_setup_long"][row] or out["triangle_symmetric_setup_short"][row]),
-        ("wedge_falling", out["wedge_falling_quality"][row], out["wedge_falling_setup_long"][row]),
-        ("wedge_rising", out["wedge_rising_quality"][row], out["wedge_rising_setup_short"][row]),
-        ("compression", out["compression_quality"][row], out["compression_setup_long"][row] or out["compression_setup_short"][row]),
-    ]
-    active = [(name, float(quality)) for name, quality, enabled in candidates if bool(enabled)]
-    if not active:
-        return "", 0.0
-    return max(active, key=lambda item: item[1])
-
-
-def _geometry_candidate_from_row(out: dict[str, np.ndarray], row: int, name: str, quality: float) -> dict[str, float] | None:
-    upper = float(out["geometry_upper"][row])
-    lower = float(out["geometry_lower"][row])
-    upper_x1 = float(out["geometry_upper_start_index"][row])
-    lower_x1 = float(out["geometry_lower_start_index"][row])
-    upper_y1 = float(out["geometry_upper_anchor_start"][row])
-    lower_y1 = float(out["geometry_lower_anchor_start"][row])
-    if not np.isfinite([upper, lower, upper_x1, lower_x1, upper_y1, lower_y1]).all():
-        return None
-    if upper <= lower:
-        return None
-    return {
-        "row": float(row),
-        "name": name,
-        "quality": float(quality),
-        "family": _geometry_pattern_family(name),
-        "start_x": float(out["geometry_start_index"][row]),
-        "upper_x1": upper_x1,
-        "upper_y1": upper_y1,
-        "upper_x2": float(row),
-        "upper_y2": upper,
-        "lower_x1": lower_x1,
-        "lower_y1": lower_y1,
-        "lower_x2": float(row),
-        "lower_y2": lower,
-    }
-
-
-def _geometry_line(candidate: dict[str, float], side: str) -> tuple[float, float]:
-    x1 = float(candidate[f"{side}_x1"])
-    x2 = float(candidate[f"{side}_x2"])
-    y1 = float(candidate[f"{side}_y1"])
-    y2 = float(candidate[f"{side}_y2"])
-    if abs(x2 - x1) < 1e-9:
-        return 0.0, y1
-    slope = (y2 - y1) / (x2 - x1)
-    return slope, y1 - slope * x1
-
-
-def _geometry_candidate_distance(
-    a: dict[str, float],
-    b: dict[str, float],
-    price_scale: np.ndarray,
-) -> tuple[float, float]:
-    left = max(float(a["start_x"]), float(b["start_x"]))
-    right = min(float(a["row"]), float(b["row"]))
-    if right <= left:
-        left = min(float(a["row"]), float(b["row"])) - 3.0
-        right = min(float(a["row"]), float(b["row"]))
-    xs = np.linspace(left, right, 5)
-    au_slope, au_intercept = _geometry_line(a, "upper")
-    al_slope, al_intercept = _geometry_line(a, "lower")
-    bu_slope, bu_intercept = _geometry_line(b, "upper")
-    bl_slope, bl_intercept = _geometry_line(b, "lower")
-    upper_dist = np.nanmean(np.abs((au_slope * xs + au_intercept) - (bu_slope * xs + bu_intercept)))
-    lower_dist = np.nanmean(np.abs((al_slope * xs + al_intercept) - (bl_slope * xs + bl_intercept)))
-    scale_row = int(np.clip(max(float(a["row"]), float(b["row"])), 0, len(price_scale) - 1))
-    scale = max(float(price_scale[scale_row]), 1e-9)
-    rail_distance_scale = max(float(upper_dist), float(lower_dist)) / scale
-    slope_distance_scale = max(abs(au_slope - bu_slope), abs(al_slope - bl_slope)) * max(right - left, 1.0) / scale
-    return rail_distance_scale, slope_distance_scale
-
-
-def _clear_geometry_setup_row(out: dict[str, np.ndarray], row: int) -> None:
-    out["triangle_ascending_setup_long"][row] = False
-    out["triangle_descending_setup_short"][row] = False
-    out["triangle_symmetric_setup_long"][row] = False
-    out["triangle_symmetric_setup_short"][row] = False
-    out["wedge_falling_setup_long"][row] = False
-    out["wedge_rising_setup_short"][row] = False
-    out["compression_setup_long"][row] = False
-    out["compression_setup_short"][row] = False
-
-
-def _merge_geometry_pattern_rows(out: dict[str, np.ndarray], frame: DataFrame, cfg: PatternStructureConfig) -> None:
-    """Collapse repeated rolling-window geometry detections online.
-
-    The detector intentionally uses a wider search window to avoid missing
-    human-visible structures. That creates repeated rail-pair candidates across
-    nearby candles. This pass only uses information available up to the current
-    row: a later row may strengthen the active cluster, but it must not
-    retroactively create an earlier signal.
-    """
-
-    price_scale = _geometry_price_scale(frame)
-    row_gap = int(cfg.geometry_merge_row_gap)
-    rail_limit = float(cfg.geometry_merge_rail_distance_body_mult)
-    slope_limit = float(cfg.geometry_merge_slope_distance_body_mult)
-    cross_family = bool(cfg.geometry_merge_cross_family)
-    clusters: list[dict[str, object]] = []
-    rows = len(out["geometry_upper"])
-    for row in range(rows):
-        name, quality = _geometry_row_name(out, row)
-        if not name:
-            continue
-        candidate = _geometry_candidate_from_row(out, row, name, quality)
-        if candidate is None:
-            continue
-        best_idx = -1
-        best_distance = np.inf
-        for idx, cluster in enumerate(clusters):
-            family = str(cluster["family"])
-            same_family = str(candidate["family"]) == family
-            if not same_family and not cross_family:
-                continue
-            if float(candidate["row"]) - float(cluster["last_row"]) > float(row_gap):
-                continue
-            member_distances = [
-                _geometry_candidate_distance(candidate, member, price_scale)
-                for member in cluster["members"]  # type: ignore[index]
-            ]
-            rail_distance, slope_distance = min(member_distances, key=lambda pair: pair[0] + 0.45 * pair[1])
-            if rail_distance > rail_limit or slope_distance > slope_limit:
-                continue
-            distance = rail_distance + 0.45 * slope_distance
-            if distance < best_distance:
-                best_distance = distance
-                best_idx = idx
-        if best_idx < 0:
-            clusters.append(
-                {
-                    "family": candidate["family"],
-                    "last_row": float(row),
-                    "members": [candidate],
-                    "touch_keys": {
-                        ("u", round(float(candidate["upper_x1"]), 1)),
-                        ("u", round(float(candidate["upper_x2"]), 1)),
-                        ("l", round(float(candidate["lower_x1"]), 1)),
-                        ("l", round(float(candidate["lower_x2"]), 1)),
-                    },
-                }
-            )
-            out["geometry_candidate_count"][row] = max(out["geometry_candidate_count"][row], 1.0)
-            out["geometry_confirmation_count"][row] = max(
-                out["geometry_confirmation_count"][row],
-                out["geometry_upper_touch_count"][row] + out["geometry_lower_touch_count"][row],
-            )
-            continue
-
-        cluster = clusters[best_idx]
-        cluster["last_row"] = float(row)
-        cluster["members"].append(candidate)  # type: ignore[index]
-        touch_keys = cluster["touch_keys"]  # type: ignore[assignment]
-        new_touch_keys = {
-            ("u", round(float(candidate["upper_x1"]), 1)),
-            ("u", round(float(candidate["upper_x2"]), 1)),
-            ("l", round(float(candidate["lower_x1"]), 1)),
-            ("l", round(float(candidate["lower_x2"]), 1)),
-        }
-        touch_keys.update(new_touch_keys)
-        out["geometry_candidate_count"][row] = float(len(cluster["members"]))  # type: ignore[arg-type]
-        out["geometry_confirmation_count"][row] = max(
-            float(len(touch_keys)),
-            out["geometry_upper_touch_count"][row] + out["geometry_lower_touch_count"][row],
-        )
-        _clear_geometry_setup_row(out, row)
-
-
-def _geometry_candidate_starts(high_x: np.ndarray, low_x: np.ndarray, row: int, min_bars: int) -> np.ndarray:
+) -> np.ndarray:
     events = np.concatenate([high_x[np.isfinite(high_x)], low_x[np.isfinite(low_x)]])
     if len(events) == 0:
         return np.array([], dtype="float64")
     events = np.unique(np.sort(events.astype("float64")))
     valid = events <= float(row - min_bars)
     starts = events[valid]
-    if len(starts) <= 12:
+    early_count = int(cfg.geometry_candidate_early_start_count)
+    middle_count = int(cfg.geometry_candidate_middle_start_count)
+    recent_count = int(cfg.geometry_candidate_recent_start_count)
+    sample_count = early_count + middle_count + recent_count
+    if len(starts) <= sample_count:
         return starts
-    # Test early, middle, and recent starts. This keeps broad human-visible
-    # structures in play while still bounding runtime for rolling detection.
-    middle = starts[2:-4]
-    if len(middle):
-        middle_pick = middle[np.linspace(0, len(middle) - 1, min(6, len(middle)), dtype=int)]
-        selected = np.unique(np.concatenate([starts[:2], middle_pick, starts[-4:]]))
+    early = starts[:early_count] if early_count else np.array([], dtype="float64")
+    recent = starts[-recent_count:] if recent_count else np.array([], dtype="float64")
+    middle = starts[early_count : len(starts) - recent_count if recent_count else len(starts)]
+    if middle_count and len(middle):
+        middle = middle[np.linspace(0, len(middle) - 1, min(middle_count, len(middle)), dtype=int)]
     else:
-        selected = np.unique(np.concatenate([starts[:2], starts[-4:]]))
-    return selected.astype("float64")
+        middle = np.array([], dtype="float64")
+    selected = np.concatenate([early, middle, recent])
+    return np.unique(selected).astype("float64")
 
 
 def _best_boundary_line(
@@ -1290,6 +1045,10 @@ def _best_boundary_line(
     touch_tolerance_pct: float,
     max_violation_pct: float,
     min_bars: int,
+    min_span_mult: float,
+    min_span_bars: int,
+    fit_tolerance_mult: float,
+    line_weights: tuple[float, float, float, float],
     *,
     side: str,
 ) -> dict[str, float] | None:
@@ -1304,11 +1063,14 @@ def _best_boundary_line(
     tolerance = max(abs(float(reference)) * float(touch_tolerance_pct), 1e-9)
     max_violation = max(abs(float(reference)) * float(max_violation_pct), tolerance)
     best: dict[str, float] | None = None
+    min_span = max(float(min_bars) * float(min_span_mult), float(min_span_bars))
+    touch_weight, fit_weight, span_weight, recency_weight = line_weights
+    weight_sum = max(touch_weight + fit_weight + span_weight + recency_weight, 1e-9)
     for left in range(len(xv) - 1):
         for right in range(left + 1, len(xv)):
             x1 = float(xv[left])
             x2 = float(xv[right])
-            if x2 - x1 < max(float(min_bars) * 0.45, 2.0):
+            if x2 - x1 < min_span:
                 continue
             y1 = float(yv[left])
             y2 = float(yv[right])
@@ -1328,13 +1090,19 @@ def _best_boundary_line(
                 continue
             touch_x = xv[np.abs(yv - line) <= tolerance]
             last_touch_x = float(np.nanmax(touch_x)) if len(touch_x) else x2
-            mean_distance_pct = float(np.nanmean(distance) / max(abs(float(reference)), 1e-9))
-            fit_score = _clip_value(1.0 - mean_distance_pct / max(float(touch_tolerance_pct) * 3.0, 1e-9))
+            mean_distance = float(np.nanmean(distance))
+            mean_distance_pct = mean_distance / max(abs(float(reference)), 1e-9)
+            fit_score = _clip_value(1.0 - mean_distance_pct / max(float(touch_tolerance_pct) * fit_tolerance_mult, 1e-9))
             touch_score = _clip_value(float(touch_count) / max(float(len(xv)), 1.0))
             span_score = _clip_value((x2 - x1) / max(float(row) - float(xv[0]), 1.0))
             recency_score = _clip_value(1.0 - (float(row) - x2) / max(float(row) - float(xv[0]), 1.0))
             recent_touch_score = _clip_value(1.0 - (float(row) - last_touch_x) / max(float(row) - float(xv[0]), 1.0))
-            score = 0.38 * touch_score + 0.30 * fit_score + 0.18 * span_score + 0.14 * recency_score
+            score = (
+                touch_weight * touch_score
+                + fit_weight * fit_score
+                + span_weight * span_score
+                + recency_weight * recency_score
+            ) / weight_sum
             if best is None or score > best["score"]:
                 best = {
                     "slope": float(slope),
@@ -1343,6 +1111,7 @@ def _best_boundary_line(
                     "x2": x2,
                     "touch_count": float(touch_count),
                     "last_touch_x": float(last_touch_x),
+                    "mean_distance": mean_distance,
                     "recent_touch_score": float(recent_touch_score),
                     "score": float(score),
                 }
