@@ -119,7 +119,6 @@ def _triangle_wedge_arrays(frame: DataFrame, cfg: PatternStructureConfig) -> dic
     max_fit_error_atr = float(cfg.max_geometry_fit_error_atr) * float(cfg.geometry_line_fit_tolerance_mult)
     max_body_excursion = float(cfg.max_geometry_body_excursion_pct)
     min_side_switches = int(cfg.min_geometry_side_switches)
-    eval_step = max(int(cfg.geometry_envelope_eval_step), 1)
     max_width_atr = float(cfg.geometry_envelope_max_width_atr)
     pivot_events = np.unique(
         np.concatenate(
@@ -130,7 +129,7 @@ def _triangle_wedge_arrays(frame: DataFrame, cfg: PatternStructureConfig) -> dic
         ).astype("float64")
     )
 
-    for row in range(min_span, rows, eval_step):
+    for row in range(min_span, rows):
         if not np.isfinite(close[row]) or close[row] == 0.0:
             continue
         search_start = max(0, row - window + 1)

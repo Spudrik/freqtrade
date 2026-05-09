@@ -130,7 +130,6 @@ class PatternStructureConfig:
     geometry_candidate_min_span_mult: float = 0.45
     geometry_candidate_min_span_bars: int = 2
     geometry_line_fit_tolerance_mult: float = 2.0
-    geometry_envelope_eval_step: int = 2
     geometry_envelope_min_span_mult: float = 2.5
     geometry_envelope_start_count: int = 40
     geometry_envelope_pair_min_span_mult: float = 0.38
@@ -1030,8 +1029,6 @@ def _validate_config(cfg: PatternStructureConfig) -> None:
         raise ValueError("geometry_candidate_min_span_bars must be at least 1")
     if float(cfg.geometry_line_fit_tolerance_mult) <= 0.0:
         raise ValueError("geometry_line_fit_tolerance_mult must be positive")
-    if int(cfg.geometry_envelope_eval_step) < 1:
-        raise ValueError("geometry_envelope_eval_step must be at least 1")
     if float(cfg.geometry_envelope_min_span_mult) <= 0.0:
         raise ValueError("geometry_envelope_min_span_mult must be positive")
     if int(cfg.geometry_envelope_start_count) < 1:
