@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, fields, replace
-from typing import Any as PatternStructureConfig
 
 import numpy as np
 import pandas as pd
@@ -95,7 +94,7 @@ def _validate_ohlcv(dataframe: DataFrame) -> None:
         raise ValueError("Dataframe must not be empty")
 
 
-def _rectangle_range_columns(frame: DataFrame, cfg: PatternStructureConfig) -> dict[str, Series]:
+def _rectangle_range_columns(frame: DataFrame, cfg: PatternRangeConfig) -> dict[str, Series]:
     """Detect horizontal rectangle/range structure from confirmed pivots.
 
     A rectangle is not a trade by itself. It says price appears boxed between
@@ -146,7 +145,7 @@ def _rectangle_range_columns(frame: DataFrame, cfg: PatternStructureConfig) -> d
     }
 
 
-def _rectangle_range_arrays(frame: DataFrame, cfg: PatternStructureConfig) -> dict[str, np.ndarray]:
+def _rectangle_range_arrays(frame: DataFrame, cfg: PatternRangeConfig) -> dict[str, np.ndarray]:
     close, body_high, body_low, high_pivot, high_index, low_pivot, low_index = _pattern_geometry_arrays(frame, cfg)
     high = pd.to_numeric(frame["high"], errors="coerce").to_numpy(dtype="float64")
     low = pd.to_numeric(frame["low"], errors="coerce").to_numpy(dtype="float64")

@@ -33,14 +33,12 @@ from pandas import DataFrame, Series
 
 try:
     from .complex_trendline_projection_v2 import (
-        TrendlineProjectionV2Config,
         _base_inputs,
         _build_sequence_candidate_table,
         _resolve_config as _resolve_trendline_v2_config,
     )
 except Exception:  # pragma: no cover - standalone review scripts import this module directly
     from complex_trendline_projection_v2 import (  # type: ignore[no-redef]
-        TrendlineProjectionV2Config,
         _base_inputs,
         _build_sequence_candidate_table,
         _resolve_config as _resolve_trendline_v2_config,
@@ -120,6 +118,13 @@ _PROFILE_FIELDS = (
     "max_recent_touch_age_bars",
     "channel_min_pattern_bars",
     "channel_max_pattern_bars",
+    "channel_min_width_atr",
+    "channel_max_width_atr",
+    "channel_max_width_change_ratio",
+    "channel_min_containment",
+    "channel_min_quality",
+    "channel_envelope_start_options",
+    "channel_lifecycle_confirm_break_bars",
 )
 
 # Timeframe profiles are deliberately narrow. The indicator is most effective
@@ -143,6 +148,13 @@ _TIMEFRAME_PROFILES: dict[str, dict[str, object]] = {
         "max_recent_touch_age_bars": 12,
         "channel_min_pattern_bars": 36,
         "channel_max_pattern_bars": 168,
+        "channel_min_width_atr": 1.0,
+        "channel_max_width_atr": 8.0,
+        "channel_max_width_change_ratio": 0.22,
+        "channel_min_containment": 0.68,
+        "channel_min_quality": 0.82,
+        "channel_envelope_start_options": 10,
+        "channel_lifecycle_confirm_break_bars": 2,
     },
     "4h": {
         "min_pattern_bars": 12,
@@ -154,6 +166,13 @@ _TIMEFRAME_PROFILES: dict[str, dict[str, object]] = {
         "max_recent_touch_age_bars": 12,
         "channel_min_pattern_bars": 18,
         "channel_max_pattern_bars": 96,
+        "channel_min_width_atr": 1.0,
+        "channel_max_width_atr": 8.0,
+        "channel_max_width_change_ratio": 0.22,
+        "channel_min_containment": 0.68,
+        "channel_min_quality": 0.82,
+        "channel_envelope_start_options": 10,
+        "channel_lifecycle_confirm_break_bars": 2,
     },
     "8h": {
         "min_pattern_bars": 12,
@@ -165,6 +184,13 @@ _TIMEFRAME_PROFILES: dict[str, dict[str, object]] = {
         "max_recent_touch_age_bars": 12,
         "channel_min_pattern_bars": 14,
         "channel_max_pattern_bars": 72,
+        "channel_min_width_atr": 0.75,
+        "channel_max_width_atr": 8.5,
+        "channel_max_width_change_ratio": 0.26,
+        "channel_min_containment": 0.66,
+        "channel_min_quality": 0.80,
+        "channel_envelope_start_options": 14,
+        "channel_lifecycle_confirm_break_bars": 2,
     },
     "1d": {
         "min_pattern_bars": 10,
@@ -175,7 +201,14 @@ _TIMEFRAME_PROFILES: dict[str, dict[str, object]] = {
         "min_line_score": 0.45,
         "max_recent_touch_age_bars": 10,
         "channel_min_pattern_bars": 10,
-        "channel_max_pattern_bars": 60,
+        "channel_max_pattern_bars": 120,
+        "channel_min_width_atr": 0.50,
+        "channel_max_width_atr": 9.0,
+        "channel_max_width_change_ratio": 0.32,
+        "channel_min_containment": 0.62,
+        "channel_min_quality": 0.78,
+        "channel_envelope_start_options": 22,
+        "channel_lifecycle_confirm_break_bars": 2,
     },
     "3d": {
         "min_pattern_bars": 8,
@@ -184,9 +217,16 @@ _TIMEFRAME_PROFILES: dict[str, dict[str, object]] = {
         "local_narrowing_lookback_bars": 4,
         "local_narrowing_min_ratio": 0.08,
         "min_line_score": 0.40,
-        "max_recent_touch_age_bars": 8,
+        "max_recent_touch_age_bars": 24,
         "channel_min_pattern_bars": 8,
-        "channel_max_pattern_bars": 45,
+        "channel_max_pattern_bars": 160,
+        "channel_min_width_atr": 0.35,
+        "channel_max_width_atr": 10.0,
+        "channel_max_width_change_ratio": 0.36,
+        "channel_min_containment": 0.58,
+        "channel_min_quality": 0.76,
+        "channel_envelope_start_options": 30,
+        "channel_lifecycle_confirm_break_bars": 2,
     },
 }
 _TIMEFRAME_ALIASES = {
@@ -269,8 +309,8 @@ class PatternGeometryV2Config:
     channel_merge_max_slope_diff_atr_per_bar: float = 0.012
     channel_max_active_outputs: int = 1
     channel_lifecycle_enabled: bool = True
-    channel_lifecycle_max_stale_bars: int = 12
     channel_lifecycle_break_atr_mult: float = 0.35
+    channel_lifecycle_confirm_break_bars: int = 2
     channel_near_boundary_atr_mult: float = 0.70
     channel_breakout_atr_mult: float = 0.35
     min_output_bars: int = 2
@@ -413,7 +453,6 @@ def _geometry_v2_arrays(frame: DataFrame, cfg: PatternGeometryV2Config) -> dict[
                 for lower_line in active_support.itertuples(index=False):
                     candidate = _pair_lines_as_pattern(
                         row=row,
-                        close=close,
                         high=high,
                         low=low,
                         atr=atr,
@@ -462,7 +501,7 @@ def _geometry_v2_arrays(frame: DataFrame, cfg: PatternGeometryV2Config) -> dict[
         if not pattern_candidates:
             continue
 
-        selected = _select_distinct_patterns(pattern_candidates, close, atr, row, cfg)
+        selected = _select_distinct_patterns(pattern_candidates, atr, row, cfg)
         for slot, candidate in enumerate(selected[: int(cfg.output_slots)], start=1):
             out[f"slot_{slot}_active"][row] = True
             out[f"slot_{slot}_family"][row] = int(candidate["family_code"])
@@ -489,7 +528,6 @@ def _geometry_v2_arrays(frame: DataFrame, cfg: PatternGeometryV2Config) -> dict[
 def _pair_lines_as_pattern(
     *,
     row: int,
-    close: np.ndarray,
     high: np.ndarray,
     low: np.ndarray,
     atr: np.ndarray,
@@ -516,7 +554,9 @@ def _pair_lines_as_pattern(
     start_index = _pair_start_index(upper, lower_line, str(cfg.pair_start_mode))
     end_index = int(row)
     span = end_index - start_index
-    if span < int(cfg.min_pattern_bars) or span > int(cfg.max_pattern_bars):
+    min_allowed_span = min(int(cfg.min_pattern_bars), int(cfg.channel_min_pattern_bars))
+    max_allowed_span = max(int(cfg.max_pattern_bars), int(cfg.channel_max_pattern_bars))
+    if span < min_allowed_span or span > max_allowed_span:
         return None
 
     upper_slope = float(upper.slope)
@@ -617,15 +657,23 @@ def _pair_lines_as_pattern(
         return None
 
     if family in {"triangle", "wedge", "compression"}:
+        if span < int(cfg.min_pattern_bars) or span > int(cfg.max_pattern_bars):
+            return None
         if containment < float(cfg.min_containment):
             return None
         shape_score = max(float(local_contraction), 0.0)
         contraction = float(local_contraction)
     else:
+        if span < int(cfg.channel_min_pattern_bars) or span > int(cfg.channel_max_pattern_bars):
+            return None
+        if upper_pivots < float(cfg.channel_min_side_pivots) or lower_pivots < float(cfg.channel_min_side_pivots):
+            return None
+        if line_score < float(cfg.channel_min_quality):
+            return None
         if containment < float(cfg.channel_min_containment):
             return None
         shape_score = max(0.0, 1.0 - width_change_ratio / max(float(cfg.channel_max_width_change_ratio), 1e-9))
-        contraction = float(full_contraction)
+        contraction = float(1.0 - current_width / max(start_width, 1e-9))
 
     if family == "rectangle":
         direction = 0
@@ -1111,6 +1159,8 @@ def _classify_geometry_family(
         return None
     if span < int(cfg.channel_min_pattern_bars):
         return None
+    if span > int(cfg.channel_max_pattern_bars):
+        return None
     if width_atr < float(cfg.channel_min_width_atr) or width_atr > float(cfg.channel_max_width_atr):
         return None
     if width_change_ratio > float(cfg.channel_max_width_change_ratio):
@@ -1166,7 +1216,6 @@ def _direction_code(upper_slope: float, lower_slope: float, min_slope: float) ->
 
 def _select_distinct_patterns(
     candidates: list[dict[str, float]],
-    close: np.ndarray,
     atr: np.ndarray,
     row: int,
     cfg: PatternGeometryV2Config,
@@ -1177,7 +1226,7 @@ def _select_distinct_patterns(
         is_channel = _is_channel_candidate(candidate)
         if is_channel and channel_count >= int(cfg.channel_max_active_outputs):
             continue
-        if any(_same_pattern(candidate, existing, close, atr, row, cfg) for existing in selected):
+        if any(_same_pattern(candidate, existing, atr, row) for existing in selected):
             continue
         selected.append(candidate)
         if is_channel:
@@ -1227,14 +1276,15 @@ def _apply_channel_lifecycle(
     the selected channel forward until one of three things happens:
 
     - the channel grows beyond its allowed bar span,
-    - containment or recent-touch evidence fails,
-    - price closes beyond a rail by ``channel_lifecycle_break_atr_mult``.
+    - the projected width leaves the allowed ATR range,
+    - price closes beyond a rail by ``channel_lifecycle_break_atr_mult`` for
+      ``channel_lifecycle_confirm_break_bars`` consecutive candles.
 
     Example: if a rectangle is selected on candle 100, candle 101 can keep the
     same rectangle even if no fresh candidate is rebuilt on that exact row.
-    If candle 102 closes more than the breakout distance above the upper rail,
-    the channel is still emitted for candle 102 so strategy code can see the
-    breakout, then the state is expired before candle 103.
+    If candle 102 closes above the upper rail but candle 103 repairs back
+    inside, the same channel remains active. If both candles close beyond the
+    break distance, the state is expired after candle 103.
     """
     if not bool(cfg.channel_lifecycle_enabled):
         return candidates, channel_state, False
@@ -1244,7 +1294,6 @@ def _apply_channel_lifecycle(
     if channel_state is not None:
         projected = _project_channel_state(
             channel_state=channel_state,
-            close=close,
             high=high,
             low=low,
             atr=atr,
@@ -1254,14 +1303,30 @@ def _apply_channel_lifecycle(
             cfg=cfg,
         )
         if projected is not None:
-            return non_channels + [projected], channel_state, _channel_breaks_after_row(projected, close, atr, row, cfg)
+            projected = _refresh_projected_channel(
+                projected=projected,
+                channel_candidates=channel_candidates,
+                atr=atr,
+                row=row,
+                cfg=cfg,
+            )
+            break_run = _channel_break_run_after_row(channel_state, projected, close, atr, row, cfg)
+            channel_state["break_run"] = float(break_run)
+            if projected is not None:
+                refreshed_state = _channel_state_from_candidate(projected)
+                refreshed_state["break_run"] = float(break_run)
+                channel_state = refreshed_state
+            return non_channels + [projected], channel_state, break_run >= int(cfg.channel_lifecycle_confirm_break_bars)
         channel_state = None
 
     if not channel_candidates:
         return non_channels, None, False
 
     selected = max(channel_candidates, key=_pattern_rank_key)
-    return non_channels + [selected], _channel_state_from_candidate(selected), _channel_breaks_after_row(selected, close, atr, row, cfg)
+    channel_state = _channel_state_from_candidate(selected)
+    break_run = _channel_break_run_after_row(channel_state, selected, close, atr, row, cfg)
+    channel_state["break_run"] = float(break_run)
+    return non_channels + [selected], channel_state, break_run >= int(cfg.channel_lifecycle_confirm_break_bars)
 
 
 def _channel_state_from_candidate(candidate: dict[str, float]) -> dict[str, float]:
@@ -1278,6 +1343,7 @@ def _channel_state_from_candidate(candidate: dict[str, float]) -> dict[str, floa
             "lower_slope",
             "lower_intercept",
             "line_score",
+            "containment",
             "upper_pivots",
             "lower_pivots",
             "shape_score",
@@ -1289,7 +1355,6 @@ def _channel_state_from_candidate(candidate: dict[str, float]) -> dict[str, floa
 def _project_channel_state(
     *,
     channel_state: dict[str, float],
-    close: np.ndarray,
     high: np.ndarray,
     low: np.ndarray,
     atr: np.ndarray,
@@ -1332,8 +1397,6 @@ def _project_channel_state(
         lower_intercept=lower_intercept,
         tolerance_atr_mult=float(cfg.containment_tolerance_atr_mult),
     )
-    if containment < float(cfg.channel_min_containment):
-        return None
 
     touch_tolerance = float(atr[row]) * float(cfg.touch_tolerance_atr_mult)
     upper_touch_age = _recent_touch_age(
@@ -1358,8 +1421,6 @@ def _project_channel_state(
         intercept=lower_intercept,
         tolerance=max(touch_tolerance, 1e-9),
     )
-    if min(upper_touch_age, lower_touch_age) > int(cfg.channel_lifecycle_max_stale_bars):
-        return None
 
     return {
         "family_code": float(channel_state["family_code"]),
@@ -1376,7 +1437,7 @@ def _project_channel_state(
         "lower_intercept": float(lower_intercept),
         "line_score": float(channel_state.get("line_score", 0.0)),
         "contraction": float(1.0 - current_width / max(start_width, 1e-9)),
-        "containment": float(containment),
+        "containment": float(max(containment, float(channel_state.get("containment", 0.0)))),
         "width_atr": float(width_atr),
         "shape_score": float(channel_state.get("shape_score", channel_state.get("line_score", 0.0))),
         "width_change_ratio": float(abs(current_width - start_width) / max(start_width, current_width, 1e-9)),
@@ -1402,6 +1463,38 @@ def _channel_breaks_after_row(
         float(close[row]) > float(candidate["upper"]) + distance
         or float(close[row]) < float(candidate["lower"]) - distance
     )
+
+
+def _refresh_projected_channel(
+    *,
+    projected: dict[str, float],
+    channel_candidates: list[dict[str, float]],
+    atr: np.ndarray,
+    row: int,
+    cfg: PatternGeometryV2Config,
+) -> dict[str, float]:
+    compatible = [
+        candidate
+        for candidate in channel_candidates
+        if _same_channel_cluster(candidate, projected, atr, row, cfg)
+    ]
+    if not compatible:
+        return projected
+    return _channel_cluster_representative([projected, *compatible])
+
+
+def _channel_break_run_after_row(
+    channel_state: dict[str, float],
+    candidate: dict[str, float],
+    close: np.ndarray,
+    atr: np.ndarray,
+    row: int,
+    cfg: PatternGeometryV2Config,
+) -> int:
+    previous = int(round(float(channel_state.get("break_run", 0.0))))
+    if _channel_breaks_after_row(candidate, close, atr, row, cfg):
+        return previous + 1
+    return 0
 
 
 def _is_channel_candidate(candidate: dict[str, float]) -> bool:
@@ -1467,10 +1560,8 @@ def _pattern_rank_key(candidate: dict[str, float]) -> tuple[float, float, float,
 def _same_pattern(
     candidate: dict[str, float],
     existing: dict[str, float],
-    close: np.ndarray,
     atr: np.ndarray,
     row: int,
-    cfg: PatternGeometryV2Config,
 ) -> bool:
     scale = max(float(atr[row]), 1e-9)
     upper_distance = abs(float(candidate["upper"]) - float(existing["upper"])) / scale
@@ -1723,10 +1814,10 @@ def _validate_config(cfg: PatternGeometryV2Config) -> None:
         raise ValueError("channel_merge_max_slope_diff_atr_per_bar must be non-negative")
     if int(cfg.channel_max_active_outputs) < 1:
         raise ValueError("channel_max_active_outputs must be at least 1")
-    if int(cfg.channel_lifecycle_max_stale_bars) < 1:
-        raise ValueError("channel_lifecycle_max_stale_bars must be at least 1")
     if float(cfg.channel_lifecycle_break_atr_mult) < 0.0:
         raise ValueError("channel_lifecycle_break_atr_mult must be non-negative")
+    if int(cfg.channel_lifecycle_confirm_break_bars) < 1:
+        raise ValueError("channel_lifecycle_confirm_break_bars must be at least 1")
     if float(cfg.channel_near_boundary_atr_mult) < 0.0:
         raise ValueError("channel_near_boundary_atr_mult must be non-negative")
     if float(cfg.channel_breakout_atr_mult) < 0.0:
