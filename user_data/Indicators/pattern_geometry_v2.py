@@ -323,6 +323,21 @@ class PatternGeometryV2Config:
     impulse_max_slope_atr_per_bar: float = 0.10
 
 
+@dataclass(frozen=True)
+class _LineCandidate:
+    x_old: float
+    x_new: float
+    y_old: float
+    y_new: float
+    slope: float
+    intercept: float
+    projection_end: float
+    active_start: float
+    score: float
+    pivot_count: float
+    absorbed_pivot_count: float
+
+
 def add_pattern_geometry_v2(
     dataframe: DataFrame,
     config: PatternGeometryV2Config | None = None,
@@ -411,22 +426,11 @@ def _geometry_v2_arrays(frame: DataFrame, cfg: PatternGeometryV2Config) -> dict[
     low_pivot = base["pivot_low"].to_numpy(dtype="float64")
     low_index = base["pivot_low_index"].to_numpy(dtype="float64")
     if candidates.empty:
-        resistance = pd.DataFrame()
-        support = pd.DataFrame()
+        resistance_lines: list[_LineCandidate] = []
+        support_lines: list[_LineCandidate] = []
     else:
-        resistance = candidates[candidates["side"].eq("resistance")].copy()
-        support = candidates[candidates["side"].eq("support")].copy()
-
-    if not resistance.empty:
-        resistance["active_start"] = pd.to_numeric(
-            resistance.get("live_start", resistance["x_new"]),
-            errors="coerce",
-        ).fillna(pd.to_numeric(resistance["x_new"], errors="coerce"))
-    if not support.empty:
-        support["active_start"] = pd.to_numeric(
-            support.get("live_start", support["x_new"]),
-            errors="coerce",
-        ).fillna(pd.to_numeric(support["x_new"], errors="coerce"))
+        resistance_lines = _line_candidates_from_frame(candidates, "resistance")
+        support_lines = _line_candidates_from_frame(candidates, "support")
 
     channel_state: dict[str, float] | None = None
     expire_channel_after_row = False
@@ -441,15 +445,11 @@ def _geometry_v2_arrays(frame: DataFrame, cfg: PatternGeometryV2Config) -> dict[
         # mature triangle, wedge, and compression outputs usually come from.
         # The same pair can also classify as a channel if the rails are nearly
         # parallel rather than converging.
-        if not resistance.empty and not support.empty:
-            active_resistance = resistance[
-                resistance["active_start"].le(float(row)) & resistance["projection_end"].ge(float(row))
-            ]
-            active_support = support[
-                support["active_start"].le(float(row)) & support["projection_end"].ge(float(row))
-            ]
-            for upper in active_resistance.itertuples(index=False):
-                for lower_line in active_support.itertuples(index=False):
+        if resistance_lines and support_lines:
+            active_resistance = _active_lines_for_row(resistance_lines, row)
+            active_support = _active_lines_for_row(support_lines, row)
+            for upper in active_resistance:
+                for lower_line in active_support:
                     candidate = _pair_lines_as_pattern(
                         row=row,
                         high=high,
@@ -522,6 +522,40 @@ def _geometry_v2_arrays(frame: DataFrame, cfg: PatternGeometryV2Config) -> dict[
     _suppress_short_output_segments(out, int(cfg.output_slots), int(cfg.min_output_bars))
     _update_row_outputs(out, close, atr, cfg, int(cfg.output_slots))
     return out
+
+
+def _line_candidates_from_frame(candidates: DataFrame, side: str) -> list[_LineCandidate]:
+    frame = candidates[candidates["side"].eq(side)]
+    if frame.empty:
+        return []
+    lines: list[_LineCandidate] = []
+    has_live_start = "live_start" in frame.columns
+    for row in frame.itertuples(index=False):
+        x_new = float(row.x_new)
+        live_start = float(getattr(row, "live_start", x_new)) if has_live_start else x_new
+        if not np.isfinite(live_start):
+            live_start = x_new
+        lines.append(
+            _LineCandidate(
+                x_old=float(row.x_old),
+                x_new=x_new,
+                y_old=float(row.y_old),
+                y_new=float(row.y_new),
+                slope=float(row.slope),
+                intercept=float(row.intercept),
+                projection_end=float(row.projection_end),
+                active_start=live_start,
+                score=float(row.score),
+                pivot_count=float(getattr(row, "pivot_count", 2.0)),
+                absorbed_pivot_count=float(getattr(row, "absorbed_pivot_count", getattr(row, "pivot_count", 2.0))),
+            )
+        )
+    return lines
+
+
+def _active_lines_for_row(lines: list[_LineCandidate], row: int) -> list[_LineCandidate]:
+    value = float(row)
+    return [line for line in lines if line.active_start <= value <= line.projection_end]
 
 
 def _pair_lines_as_pattern(
@@ -637,7 +671,7 @@ def _pair_lines_as_pattern(
     if upper_touch_age > allowed_touch_age or lower_touch_age > allowed_touch_age:
         return None
 
-    span_atr = float(np.nanmedian(atr[start_index : end_index + 1]))
+    span_atr = _atr_window_median(atr, start_index, end_index)
     slope_scale = max(span_atr, max(float(atr[row]), 1e-9), 1e-9)
     upper_slope_atr = upper_slope / slope_scale
     lower_slope_atr = lower_slope / slope_scale
@@ -765,7 +799,7 @@ def _channel_envelope_candidates(
         ):
             continue
 
-        atr_scale = max(float(np.nanmedian(atr[start_index : row + 1])), float(atr[row]), 1e-9)
+        atr_scale = max(_atr_window_median(atr, start_index, row), float(atr[row]), 1e-9)
         upper_slope_atr = upper_slope / atr_scale
         lower_slope_atr = lower_slope / atr_scale
         family = _channel_pattern_family(upper_slope_atr, lower_slope_atr, cfg)
@@ -942,10 +976,30 @@ def _fit_line(x: np.ndarray, y: np.ndarray) -> tuple[float, float] | None:
         return None
     if not np.isfinite(x).all() or not np.isfinite(y).all():
         return None
-    if float(np.nanmax(x) - np.nanmin(x)) <= 0.0:
+    x_float = x.astype("float64", copy=False)
+    y_float = y.astype("float64", copy=False)
+    x_mean = float(np.mean(x_float))
+    y_mean = float(np.mean(y_float))
+    x_delta = x_float - x_mean
+    denominator = float(np.dot(x_delta, x_delta))
+    if denominator <= 0.0:
         return None
-    slope, intercept = np.polyfit(x.astype("float64"), y.astype("float64"), 1)
+    slope = float(np.dot(x_delta, y_float - y_mean) / denominator)
+    intercept = float(y_mean - slope * x_mean)
+    if not np.isfinite([slope, intercept]).all():
+        return None
     return float(slope), float(intercept)
+
+
+def _atr_window_median(atr: np.ndarray, start_index: int, end_index: int) -> float:
+    if end_index < start_index:
+        return np.nan
+    values = atr[max(int(start_index), 0) : int(end_index) + 1]
+    if values.size == 0:
+        return np.nan
+    if np.isfinite(values).all():
+        return float(np.median(values))
+    return float(np.nanmedian(values))
 
 
 def _channel_pattern_family(upper_slope_atr: float, lower_slope_atr: float, cfg: PatternGeometryV2Config) -> str | None:
@@ -1077,7 +1131,7 @@ def _line_impulse_metrics(line: object, atr: np.ndarray) -> tuple[float, float] 
         return None
     y_old = _line_anchor_value(line, "x_old", "y_old")
     y_new = _line_anchor_value(line, "x_new", "y_new")
-    atr_scale = float(np.nanmedian(atr[x_old : x_new + 1])) if x_new >= x_old else np.nan
+    atr_scale = _atr_window_median(atr, x_old, x_new)
     atr_scale = max(atr_scale, 1e-9)
     slope_atr = abs((y_new - y_old) / span) / atr_scale
     return span, float(slope_atr)
