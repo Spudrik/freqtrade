@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, fields, replace
-from typing import Any as PatternStructureConfig
 
 import numpy as np
 import pandas as pd
@@ -90,7 +89,21 @@ def add_pattern_continuation(
         pivot_min_distance_pct=float(cfg.pivot_min_distance_pct),
     )
     columns = _flag_pennant_columns(frame, {}, {}, cfg)
-    clean = dataframe.drop(columns=[column for column in columns if column in dataframe.columns]).copy()
+    existing = [
+        column
+        for column in dataframe.columns
+        if str(column).startswith(
+            (
+                f"{cfg.output_prefix}_impulse_",
+                f"{cfg.output_prefix}_pattern_",
+                f"{cfg.output_prefix}_continuation_",
+                f"{cfg.output_prefix}_setup_",
+                f"{cfg.output_prefix}_flag_",
+                f"{cfg.output_prefix}_pennant_",
+            )
+        )
+    ]
+    clean = dataframe.drop(columns=existing).copy() if existing else dataframe.copy()
     return pd.concat([clean, pd.DataFrame(columns, index=frame.index)], axis=1)
 
 
@@ -122,7 +135,7 @@ def _flag_pennant_columns(
     frame: DataFrame,
     sequence: dict[str, Series],
     channel: dict[str, Series],
-    cfg: PatternStructureConfig,
+    cfg: PatternContinuationConfig,
 ) -> dict[str, Series]:
     p = cfg.output_prefix
     _ = sequence, channel
@@ -213,14 +226,26 @@ def _flag_pennant_columns(
         f"{p}_pattern_low_slope_pct_long": pd.Series(anchored["pattern_low_slope_pct_long"], index=frame.index, dtype="float64"),
         f"{p}_pattern_high_slope_pct_short": pd.Series(anchored["pattern_high_slope_pct_short"], index=frame.index, dtype="float64"),
         f"{p}_pattern_low_slope_pct_short": pd.Series(anchored["pattern_low_slope_pct_short"], index=frame.index, dtype="float64"),
-        f"{p}_flag_quality_long": flag_quality_long.where(flag_setup_long, 0.0),
-        f"{p}_flag_quality_short": flag_quality_short.where(flag_setup_short, 0.0),
-        f"{p}_pennant_quality_long": pennant_quality_long.where(pennant_setup_long, 0.0),
-        f"{p}_pennant_quality_short": pennant_quality_short.where(pennant_setup_short, 0.0),
-        f"{p}_flag_setup_long": flag_setup_long.fillna(False),
-        f"{p}_flag_setup_short": flag_setup_short.fillna(False),
-        f"{p}_pennant_setup_long": pennant_setup_long.fillna(False),
-        f"{p}_pennant_setup_short": pennant_setup_short.fillna(False),
+        **_continuation_strategy_columns(
+            frame.index,
+            p,
+            "flag",
+            flag_setup_long,
+            flag_setup_short,
+            flag_quality_long,
+            flag_quality_short,
+            anchored,
+        ),
+        **_continuation_strategy_columns(
+            frame.index,
+            p,
+            "pennant",
+            pennant_setup_long,
+            pennant_setup_short,
+            pennant_quality_long,
+            pennant_quality_short,
+            anchored,
+        ),
     }
     if bool(getattr(cfg, "include_pattern_diagnostics", False)):
         columns.update(
@@ -234,7 +259,49 @@ def _flag_pennant_columns(
     return columns
 
 
-def _anchored_flag_pennant_arrays(frame: DataFrame, cfg: PatternStructureConfig) -> dict[str, np.ndarray]:
+def _continuation_strategy_columns(
+    index: pd.Index,
+    prefix: str,
+    name: str,
+    long_mask: Series,
+    short_mask: Series,
+    long_quality: Series,
+    short_quality: Series,
+    anchored: dict[str, np.ndarray],
+) -> dict[str, Series]:
+    """Return the compact strategy-facing continuation contract.
+
+    Long and short internals are still scored separately because the geometry
+    is asymmetric after an impulse. The strategy-facing output compresses that
+    into one pattern flag, one direction, one score, and the active upper/lower
+    consolidation rails. ``direction`` is shape direction, not a trade command:
+    +1 means bullish-continuation structure, -1 means bearish-continuation
+    structure, and 0 means no active pattern on that row.
+    """
+
+    long_active = pd.Series(long_mask, index=index).fillna(False).astype("bool")
+    short_active = pd.Series(short_mask, index=index).fillna(False).astype("bool")
+    present = long_active | short_active
+    direction = pd.Series(np.select([long_active, short_active], [1, -1], default=0), index=index, dtype="int8")
+    score = pd.Series(
+        np.where(long_active, long_quality, np.where(short_active, short_quality, 0.0)),
+        index=index,
+        dtype="float64",
+    )
+    upper_long = pd.Series(anchored["proof_line2_y2_long"], index=index, dtype="float64").where(long_active)
+    upper_short = pd.Series(anchored["proof_line2_y2_short"], index=index, dtype="float64").where(short_active)
+    lower_long = pd.Series(anchored["proof_line3_y2_long"], index=index, dtype="float64").where(long_active)
+    lower_short = pd.Series(anchored["proof_line3_y2_short"], index=index, dtype="float64").where(short_active)
+    return {
+        f"{prefix}_{name}_pattern_present": present,
+        f"{prefix}_{name}_direction": direction,
+        f"{prefix}_{name}_indicator_score": score.where(present, 0.0),
+        f"{prefix}_{name}_upper": upper_long.combine_first(upper_short),
+        f"{prefix}_{name}_lower": lower_long.combine_first(lower_short),
+    }
+
+
+def _anchored_flag_pennant_arrays(frame: DataFrame, cfg: PatternContinuationConfig) -> dict[str, np.ndarray]:
     """Score continuation setups after a specific impulse extreme.
 
     The variable impulse-end anchor makes pure rolling-vector formulas a poor
@@ -265,8 +332,8 @@ def _anchored_flag_pennant_arrays(frame: DataFrame, cfg: PatternStructureConfig)
         body_low,
         int(cfg.pattern_pivot_strength),
     )
-    high_pivot = _combine_sparse_pivots(high_pivot, high_index, pattern_high_pivot, pattern_high_index)
-    low_pivot = _combine_sparse_pivots(low_pivot, low_index, pattern_low_pivot, pattern_low_index)
+    high_pivot = _combine_sparse_pivots(high_pivot, high_index, pattern_high_pivot)
+    low_pivot = _combine_sparse_pivots(low_pivot, low_index, pattern_low_pivot)
     high_index = _combine_sparse_indexes(high_pivot, high_index, pattern_high_index)
     low_index = _combine_sparse_indexes(low_pivot, low_index, pattern_low_index)
 
@@ -466,7 +533,7 @@ def _best_anchored_pattern_for_side(
     low_pivot: np.ndarray,
     high_index: np.ndarray,
     low_index: np.ndarray,
-    cfg: PatternStructureConfig,
+    cfg: PatternContinuationConfig,
 ) -> dict[str, float | bool]:
     best = _empty_side_metrics()
     latest_end = row - int(cfg.min_pattern_bars)
@@ -567,7 +634,7 @@ def _score_anchored_pattern(
     low_pivot: np.ndarray,
     high_index: np.ndarray,
     low_index: np.ndarray,
-    cfg: PatternStructureConfig,
+    cfg: PatternContinuationConfig,
 ) -> dict[str, float | bool]:
     metrics = _empty_side_metrics()
     age = row - impulse_end
@@ -922,7 +989,7 @@ def _volume_pattern_score(
     impulse_start: int,
     impulse_end: int,
     row: int,
-    cfg: PatternStructureConfig,
+    cfg: PatternContinuationConfig,
 ) -> float:
     pre_start = max(0, int(impulse_start) - max(int(cfg.impulse_window) // 2, 3))
     pole = volume[int(impulse_start) : int(impulse_end) + 1]

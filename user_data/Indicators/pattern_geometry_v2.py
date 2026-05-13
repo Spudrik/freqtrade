@@ -107,21 +107,13 @@ _ROW_FIELDS = (
     "best_width_atr",
     "compression_flag",
     "best_position",
-    "near_upper",
-    "near_lower",
     "avoid_long",
     "avoid_short",
-    "breakout_up",
-    "breakdown_down",
 )
 _ROW_BOOL_FIELDS = {
     "compression_flag",
-    "near_upper",
-    "near_lower",
     "avoid_long",
     "avoid_short",
-    "breakout_up",
-    "breakdown_down",
 }
 _PROFILE_FIELDS = (
     "min_pattern_bars",
@@ -424,11 +416,59 @@ def add_pattern_geometry_v2(
             columns[key] = pd.Series(value, index=dataframe.index, dtype="bool").fillna(False)
         else:
             columns[key] = pd.Series(value, index=dataframe.index, dtype="float64")
+    columns.update(_family_strategy_columns(dataframe.index, p, arrays, int(cfg.output_slots)))
 
     source = dataframe.copy()
     existing = [col for col in source.columns if str(col).startswith(f"{p}_")]
     clean = source.drop(columns=existing).copy() if existing else source.copy()
     return pd.concat([clean, pd.DataFrame(columns, index=dataframe.index)], axis=1)
+
+
+def _family_strategy_columns(
+    index: pd.Index,
+    prefix: str,
+    arrays: dict[str, np.ndarray],
+    slot_count: int,
+) -> dict[str, Series]:
+    """Expose one compact strategy-facing row per geometry family.
+
+    Slots remain available for detailed plotting and overlap analysis. These
+    family columns give strategies a stable contract that matches the other
+    pattern indicators: presence, score, direction, and current rails. When
+    several slots contain the same family on one row, the highest line score
+    wins and the losing overlaps stay available in the slot columns.
+    """
+
+    rows = len(index)
+    columns: dict[str, Series] = {}
+    for family, code in _FAMILY_CODE.items():
+        present = np.zeros(rows, dtype=bool)
+        direction = np.zeros(rows, dtype="int8")
+        score = np.zeros(rows, dtype="float64")
+        upper = np.full(rows, np.nan, dtype="float64")
+        lower = np.full(rows, np.nan, dtype="float64")
+        best_rank = np.full(rows, -np.inf, dtype="float64")
+        for slot in range(1, slot_count + 1):
+            active = np.asarray(arrays[f"slot_{slot}_active"], dtype=bool)
+            family_match = np.asarray(arrays[f"slot_{slot}_family"], dtype="int8") == int(code)
+            slot_score = np.asarray(arrays[f"slot_{slot}_line_score"], dtype="float64")
+            slot_containment = np.asarray(arrays[f"slot_{slot}_containment"], dtype="float64")
+            rank = np.nan_to_num(slot_score, nan=-np.inf) + 0.001 * np.nan_to_num(slot_containment, nan=0.0)
+            update = active & family_match & (rank > best_rank)
+            if not np.any(update):
+                continue
+            best_rank[update] = rank[update]
+            present[update] = True
+            direction[update] = np.asarray(arrays[f"slot_{slot}_direction"], dtype="int8")[update]
+            score[update] = np.nan_to_num(slot_score[update], nan=0.0)
+            upper[update] = np.asarray(arrays[f"slot_{slot}_upper"], dtype="float64")[update]
+            lower[update] = np.asarray(arrays[f"slot_{slot}_lower"], dtype="float64")[update]
+        columns[f"{prefix}_{family}_pattern_present"] = pd.Series(present, index=index, dtype="bool")
+        columns[f"{prefix}_{family}_indicator_score"] = pd.Series(score, index=index, dtype="float64")
+        columns[f"{prefix}_{family}_direction"] = pd.Series(direction, index=index, dtype="int8")
+        columns[f"{prefix}_{family}_upper"] = pd.Series(upper, index=index, dtype="float64")
+        columns[f"{prefix}_{family}_lower"] = pd.Series(lower, index=index, dtype="float64")
+    return columns
 
 
 def add_pattern_geometry_family_v2(
@@ -546,7 +586,7 @@ def _geometry_v2_arrays(frame: DataFrame, cfg: PatternGeometryV2Config) -> dict[
     out["best_width_atr"] = np.full(rows, np.nan, dtype="float64")
     out["compression_flag"] = np.zeros(rows, dtype=bool)
     out["best_position"] = np.full(rows, np.nan, dtype="float64")
-    for field in ("near_upper", "near_lower", "avoid_long", "avoid_short", "breakout_up", "breakdown_down"):
+    for field in ("avoid_long", "avoid_short"):
         out[field] = np.zeros(rows, dtype=bool)
 
     # TLV2 is the primary line supply. The geometry layer does not rediscover
@@ -1975,11 +2015,10 @@ def _update_row_outputs(
     - ``best_position`` maps current close inside the best channel: 0 is at
       the lower rail, 1 is at the upper rail, below 0 means breakdown, and
       above 1 means breakout.
-    - ``near_upper`` and ``near_lower`` are avoidance/context flags. For
-      example, a long system can avoid fresh longs when ``near_upper`` is true
-      because reward-to-risk is likely poor near channel resistance.
-    - ``breakout_up`` and ``breakdown_down`` are rail breach flags, not full
-      trade recommendations.
+    - ``avoid_long`` and ``avoid_short`` are tactical context flags derived
+      from the best active channel rails. Direct near/breakout flags are not
+      exported because strategies can derive those from ``*_upper`` and
+      ``*_lower`` with their own tolerance policy.
     """
     threshold = float(cfg.compression_flag_atr_threshold)
     for row in range(len(atr)):
@@ -2025,10 +2064,6 @@ def _update_row_outputs(
         breakout_up = bool(float(close[row]) > float(best_channel["upper"]) + breakout_distance)
         breakdown_down = bool(float(close[row]) < float(best_channel["lower"]) - breakout_distance)
         out["best_position"][row] = float(position)
-        out["near_upper"][row] = near_upper
-        out["near_lower"][row] = near_lower
-        out["breakout_up"][row] = breakout_up
-        out["breakdown_down"][row] = breakdown_down
         out["avoid_long"][row] = bool(near_upper or breakdown_down)
         out["avoid_short"][row] = bool(near_lower or breakout_up)
 

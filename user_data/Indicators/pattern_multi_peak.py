@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, fields, replace
-from typing import Any as PatternStructureConfig
 
 import numpy as np
 import pandas as pd
@@ -93,7 +92,12 @@ def add_pattern_peaks(
         pivot_min_distance_pct=float(cfg.pivot_min_distance_pct),
     )
     columns = _triple_reversal_columns(frame, cfg)
-    clean = dataframe.drop(columns=[column for column in columns if column in dataframe.columns]).copy()
+    existing = [
+        column
+        for column in dataframe.columns
+        if str(column).startswith((f"{cfg.output_prefix}_triple_top_", f"{cfg.output_prefix}_triple_bottom_"))
+    ]
+    clean = dataframe.drop(columns=existing).copy() if existing else dataframe.copy()
     return pd.concat([clean, pd.DataFrame(columns, index=frame.index)], axis=1)
 
 
@@ -121,7 +125,7 @@ def _validate_ohlcv(dataframe: DataFrame) -> None:
         raise ValueError("Dataframe must not be empty")
 
 
-def _triple_reversal_columns(frame: DataFrame, cfg: PatternStructureConfig) -> dict[str, Series]:
+def _triple_reversal_columns(frame: DataFrame, cfg: PatternPeakConfig) -> dict[str, Series]:
     """Detect triple top / triple bottom attention at the third confirmed pivot.
 
     A triple top is three resistance touches after an upward move. A triple
@@ -196,6 +200,7 @@ def _triple_reversal_columns(frame: DataFrame, cfg: PatternStructureConfig) -> d
             "p1_index": arrays["triple_top_first_index"],
             "p2_index": arrays["triple_top_second_index"],
             "p3_index": arrays["triple_top_third_index"],
+            "level": arrays["triple_top_level"],
             "neckline": arrays["triple_top_neckline"],
         },
     )
@@ -206,60 +211,51 @@ def _triple_reversal_columns(frame: DataFrame, cfg: PatternStructureConfig) -> d
             "p1_index": arrays["triple_bottom_first_index"],
             "p2_index": arrays["triple_bottom_second_index"],
             "p3_index": arrays["triple_bottom_third_index"],
+            "level": arrays["triple_bottom_level"],
             "neckline": arrays["triple_bottom_neckline"],
         },
     )
+    top_present = top_developing | top_confirmed
+    bottom_present = bottom_developing | bottom_confirmed
+    top_confirmation_level = pd.Series(top_carried["neckline"], index=frame.index, dtype="float64")
+    bottom_confirmation_level = pd.Series(bottom_carried["neckline"], index=frame.index, dtype="float64")
+    top_level = pd.Series(top_carried["level"], index=frame.index, dtype="float64")
+    bottom_level = pd.Series(bottom_carried["level"], index=frame.index, dtype="float64")
     columns = {
-        f"{p}_triple_top_quality": top_current_quality.where(top_developing | top_confirmed, 0.0),
-        f"{p}_triple_bottom_quality": bottom_current_quality.where(bottom_developing | bottom_confirmed, 0.0),
-        f"{p}_triple_top_structure_quality": pd.Series(
-            arrays["triple_top_quality"], index=frame.index, dtype="float64"
-        ).where(top_raw, 0.0),
-        f"{p}_triple_bottom_structure_quality": pd.Series(
-            arrays["triple_bottom_quality"], index=frame.index, dtype="float64"
-        ).where(bottom_raw, 0.0),
-        f"{p}_triple_top_setup_short": top,
-        f"{p}_triple_bottom_setup_long": bottom,
-        f"{p}_triple_top_peak": pd.Series(np.where(top_state.gt(0), 3.0, 0.0), index=frame.index, dtype="float64"),
-        f"{p}_triple_bottom_peak": pd.Series(np.where(bottom_state.gt(0), 3.0, 0.0), index=frame.index, dtype="float64"),
-        f"{p}_triple_top_state": top_state,
-        f"{p}_triple_bottom_state": bottom_state,
+        f"{p}_triple_top_pattern_present": top_present.fillna(False),
+        f"{p}_triple_bottom_pattern_present": bottom_present.fillna(False),
+        f"{p}_triple_top_pattern_confirmed": top_confirmed.fillna(False),
+        f"{p}_triple_bottom_pattern_confirmed": bottom_confirmed.fillna(False),
+        f"{p}_triple_top_indicator_score": top_current_quality.where(top_present, 0.0),
+        f"{p}_triple_bottom_indicator_score": bottom_current_quality.where(bottom_present, 0.0),
+        f"{p}_triple_top_confirmation_level": top_confirmation_level,
+        f"{p}_triple_bottom_confirmation_level": bottom_confirmation_level,
+        f"{p}_triple_top_target_level": top_confirmation_level - (top_level - top_confirmation_level).clip(lower=0.0),
+        f"{p}_triple_bottom_target_level": bottom_confirmation_level + (bottom_confirmation_level - bottom_level).clip(lower=0.0),
         f"{p}_triple_top_p1_index": pd.Series(top_carried["p1_index"], index=frame.index, dtype="float64"),
         f"{p}_triple_top_p2_index": pd.Series(top_carried["p2_index"], index=frame.index, dtype="float64"),
         f"{p}_triple_top_p3_index": pd.Series(top_carried["p3_index"], index=frame.index, dtype="float64"),
-        f"{p}_triple_top_neckline": pd.Series(top_carried["neckline"], index=frame.index, dtype="float64"),
         f"{p}_triple_bottom_p1_index": pd.Series(bottom_carried["p1_index"], index=frame.index, dtype="float64"),
         f"{p}_triple_bottom_p2_index": pd.Series(bottom_carried["p2_index"], index=frame.index, dtype="float64"),
         f"{p}_triple_bottom_p3_index": pd.Series(bottom_carried["p3_index"], index=frame.index, dtype="float64"),
-        f"{p}_triple_bottom_neckline": pd.Series(bottom_carried["neckline"], index=frame.index, dtype="float64"),
-        f"{p}_triple_top_structure_short": top_raw,
-        f"{p}_triple_bottom_structure_long": bottom_raw,
-        f"{p}_triple_top_first_index": pd.Series(arrays["triple_top_first_index"], index=frame.index, dtype="float64"),
-        f"{p}_triple_top_second_index": pd.Series(arrays["triple_top_second_index"], index=frame.index, dtype="float64"),
-        f"{p}_triple_top_third_index": pd.Series(arrays["triple_top_third_index"], index=frame.index, dtype="float64"),
-        f"{p}_triple_top_first_price": pd.Series(arrays["triple_top_first_price"], index=frame.index, dtype="float64"),
-        f"{p}_triple_top_second_price": pd.Series(arrays["triple_top_second_price"], index=frame.index, dtype="float64"),
-        f"{p}_triple_top_third_price": pd.Series(arrays["triple_top_third_price"], index=frame.index, dtype="float64"),
-        f"{p}_triple_top_neckline_index": pd.Series(arrays["triple_top_neckline_index"], index=frame.index, dtype="float64"),
-        f"{p}_triple_top_resistance": pd.Series(arrays["triple_top_level"], index=frame.index, dtype="float64"),
-        f"{p}_triple_top_reaction_score": pd.Series(arrays["triple_top_reaction_score"], index=frame.index, dtype="float64").where(
-            top_raw, 0.0
-        ),
-        f"{p}_triple_bottom_first_index": pd.Series(arrays["triple_bottom_first_index"], index=frame.index, dtype="float64"),
-        f"{p}_triple_bottom_second_index": pd.Series(arrays["triple_bottom_second_index"], index=frame.index, dtype="float64"),
-        f"{p}_triple_bottom_third_index": pd.Series(arrays["triple_bottom_third_index"], index=frame.index, dtype="float64"),
-        f"{p}_triple_bottom_first_price": pd.Series(arrays["triple_bottom_first_price"], index=frame.index, dtype="float64"),
-        f"{p}_triple_bottom_second_price": pd.Series(arrays["triple_bottom_second_price"], index=frame.index, dtype="float64"),
-        f"{p}_triple_bottom_third_price": pd.Series(arrays["triple_bottom_third_price"], index=frame.index, dtype="float64"),
-        f"{p}_triple_bottom_neckline_index": pd.Series(arrays["triple_bottom_neckline_index"], index=frame.index, dtype="float64"),
-        f"{p}_triple_bottom_support": pd.Series(arrays["triple_bottom_level"], index=frame.index, dtype="float64"),
-        f"{p}_triple_bottom_reaction_score": pd.Series(
-            arrays["triple_bottom_reaction_score"], index=frame.index, dtype="float64"
-        ).where(bottom_raw, 0.0),
     }
     if bool(getattr(cfg, "include_pattern_diagnostics", False)):
         columns.update(
             {
+                f"{p}_triple_top_structure_short": top_raw,
+                f"{p}_triple_bottom_structure_long": bottom_raw,
+                f"{p}_triple_top_structure_quality": pd.Series(
+                    arrays["triple_top_quality"], index=frame.index, dtype="float64"
+                ).where(top_raw, 0.0),
+                f"{p}_triple_bottom_structure_quality": pd.Series(
+                    arrays["triple_bottom_quality"], index=frame.index, dtype="float64"
+                ).where(bottom_raw, 0.0),
+                f"{p}_triple_top_reaction_score": pd.Series(
+                    arrays["triple_top_reaction_score"], index=frame.index, dtype="float64"
+                ).where(top_raw, 0.0),
+                f"{p}_triple_bottom_reaction_score": pd.Series(
+                    arrays["triple_bottom_reaction_score"], index=frame.index, dtype="float64"
+                ).where(bottom_raw, 0.0),
                 **_proof_line_columns(
                     frame.index,
                     f"{p}_triple_top_short",
@@ -303,7 +299,7 @@ def _triple_reversal_columns(frame: DataFrame, cfg: PatternStructureConfig) -> d
     return columns
 
 
-def _triple_reversal_arrays(frame: DataFrame, cfg: PatternStructureConfig) -> dict[str, np.ndarray]:
+def _triple_reversal_arrays(frame: DataFrame, cfg: PatternPeakConfig) -> dict[str, np.ndarray]:
     close, body_high, body_low, high_pivot, high_index, low_pivot, low_index = _pattern_geometry_arrays(frame, cfg)
     rows = len(frame)
     out = _empty_triple_output(rows)

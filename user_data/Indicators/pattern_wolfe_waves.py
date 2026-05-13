@@ -153,19 +153,28 @@ def add_pattern_wolfe_waves(
         side="bullish",
     )
 
+    bearish_present = pd.Series(bearish_state["state"], index=index, dtype="int8").gt(0)
+    bullish_present = pd.Series(bullish_state["state"], index=index, dtype="int8").gt(0)
     columns: dict[str, Series] = {
-        f"{p}_bearish_setup": bearish_setup,
-        f"{p}_bullish_setup": bullish_setup,
-        f"{p}_bearish_confirmed": pd.Series(bearish_state["confirmed"], index=index, dtype="bool").fillna(False),
-        f"{p}_bullish_confirmed": pd.Series(bullish_state["confirmed"], index=index, dtype="bool").fillna(False),
-        f"{p}_bearish_state": pd.Series(bearish_state["state"], index=index, dtype="int8"),
-        f"{p}_bullish_state": pd.Series(bullish_state["state"], index=index, dtype="int8"),
-        f"{p}_bearish_quality": pd.Series(bearish_state["quality"], index=index, dtype="float64"),
-        f"{p}_bullish_quality": pd.Series(bullish_state["quality"], index=index, dtype="float64"),
+        f"{p}_bearish_pattern_present": bearish_present.fillna(False),
+        f"{p}_bullish_pattern_present": bullish_present.fillna(False),
+        f"{p}_bearish_pattern_confirmed": pd.Series(bearish_state["confirmed"], index=index, dtype="bool").fillna(False),
+        f"{p}_bullish_pattern_confirmed": pd.Series(bullish_state["confirmed"], index=index, dtype="bool").fillna(False),
+        f"{p}_bearish_indicator_score": pd.Series(bearish_state["quality"], index=index, dtype="float64"),
+        f"{p}_bullish_indicator_score": pd.Series(bullish_state["quality"], index=index, dtype="float64"),
         f"{p}_bearish_confirmation_level": pd.Series(bearish_state["confirmation_level"], index=index, dtype="float64"),
         f"{p}_bullish_confirmation_level": pd.Series(bullish_state["confirmation_level"], index=index, dtype="float64"),
         f"{p}_bearish_target_level": pd.Series(bearish_state["target_level"], index=index, dtype="float64"),
         f"{p}_bullish_target_level": pd.Series(bullish_state["target_level"], index=index, dtype="float64"),
+        **_wolfe_pivot_index_columns(
+            index,
+            bearish_setup.to_numpy(dtype=bool),
+            bullish_setup.to_numpy(dtype=bool),
+            bearish_state["state"],
+            bullish_state["state"],
+            arrays,
+            p,
+        ),
     }
     if bool(cfg.include_pattern_diagnostics):
         columns.update(
@@ -183,6 +192,29 @@ def add_pattern_wolfe_waves(
     existing = [col for col in dataframe.columns if str(col).startswith(f"{p}_")]
     clean = dataframe.drop(columns=existing).copy() if existing else dataframe.copy()
     return pd.concat([clean, pd.DataFrame(columns, index=index)], axis=1)
+
+
+def _wolfe_pivot_index_columns(
+    index: pd.Index,
+    bearish_setup: np.ndarray,
+    bullish_setup: np.ndarray,
+    bearish_state: np.ndarray,
+    bullish_state: np.ndarray,
+    arrays: dict[str, np.ndarray],
+    prefix: str,
+) -> dict[str, Series]:
+    columns: dict[str, Series] = {}
+    for side in ("bearish", "bullish"):
+        setup = bearish_setup if side == "bearish" else bullish_setup
+        state = bearish_state if side == "bearish" else bullish_state
+        carried = _carry_values_while_state(
+            setup,
+            state,
+            {f"p{number}_index": arrays[f"{side}_p{number}_index"] for number in range(1, 6)},
+        )
+        for name, values in carried.items():
+            columns[f"{prefix}_{side}_{name}"] = pd.Series(values, index=index, dtype="float64")
+    return columns
 
 
 def _resolve_config(

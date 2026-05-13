@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, fields, replace
-from typing import Any as PatternStructureConfig
 
 import numpy as np
 import pandas as pd
@@ -127,7 +126,19 @@ def add_pattern_reversal(
         pivot_min_distance_pct=float(cfg.pivot_min_distance_pct),
     )
     columns = {**_double_reversal_columns(frame, cfg), **_head_shoulders_columns(frame, cfg)}
-    clean = dataframe.drop(columns=[column for column in columns if column in dataframe.columns]).copy()
+    existing = [
+        column
+        for column in dataframe.columns
+        if str(column).startswith(
+            (
+                f"{cfg.output_prefix}_double_top_",
+                f"{cfg.output_prefix}_double_bottom_",
+                f"{cfg.output_prefix}_head_shoulders_",
+                f"{cfg.output_prefix}_inverse_head_shoulders_",
+            )
+        )
+    ]
+    clean = dataframe.drop(columns=existing).copy() if existing else dataframe.copy()
     return pd.concat([clean, pd.DataFrame(columns, index=frame.index)], axis=1)
 
 
@@ -155,7 +166,7 @@ def _validate_ohlcv(dataframe: DataFrame) -> None:
         raise ValueError("Dataframe must not be empty")
 
 
-def _double_reversal_columns(frame: DataFrame, cfg: PatternStructureConfig) -> dict[str, Series]:
+def _double_reversal_columns(frame: DataFrame, cfg: PatternReversalConfig) -> dict[str, Series]:
     """Detect double top / double bottom attention at the second confirmed pivot."""
 
     p = cfg.output_prefix
@@ -229,6 +240,8 @@ def _double_reversal_columns(frame: DataFrame, cfg: PatternStructureConfig) -> d
         {
             "p1_index": arrays["double_top_first_index"],
             "p2_index": arrays["double_top_second_index"],
+            "p1_price": arrays["double_top_first_price"],
+            "p2_price": arrays["double_top_second_price"],
             "neckline": arrays["double_top_neckline"],
         },
     )
@@ -238,60 +251,58 @@ def _double_reversal_columns(frame: DataFrame, cfg: PatternStructureConfig) -> d
         {
             "p1_index": arrays["double_bottom_first_index"],
             "p2_index": arrays["double_bottom_second_index"],
+            "p1_price": arrays["double_bottom_first_price"],
+            "p2_price": arrays["double_bottom_second_price"],
             "neckline": arrays["double_bottom_neckline"],
         },
     )
-    clean_top = (
-        top_confirmed
-        & top_current_quality.ge(float(cfg.min_double_quality) + 0.06)
-    ).fillna(False)
-    clean_bottom = (
-        bottom_confirmed
-        & bottom_current_quality.ge(float(cfg.min_double_quality) + 0.06)
-    ).fillna(False)
+    top_present = top_developing | top_confirmed
+    bottom_present = bottom_developing | bottom_confirmed
+    top_confirmation_level = pd.Series(top_carried["neckline"], index=frame.index, dtype="float64")
+    bottom_confirmation_level = pd.Series(bottom_carried["neckline"], index=frame.index, dtype="float64")
+    top_level = pd.concat(
+        [
+            pd.Series(top_carried["p1_price"], index=frame.index, dtype="float64"),
+            pd.Series(top_carried["p2_price"], index=frame.index, dtype="float64"),
+        ],
+        axis=1,
+    ).mean(axis=1)
+    bottom_level = pd.concat(
+        [
+            pd.Series(bottom_carried["p1_price"], index=frame.index, dtype="float64"),
+            pd.Series(bottom_carried["p2_price"], index=frame.index, dtype="float64"),
+        ],
+        axis=1,
+    ).mean(axis=1)
     columns = {
-        f"{p}_double_top_structure_quality": top_quality.where(raw_top, 0.0),
-        f"{p}_double_bottom_structure_quality": bottom_quality.where(raw_bottom, 0.0),
-        f"{p}_double_top_quality": top_current_quality.where(top_developing | top_confirmed, 0.0),
-        f"{p}_double_bottom_quality": bottom_current_quality.where(bottom_developing | bottom_confirmed, 0.0),
-        f"{p}_double_top_structure_short": raw_top,
-        f"{p}_double_bottom_structure_long": raw_bottom,
-        f"{p}_double_top_setup_short": top.fillna(False),
-        f"{p}_double_bottom_setup_long": bottom.fillna(False),
-        f"{p}_double_top_peak": pd.Series(np.where(top_state.gt(0), 2.0, 0.0), index=frame.index, dtype="float64"),
-        f"{p}_double_bottom_peak": pd.Series(np.where(bottom_state.gt(0), 2.0, 0.0), index=frame.index, dtype="float64"),
-        f"{p}_double_top_state": top_state,
-        f"{p}_double_bottom_state": bottom_state,
+        f"{p}_double_top_pattern_present": top_present.fillna(False),
+        f"{p}_double_bottom_pattern_present": bottom_present.fillna(False),
+        f"{p}_double_top_pattern_confirmed": top_confirmed.fillna(False),
+        f"{p}_double_bottom_pattern_confirmed": bottom_confirmed.fillna(False),
+        f"{p}_double_top_indicator_score": top_current_quality.where(top_present, 0.0),
+        f"{p}_double_bottom_indicator_score": bottom_current_quality.where(bottom_present, 0.0),
+        f"{p}_double_top_confirmation_level": top_confirmation_level,
+        f"{p}_double_bottom_confirmation_level": bottom_confirmation_level,
+        f"{p}_double_top_target_level": top_confirmation_level - (top_level - top_confirmation_level).clip(lower=0.0),
+        f"{p}_double_bottom_target_level": bottom_confirmation_level + (bottom_confirmation_level - bottom_level).clip(lower=0.0),
         f"{p}_double_top_p1_index": pd.Series(top_carried["p1_index"], index=frame.index, dtype="float64"),
         f"{p}_double_top_p2_index": pd.Series(top_carried["p2_index"], index=frame.index, dtype="float64"),
-        f"{p}_double_top_p3_index": pd.Series(np.nan, index=frame.index, dtype="float64"),
-        f"{p}_double_top_neckline": pd.Series(top_carried["neckline"], index=frame.index, dtype="float64"),
         f"{p}_double_bottom_p1_index": pd.Series(bottom_carried["p1_index"], index=frame.index, dtype="float64"),
         f"{p}_double_bottom_p2_index": pd.Series(bottom_carried["p2_index"], index=frame.index, dtype="float64"),
-        f"{p}_double_bottom_p3_index": pd.Series(np.nan, index=frame.index, dtype="float64"),
-        f"{p}_double_bottom_neckline": pd.Series(bottom_carried["neckline"], index=frame.index, dtype="float64"),
-        f"{p}_double_top_clean_short": clean_top,
-        f"{p}_double_bottom_clean_long": clean_bottom,
-        f"{p}_double_top_first_index": pd.Series(arrays["double_top_first_index"], index=frame.index, dtype="float64"),
-        f"{p}_double_top_second_index": pd.Series(arrays["double_top_second_index"], index=frame.index, dtype="float64"),
-        f"{p}_double_top_first_price": pd.Series(arrays["double_top_first_price"], index=frame.index, dtype="float64"),
-        f"{p}_double_top_second_price": pd.Series(arrays["double_top_second_price"], index=frame.index, dtype="float64"),
-        f"{p}_double_top_neckline_index": pd.Series(arrays["double_top_neckline_index"], index=frame.index, dtype="float64"),
-        f"{p}_double_top_neckline_score": top_neckline_score.where(raw_top, 0.0),
-        f"{p}_double_top_reaction_score": top_reaction_score.where(raw_top, 0.0),
-        f"{p}_double_top_between_cleanliness_score": top_cleanliness_score.where(raw_top, 0.0),
-        f"{p}_double_bottom_first_index": pd.Series(arrays["double_bottom_first_index"], index=frame.index, dtype="float64"),
-        f"{p}_double_bottom_second_index": pd.Series(arrays["double_bottom_second_index"], index=frame.index, dtype="float64"),
-        f"{p}_double_bottom_first_price": pd.Series(arrays["double_bottom_first_price"], index=frame.index, dtype="float64"),
-        f"{p}_double_bottom_second_price": pd.Series(arrays["double_bottom_second_price"], index=frame.index, dtype="float64"),
-        f"{p}_double_bottom_neckline_index": pd.Series(arrays["double_bottom_neckline_index"], index=frame.index, dtype="float64"),
-        f"{p}_double_bottom_neckline_score": bottom_neckline_score.where(raw_bottom, 0.0),
-        f"{p}_double_bottom_reaction_score": bottom_reaction_score.where(raw_bottom, 0.0),
-        f"{p}_double_bottom_between_cleanliness_score": bottom_cleanliness_score.where(raw_bottom, 0.0),
     }
     if bool(getattr(cfg, "include_pattern_diagnostics", False)):
         columns.update(
             {
+                f"{p}_double_top_structure_short": raw_top,
+                f"{p}_double_bottom_structure_long": raw_bottom,
+                f"{p}_double_top_structure_quality": top_quality.where(raw_top, 0.0),
+                f"{p}_double_bottom_structure_quality": bottom_quality.where(raw_bottom, 0.0),
+                f"{p}_double_top_neckline_score": top_neckline_score.where(raw_top, 0.0),
+                f"{p}_double_top_reaction_score": top_reaction_score.where(raw_top, 0.0),
+                f"{p}_double_top_between_cleanliness_score": top_cleanliness_score.where(raw_top, 0.0),
+                f"{p}_double_bottom_neckline_score": bottom_neckline_score.where(raw_bottom, 0.0),
+                f"{p}_double_bottom_reaction_score": bottom_reaction_score.where(raw_bottom, 0.0),
+                f"{p}_double_bottom_between_cleanliness_score": bottom_cleanliness_score.where(raw_bottom, 0.0),
                 **_proof_line_columns(
                     frame.index,
                     f"{p}_double_top_short",
@@ -335,7 +346,7 @@ def _double_reversal_columns(frame: DataFrame, cfg: PatternStructureConfig) -> d
     return columns
 
 
-def _double_reversal_arrays(frame: DataFrame, cfg: PatternStructureConfig) -> dict[str, np.ndarray]:
+def _double_reversal_arrays(frame: DataFrame, cfg: PatternReversalConfig) -> dict[str, np.ndarray]:
     close, body_high, body_low, high_pivot, high_index, low_pivot, low_index = _pattern_geometry_arrays(frame, cfg)
     rows = len(frame)
     out = {
@@ -923,7 +934,7 @@ def _same_double_structure(
     return overlap_ratio >= float(min_overlap) and neckline_close
 
 
-def _head_shoulders_columns(frame: DataFrame, cfg: PatternStructureConfig) -> dict[str, Series]:
+def _head_shoulders_columns(frame: DataFrame, cfg: PatternReversalConfig) -> dict[str, Series]:
     """Detect head-and-shoulders / inverse head-and-shoulders at the right shoulder."""
 
     p = cfg.output_prefix
@@ -973,6 +984,7 @@ def _head_shoulders_columns(frame: DataFrame, cfg: PatternStructureConfig) -> di
         arrays["head_shoulders_left_index"],
         arrays["head_shoulders_head_index"],
         arrays["head_shoulders_right_index"],
+        arrays["head_shoulders_head_price"],
         arrays["head_shoulders_neckline_left"],
         arrays["head_shoulders_neckline_right"],
         arrays["head_shoulders_quality"],
@@ -986,6 +998,7 @@ def _head_shoulders_columns(frame: DataFrame, cfg: PatternStructureConfig) -> di
         arrays["inverse_head_shoulders_left_index"],
         arrays["inverse_head_shoulders_head_index"],
         arrays["inverse_head_shoulders_right_index"],
+        arrays["inverse_head_shoulders_head_price"],
         arrays["inverse_head_shoulders_neckline_left"],
         arrays["inverse_head_shoulders_neckline_right"],
         arrays["inverse_head_shoulders_quality"],
@@ -997,93 +1010,31 @@ def _head_shoulders_columns(frame: DataFrame, cfg: PatternStructureConfig) -> di
     inverse_state_series = pd.Series(inverse_state["state"], index=frame.index, dtype="int8")
     hs_quality = pd.Series(hs_state["quality"], index=frame.index, dtype="float64")
     inverse_quality = pd.Series(inverse_state["quality"], index=frame.index, dtype="float64")
+    hs_present = hs_state_series.gt(0)
+    inverse_present = inverse_state_series.gt(0)
+    hs_confirmed = pd.Series(hs_state["confirmed"], index=frame.index, dtype="bool")
+    inverse_confirmed = pd.Series(inverse_state["confirmed"], index=frame.index, dtype="bool")
+    hs_confirmation_level = pd.Series(hs_state["neckline"], index=frame.index, dtype="float64")
+    inverse_confirmation_level = pd.Series(inverse_state["neckline"], index=frame.index, dtype="float64")
+    hs_head_price = pd.Series(hs_state["head_price"], index=frame.index, dtype="float64")
+    inverse_head_price = pd.Series(inverse_state["head_price"], index=frame.index, dtype="float64")
     columns = {
-        f"{p}_head_shoulders_structure_quality": pd.Series(arrays["head_shoulders_quality"], index=frame.index, dtype="float64").where(
-            pd.Series(arrays["head_shoulders_structure_short"], index=frame.index, dtype="bool").fillna(False),
-            0.0,
-        ),
-        f"{p}_inverse_head_shoulders_structure_quality": pd.Series(
-            arrays["inverse_head_shoulders_quality"], index=frame.index, dtype="float64"
-        ).where(
-            pd.Series(arrays["inverse_head_shoulders_structure_long"], index=frame.index, dtype="bool").fillna(False),
-            0.0,
-        ),
-        f"{p}_head_shoulders_quality": hs_quality.where(hs_state_series.gt(0), 0.0),
-        f"{p}_inverse_head_shoulders_quality": inverse_quality.where(inverse_state_series.gt(0), 0.0),
-        f"{p}_head_shoulders_shoulder_score": pd.Series(arrays["head_shoulders_shoulder_score"], index=frame.index, dtype="float64"),
-        f"{p}_inverse_head_shoulders_shoulder_score": pd.Series(arrays["inverse_head_shoulders_shoulder_score"], index=frame.index, dtype="float64"),
-        f"{p}_head_shoulders_head_score": pd.Series(arrays["head_shoulders_head_score"], index=frame.index, dtype="float64"),
-        f"{p}_inverse_head_shoulders_head_score": pd.Series(arrays["inverse_head_shoulders_head_score"], index=frame.index, dtype="float64"),
-        f"{p}_head_shoulders_time_balance_score": pd.Series(
-            arrays["head_shoulders_time_balance_score"], index=frame.index, dtype="float64"
-        ),
-        f"{p}_inverse_head_shoulders_time_balance_score": pd.Series(
-            arrays["inverse_head_shoulders_time_balance_score"], index=frame.index, dtype="float64"
-        ),
-        f"{p}_head_shoulders_head_position_score": pd.Series(
-            arrays["head_shoulders_head_position_score"], index=frame.index, dtype="float64"
-        ),
-        f"{p}_inverse_head_shoulders_head_position_score": pd.Series(
-            arrays["inverse_head_shoulders_head_position_score"], index=frame.index, dtype="float64"
-        ),
-        f"{p}_head_shoulders_neckline_score": pd.Series(arrays["head_shoulders_neckline_score"], index=frame.index, dtype="float64"),
-        f"{p}_inverse_head_shoulders_neckline_score": pd.Series(arrays["inverse_head_shoulders_neckline_score"], index=frame.index, dtype="float64"),
-        f"{p}_head_shoulders_neckline_position_score": pd.Series(
-            arrays["head_shoulders_neckline_position_score"], index=frame.index, dtype="float64"
-        ),
-        f"{p}_inverse_head_shoulders_neckline_position_score": pd.Series(
-            arrays["inverse_head_shoulders_neckline_position_score"], index=frame.index, dtype="float64"
-        ),
-        f"{p}_head_shoulders_neckline_clearance_score": pd.Series(
-            arrays["head_shoulders_neckline_clearance_score"], index=frame.index, dtype="float64"
-        ),
-        f"{p}_inverse_head_shoulders_neckline_clearance_score": pd.Series(
-            arrays["inverse_head_shoulders_neckline_clearance_score"], index=frame.index, dtype="float64"
-        ),
-        f"{p}_head_shoulders_neckline_body_respect_ratio": pd.Series(
-            arrays["head_shoulders_neckline_body_respect_ratio"], index=frame.index, dtype="float64"
-        ),
-        f"{p}_inverse_head_shoulders_neckline_body_respect_ratio": pd.Series(
-            arrays["inverse_head_shoulders_neckline_body_respect_ratio"], index=frame.index, dtype="float64"
-        ),
-        f"{p}_head_shoulders_reaction_score": pd.Series(arrays["head_shoulders_reaction_score"], index=frame.index, dtype="float64"),
-        f"{p}_inverse_head_shoulders_reaction_score": pd.Series(arrays["inverse_head_shoulders_reaction_score"], index=frame.index, dtype="float64"),
-        f"{p}_head_shoulders_structure_short": pd.Series(arrays["head_shoulders_structure_short"], index=frame.index, dtype="bool").fillna(False),
-        f"{p}_inverse_head_shoulders_structure_long": pd.Series(
-            arrays["inverse_head_shoulders_structure_long"], index=frame.index, dtype="bool"
-        ).fillna(False),
-        f"{p}_head_shoulders_setup_short": hs.fillna(False),
-        f"{p}_inverse_head_shoulders_setup_long": inverse.fillna(False),
-        f"{p}_head_shoulders_peak": pd.Series(np.where(hs_state_series.gt(0), 3.0, 0.0), index=frame.index, dtype="float64"),
-        f"{p}_inverse_head_shoulders_peak": pd.Series(
-            np.where(inverse_state_series.gt(0), 3.0, 0.0), index=frame.index, dtype="float64"
-        ),
-        f"{p}_head_shoulders_state": hs_state_series,
-        f"{p}_inverse_head_shoulders_state": inverse_state_series,
+        f"{p}_head_shoulders_pattern_present": hs_present.fillna(False),
+        f"{p}_inverse_head_shoulders_pattern_present": inverse_present.fillna(False),
+        f"{p}_head_shoulders_pattern_confirmed": hs_confirmed.fillna(False),
+        f"{p}_inverse_head_shoulders_pattern_confirmed": inverse_confirmed.fillna(False),
+        f"{p}_head_shoulders_indicator_score": hs_quality.where(hs_present, 0.0),
+        f"{p}_inverse_head_shoulders_indicator_score": inverse_quality.where(inverse_present, 0.0),
+        f"{p}_head_shoulders_confirmation_level": hs_confirmation_level,
+        f"{p}_inverse_head_shoulders_confirmation_level": inverse_confirmation_level,
+        f"{p}_head_shoulders_target_level": hs_confirmation_level + (hs_confirmation_level - hs_head_price),
+        f"{p}_inverse_head_shoulders_target_level": inverse_confirmation_level + (inverse_confirmation_level - inverse_head_price),
         f"{p}_head_shoulders_p1_index": pd.Series(hs_state["p1_index"], index=frame.index, dtype="float64"),
         f"{p}_head_shoulders_p2_index": pd.Series(hs_state["p2_index"], index=frame.index, dtype="float64"),
         f"{p}_head_shoulders_p3_index": pd.Series(hs_state["p3_index"], index=frame.index, dtype="float64"),
-        f"{p}_head_shoulders_neckline": pd.Series(hs_state["neckline"], index=frame.index, dtype="float64"),
         f"{p}_inverse_head_shoulders_p1_index": pd.Series(inverse_state["p1_index"], index=frame.index, dtype="float64"),
         f"{p}_inverse_head_shoulders_p2_index": pd.Series(inverse_state["p2_index"], index=frame.index, dtype="float64"),
         f"{p}_inverse_head_shoulders_p3_index": pd.Series(inverse_state["p3_index"], index=frame.index, dtype="float64"),
-        f"{p}_inverse_head_shoulders_neckline": pd.Series(inverse_state["neckline"], index=frame.index, dtype="float64"),
-        f"{p}_head_shoulders_left_index": pd.Series(arrays["head_shoulders_left_index"], index=frame.index, dtype="float64"),
-        f"{p}_head_shoulders_head_index": pd.Series(arrays["head_shoulders_head_index"], index=frame.index, dtype="float64"),
-        f"{p}_head_shoulders_right_index": pd.Series(arrays["head_shoulders_right_index"], index=frame.index, dtype="float64"),
-        f"{p}_head_shoulders_left_price": pd.Series(arrays["head_shoulders_left_price"], index=frame.index, dtype="float64"),
-        f"{p}_head_shoulders_head_price": pd.Series(arrays["head_shoulders_head_price"], index=frame.index, dtype="float64"),
-        f"{p}_head_shoulders_right_price": pd.Series(arrays["head_shoulders_right_price"], index=frame.index, dtype="float64"),
-        f"{p}_head_shoulders_neckline_left": pd.Series(arrays["head_shoulders_neckline_left"], index=frame.index, dtype="float64"),
-        f"{p}_head_shoulders_neckline_right": pd.Series(arrays["head_shoulders_neckline_right"], index=frame.index, dtype="float64"),
-        f"{p}_inverse_head_shoulders_left_index": pd.Series(arrays["inverse_head_shoulders_left_index"], index=frame.index, dtype="float64"),
-        f"{p}_inverse_head_shoulders_head_index": pd.Series(arrays["inverse_head_shoulders_head_index"], index=frame.index, dtype="float64"),
-        f"{p}_inverse_head_shoulders_right_index": pd.Series(arrays["inverse_head_shoulders_right_index"], index=frame.index, dtype="float64"),
-        f"{p}_inverse_head_shoulders_left_price": pd.Series(arrays["inverse_head_shoulders_left_price"], index=frame.index, dtype="float64"),
-        f"{p}_inverse_head_shoulders_head_price": pd.Series(arrays["inverse_head_shoulders_head_price"], index=frame.index, dtype="float64"),
-        f"{p}_inverse_head_shoulders_right_price": pd.Series(arrays["inverse_head_shoulders_right_price"], index=frame.index, dtype="float64"),
-        f"{p}_inverse_head_shoulders_neckline_left": pd.Series(arrays["inverse_head_shoulders_neckline_left"], index=frame.index, dtype="float64"),
-        f"{p}_inverse_head_shoulders_neckline_right": pd.Series(arrays["inverse_head_shoulders_neckline_right"], index=frame.index, dtype="float64"),
     }
     if bool(getattr(cfg, "include_pattern_diagnostics", False)):
         columns.update(
@@ -1149,6 +1100,7 @@ def _head_shoulders_state(
     left_index: np.ndarray,
     head_index: np.ndarray,
     right_index: np.ndarray,
+    head_price: np.ndarray,
     neckline_left: np.ndarray,
     neckline_right: np.ndarray,
     quality: np.ndarray,
@@ -1165,6 +1117,7 @@ def _head_shoulders_state(
         "p1_index": np.full(rows, np.nan, dtype="float64"),
         "p2_index": np.full(rows, np.nan, dtype="float64"),
         "p3_index": np.full(rows, np.nan, dtype="float64"),
+        "head_price": np.full(rows, np.nan, dtype="float64"),
         "neckline": np.full(rows, np.nan, dtype="float64"),
     }
     mature = max(int(mature_bars), 1)
@@ -1177,15 +1130,19 @@ def _head_shoulders_state(
     right_x = np.nan
     neck_left = np.nan
     neck_right = np.nan
+    active_head_price = np.nan
     setup_quality = 0.0
 
     for row in range(rows):
-        if setup[row] and np.isfinite([left_index[row], head_index[row], right_index[row], neckline_left[row], neckline_right[row]]).all():
+        if setup[row] and np.isfinite(
+            [left_index[row], head_index[row], right_index[row], head_price[row], neckline_left[row], neckline_right[row]]
+        ).all():
             setup_row = int(row)
             confirmed_row = -1
             left_x = float(left_index[row])
             head_x = float(head_index[row])
             right_x = float(right_index[row])
+            active_head_price = float(head_price[row])
             neck_left = float(neckline_left[row])
             neck_right = float(neckline_right[row])
             setup_quality = float(quality[row]) if np.isfinite(quality[row]) else 0.0
@@ -1205,6 +1162,7 @@ def _head_shoulders_state(
         carried["p1_index"][row] = left_x
         carried["p2_index"][row] = head_x
         carried["p3_index"][row] = right_x
+        carried["head_price"][row] = active_head_price
         carried["neckline"][row] = neckline_now
         carried_quality[row] = setup_quality
 
@@ -1240,11 +1198,12 @@ def _head_shoulders_state(
     return {
         **carried,
         "state": state,
+        "confirmed": state == 2,
         "quality": carried_quality,
     }
 
 
-def _head_shoulders_arrays(frame: DataFrame, cfg: PatternStructureConfig) -> dict[str, np.ndarray]:
+def _head_shoulders_arrays(frame: DataFrame, cfg: PatternReversalConfig) -> dict[str, np.ndarray]:
     close, body_high, body_low, high_pivot, high_index, low_pivot, low_index = _pattern_geometry_arrays(frame, cfg)
     rows = len(frame)
     scale_window = int(getattr(cfg, "peak_dynamic_scale_window", cfg.peak_dynamic_body_window))
@@ -1338,7 +1297,7 @@ def _score_head_shoulders(
     body_pct: np.ndarray,
     atr_pct: np.ndarray,
     prominence_pct: np.ndarray,
-    cfg: PatternStructureConfig,
+    cfg: PatternReversalConfig,
     *,
     inverse: bool,
 ) -> dict[str, float]:
@@ -1777,7 +1736,7 @@ def _activate_head_shoulders_setups(
     close: np.ndarray,
     body_high: np.ndarray,
     body_low: np.ndarray,
-    cfg: PatternStructureConfig,
+    cfg: PatternReversalConfig,
     *,
     name: str,
     inverse: bool,
