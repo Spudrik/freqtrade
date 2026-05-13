@@ -668,7 +668,13 @@ def _align_bars_by_market(
         if market_rows.empty:
             aligned[market_key] = _empty_market_frame(candle_times, output_index, cfg)
             continue
-        market_aligned = _aggregate_market_to_candles(market_rows, candle_times, output_index, cfg)
+        market_aligned = _aggregate_market_to_candles(
+            market_rows,
+            candle_times,
+            output_index,
+            cfg,
+            include_json=market_key == cfg.primary_market_key,
+        )
         market_aligned = _finalize_aligned_market(market_aligned, cfg)
         aligned[market_key] = market_aligned
     return aligned
@@ -679,6 +685,8 @@ def _aggregate_market_to_candles(
     candle_times: pd.DatetimeIndex,
     output_index: Any,
     cfg: OrderbookContextFeatureConfig,
+    *,
+    include_json: bool = True,
 ) -> DataFrame:
     """Summarize source bars into closed candle windows without lookahead.
 
@@ -802,9 +810,10 @@ def _aggregate_market_to_candles(
     ].max()
     output.loc[observed.index, "bar_observed_at"] = pd.to_datetime(observed, utc=True)
 
-    for column in BAR_JSON_COLUMNS:
-        if column in rows.columns:
-            output.loc[:, column] = _aggregate_json_column_to_targets(rows, column, target_array, source_array, output.index)
+    if include_json:
+        for column in BAR_JSON_COLUMNS:
+            if column in rows.columns:
+                output.loc[:, column] = _aggregate_json_column_to_targets(rows, column, target_array, source_array, output.index)
 
     if cfg.availability_lag_candles:
         output = output.shift(int(cfg.availability_lag_candles))
