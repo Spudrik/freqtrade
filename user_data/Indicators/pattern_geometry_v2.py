@@ -338,6 +338,13 @@ class _LineCandidate:
     absorbed_pivot_count: float
 
 
+@dataclass(frozen=True)
+class _PivotEvents:
+    confirmed_at: np.ndarray
+    anchor_index: np.ndarray
+    price: np.ndarray
+
+
 def add_pattern_geometry_v2(
     dataframe: DataFrame,
     config: PatternGeometryV2Config | None = None,
@@ -425,6 +432,8 @@ def _geometry_v2_arrays(frame: DataFrame, cfg: PatternGeometryV2Config) -> dict[
     high_index = base["pivot_high_index"].to_numpy(dtype="float64")
     low_pivot = base["pivot_low"].to_numpy(dtype="float64")
     low_index = base["pivot_low_index"].to_numpy(dtype="float64")
+    high_events = _pivot_events(high_pivot, high_index)
+    low_events = _pivot_events(low_pivot, low_index)
     if candidates.empty:
         resistance_lines: list[_LineCandidate] = []
         support_lines: list[_LineCandidate] = []
@@ -471,10 +480,8 @@ def _geometry_v2_arrays(frame: DataFrame, cfg: PatternGeometryV2Config) -> dict[
         pattern_candidates.extend(
             _channel_envelope_candidates(
                 row=row,
-                high_pivot=high_pivot,
-                high_index=high_index,
-                low_pivot=low_pivot,
-                low_index=low_index,
+                high_events=high_events,
+                low_events=low_events,
                 high=high,
                 low=low,
                 atr=atr,
@@ -556,6 +563,15 @@ def _line_candidates_from_frame(candidates: DataFrame, side: str) -> list[_LineC
 def _active_lines_for_row(lines: list[_LineCandidate], row: int) -> list[_LineCandidate]:
     value = float(row)
     return [line for line in lines if line.active_start <= value <= line.projection_end]
+
+
+def _pivot_events(pivot: np.ndarray, pivot_index: np.ndarray) -> _PivotEvents:
+    mask = np.isfinite(pivot) & np.isfinite(pivot_index)
+    return _PivotEvents(
+        confirmed_at=np.flatnonzero(mask).astype("int64"),
+        anchor_index=pivot_index[mask].astype("float64"),
+        price=pivot[mask].astype("float64"),
+    )
 
 
 def _pair_lines_as_pattern(
@@ -743,10 +759,8 @@ def _pair_lines_as_pattern(
 def _channel_envelope_candidates(
     *,
     row: int,
-    high_pivot: np.ndarray,
-    high_index: np.ndarray,
-    low_pivot: np.ndarray,
-    low_index: np.ndarray,
+    high_events: _PivotEvents,
+    low_events: _PivotEvents,
     high: np.ndarray,
     low: np.ndarray,
     atr: np.ndarray,
@@ -773,12 +787,12 @@ def _channel_envelope_candidates(
         return []
 
     candidates: list[dict[str, float]] = []
-    for start_index in _channel_envelope_starts(row, high_pivot, high_index, low_pivot, low_index, cfg):
+    for start_index in _channel_envelope_starts(row, high_events, low_events, cfg):
         span = int(row) - int(start_index)
         if span < int(cfg.channel_min_pattern_bars) or span > int(cfg.channel_max_pattern_bars):
             continue
-        high_x, high_y = _confirmed_pivots_between(high_pivot, high_index, row, start_index, row)
-        low_x, low_y = _confirmed_pivots_between(low_pivot, low_index, row, start_index, row)
+        high_x, high_y = _confirmed_pivots_between(high_events, row, start_index, row)
+        low_x, low_y = _confirmed_pivots_between(low_events, row, start_index, row)
         if len(high_x) < int(cfg.channel_min_side_pivots) or len(low_x) < int(cfg.channel_min_side_pivots):
             continue
 
@@ -919,27 +933,21 @@ def _channel_envelope_candidates(
 
 def _channel_envelope_starts(
     row: int,
-    high_pivot: np.ndarray,
-    high_index: np.ndarray,
-    low_pivot: np.ndarray,
-    low_index: np.ndarray,
+    high_events: _PivotEvents,
+    low_events: _PivotEvents,
     cfg: PatternGeometryV2Config,
 ) -> np.ndarray:
     min_start = int(row) - int(cfg.channel_max_pattern_bars)
     max_start = int(row) - int(cfg.channel_min_pattern_bars)
     if max_start <= 0:
         return np.asarray([], dtype="int64")
-    event_mask_high = (
-        np.arange(len(high_pivot)) <= int(row)
-    ) & np.isfinite(high_pivot) & np.isfinite(high_index)
-    event_mask_low = (
-        np.arange(len(low_pivot)) <= int(row)
-    ) & np.isfinite(low_pivot) & np.isfinite(low_index)
+    event_mask_high = high_events.confirmed_at <= int(row)
+    event_mask_low = low_events.confirmed_at <= int(row)
     events = np.unique(
         np.concatenate(
             [
-                high_index[event_mask_high],
-                low_index[event_mask_low],
+                high_events.anchor_index[event_mask_high],
+                low_events.anchor_index[event_mask_low],
             ]
         ).astype("int64")
     )
@@ -951,22 +959,18 @@ def _channel_envelope_starts(
 
 
 def _confirmed_pivots_between(
-    pivot: np.ndarray,
-    pivot_index: np.ndarray,
+    events: _PivotEvents,
     row: int,
     start_index: int,
     end_index: int,
 ) -> tuple[np.ndarray, np.ndarray]:
-    confirmed = np.arange(len(pivot)) <= int(row)
     mask = (
-        confirmed
-        & np.isfinite(pivot)
-        & np.isfinite(pivot_index)
-        & (pivot_index >= float(start_index))
-        & (pivot_index <= float(end_index))
+        (events.confirmed_at <= int(row))
+        & (events.anchor_index >= float(start_index))
+        & (events.anchor_index <= float(end_index))
     )
-    x = pivot_index[mask].astype("float64")
-    y = pivot[mask].astype("float64")
+    x = events.anchor_index[mask]
+    y = events.price[mask]
     order = np.argsort(x)
     return x[order], y[order]
 

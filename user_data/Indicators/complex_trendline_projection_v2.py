@@ -881,7 +881,8 @@ def _absorb_nearby_weaker_lines(candidates: DataFrame, proximity_pct: float, cfg
         return candidates.copy()
 
     out_rows: list[pd.Series] = []
-    sorted_candidates = candidates.sort_values(["pivot_count", "score", "span"], ascending=False)
+    sorted_candidates = candidates.sort_values(["pivot_count", "score", "span"], ascending=False).copy()
+    sorted_candidates["norm_slope"] = _candidate_norm_slope(sorted_candidates)
     for _, side_candidates in sorted_candidates.groupby("side", sort=False):
         kept: list[dict[str, object]] = []
         for _, candidate in side_candidates.iterrows():
@@ -1075,6 +1076,9 @@ def _candidate_norm_slope(candidates: DataFrame) -> Series:
 
 
 def _row_norm_slope(row: pd.Series) -> float:
+    norm_slope = row.get("norm_slope", np.nan)
+    if np.isfinite(norm_slope):
+        return float(norm_slope)
     end_price = row.get("y_end", row["y_new"])
     price_ref = max((abs(float(row["y_old"])) + abs(float(end_price))) / 2.0, 1e-9)
     return float(row["slope"]) / price_ref
