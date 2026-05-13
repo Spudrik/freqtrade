@@ -666,7 +666,7 @@ def _align_bars_by_market(
     for market_key in cfg.market_keys:
         market_rows = prepared.loc[prepared["market_key"].eq(market_key)].copy()
         if market_rows.empty:
-            aligned[market_key] = _empty_market_frame(candle_times, output_index, cfg)
+            aligned[market_key] = _empty_market_frame(candle_times, output_index)
             continue
         market_aligned = _aggregate_market_to_candles(
             market_rows,
@@ -1020,7 +1020,6 @@ def _price_distance_bps(left: float, right: float) -> float:
 def _empty_market_frame(
     candle_times: pd.DatetimeIndex,
     output_index: Any,
-    cfg: OrderbookContextFeatureConfig,
 ) -> DataFrame:
     frame = DataFrame(index=candle_times)
     for column in BAR_NUMERIC_COLUMNS:

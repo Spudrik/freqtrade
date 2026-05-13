@@ -873,33 +873,6 @@ def _pivot_diagnostic_columns(
         f"{prefix}_entry_bearish_trend_aligned_breakout_short": _dedupe_events(short_trend_aligned_breakout, cooldown),
         f"{prefix}_entry_range_resistance_short": _dedupe_events(short_range_resistance, cooldown),
     }
-    legacy_entries = {
-        f"{prefix}_entry_bullish_reversal_break_long": primary_entries[
-            f"{prefix}_entry_bullish_trend_flip_breakout_long"
-        ],
-        f"{prefix}_entry_bullish_continuation_break_long": primary_entries[
-            f"{prefix}_entry_bullish_trend_aligned_breakout_long"
-        ],
-        f"{prefix}_entry_bearish_reversal_break_short": primary_entries[
-            f"{prefix}_entry_bearish_trend_flip_breakout_short"
-        ],
-        f"{prefix}_entry_bearish_continuation_break_short": primary_entries[
-            f"{prefix}_entry_bearish_trend_aligned_breakout_short"
-        ],
-        f"{prefix}_entry_bullish_choch_reversal_long": primary_entries[
-            f"{prefix}_entry_bullish_trend_flip_breakout_long"
-        ],
-        f"{prefix}_entry_bullish_bos_continuation_long": primary_entries[
-            f"{prefix}_entry_bullish_trend_aligned_breakout_long"
-        ],
-        f"{prefix}_entry_bearish_choch_reversal_short": primary_entries[
-            f"{prefix}_entry_bearish_trend_flip_breakout_short"
-        ],
-        f"{prefix}_entry_bearish_bos_continuation_short": primary_entries[
-            f"{prefix}_entry_bearish_trend_aligned_breakout_short"
-        ],
-    }
-    entries = {**primary_entries, **legacy_entries}
     entry_any_long = pd.concat(
         [series for name, series in primary_entries.items() if name.endswith("_long")],
         axis=1,
@@ -914,7 +887,7 @@ def _pivot_diagnostic_columns(
         f"{prefix}_context_score_bear": bear_context_score,
         f"{prefix}_context_score_balance": balance_score,
         f"{prefix}_market_context": market_context,
-        **entries,
+        **primary_entries,
         f"{prefix}_entry_any_long": entry_any_long.fillna(False),
         f"{prefix}_entry_any_short": entry_any_short.fillna(False),
     }

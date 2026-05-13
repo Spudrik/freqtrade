@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any as PatternConfigLike
+
 import numpy as np
 import pandas as pd
 from pandas import DataFrame, Series
@@ -31,35 +33,6 @@ def _continuation_proof_columns(
         {
             line_number: tuple(arrays[f"proof_line{line_number}_{field}_{side}"] for field in ("x1", "y1", "x2", "y2"))
             for line_number in (1, 2, 3)
-        },
-    )
-
-
-def _geometry_boundary_proof_columns(
-    index: pd.Index,
-    base: str,
-    mask: Series,
-    arrays: dict[str, np.ndarray],
-) -> dict[str, Series]:
-    """Expose upper/lower fitted boundaries for two-line geometric patterns."""
-
-    return _proof_line_columns(
-        index,
-        base,
-        mask,
-        {
-            1: (
-                arrays.get("geometry_upper_start_index", arrays["geometry_start_index"]),
-                arrays.get("geometry_upper_anchor_start", arrays["geometry_upper_start"]),
-                arrays["geometry_end_index"],
-                arrays["geometry_upper"],
-            ),
-            2: (
-                arrays.get("geometry_lower_start_index", arrays["geometry_start_index"]),
-                arrays.get("geometry_lower_anchor_start", arrays["geometry_lower_start"]),
-                arrays["geometry_end_index"],
-                arrays["geometry_lower"],
-            ),
         },
     )
 
@@ -167,39 +140,6 @@ def _same_interval_level_structure(
         return True
     secondary_ref = max(abs(float(secondary)), abs(float(prior_secondary)), 1e-9)
     return abs(float(secondary) - float(prior_secondary)) / secondary_ref <= float(level_tolerance_pct)
-
-
-def _lifecycle_state_from_events(mask: np.ndarray | Series, mature_bars: int, stale_bars: int) -> np.ndarray:
-    """Carry sparse pattern events forward as mature/stale state.
-
-    Values are intentionally simple:
-    - ``0``: no active lifecycle.
-    - ``2``: mature/current pattern window after the event row.
-    - ``-1``: stale window after the mature window.
-
-    The setup event remains the primary signal. This state only tells the
-    strategy or diagnostic plot whether a recent pattern is still fresh enough
-    to pay attention to, without re-emitting the same setup repeatedly.
-    """
-
-    clean = np.asarray(mask, dtype=bool)
-    out = np.zeros(len(clean), dtype="int8")
-    mature = max(int(mature_bars), 1)
-    stale = max(int(stale_bars), 0)
-    active_row = -1
-    for row, is_event in enumerate(clean):
-        if is_event:
-            active_row = int(row)
-        if active_row < 0:
-            continue
-        age = row - active_row
-        if age <= mature:
-            out[row] = 2
-        elif age <= mature + stale:
-            out[row] = -1
-        else:
-            active_row = -1
-    return out
 
 
 def _peak_confirmation_state(
@@ -320,7 +260,7 @@ def _carry_values_while_state(
 
 def _pattern_geometry_arrays(
     frame: DataFrame,
-    cfg: PatternStructureConfig,
+    cfg: PatternConfigLike,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     close = _num(frame["close"]).replace(0.0, np.nan).to_numpy(dtype="float64")
     open_ = _num(frame["open"]).to_numpy(dtype="float64")
@@ -337,8 +277,8 @@ def _pattern_geometry_arrays(
         body_low,
         int(cfg.pattern_pivot_strength),
     )
-    high_pivot = _combine_sparse_pivots(high_pivot, high_index, micro_high, micro_high_index)
-    low_pivot = _combine_sparse_pivots(low_pivot, low_index, micro_low, micro_low_index)
+    high_pivot = _combine_sparse_pivots(high_pivot, high_index, micro_high)
+    low_pivot = _combine_sparse_pivots(low_pivot, low_index, micro_low)
     high_index = _combine_sparse_indexes(high_pivot, high_index, micro_high_index)
     low_index = _combine_sparse_indexes(low_pivot, low_index, micro_low_index)
     return close, body_high, body_low, high_pivot, high_index, low_pivot, low_index
@@ -403,23 +343,6 @@ def _with_foundation_pivots(
     for key, value in pivots.items():
         base[f"{pp}_{key}"] = value
     return base
-
-
-def _recent_confirmed_pattern_pivots(
-    row: int,
-    start: int,
-    high_pivot: np.ndarray,
-    high_index: np.ndarray,
-    low_pivot: np.ndarray,
-    low_index: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    high_prices = high_pivot[start : row + 1]
-    high_x = high_index[start : row + 1]
-    low_prices = low_pivot[start : row + 1]
-    low_x = low_index[start : row + 1]
-    high_mask = np.isfinite(high_prices) & np.isfinite(high_x) & (high_x >= float(start)) & (high_x <= float(row))
-    low_mask = np.isfinite(low_prices) & np.isfinite(low_x) & (low_x >= float(start)) & (low_x <= float(row))
-    return high_x[high_mask], high_prices[high_mask], low_x[low_mask], low_prices[low_mask]
 
 
 def _line_fit_with_error(x: np.ndarray, y: np.ndarray) -> tuple[float, float, float]:
@@ -648,25 +571,6 @@ def _dynamic_height_tolerance_pct(
     return float(min(cap, dynamic))
 
 
-def _dynamic_level_tolerance_pct(static_cap_pct: float, body_ref_pct: float, body_mult: float, floor_pct: float = 0.006) -> float:
-    """Compatibility wrapper for older code paths.
-
-    New indicators should call ``_dynamic_height_tolerance_pct`` and include at
-    least body plus ATR/range scale. The static percentage must remain a cap,
-    never the main cross-timeframe decision rule.
-    """
-
-    return _dynamic_height_tolerance_pct(
-        static_cap_pct,
-        body_ref_pct,
-        0.0,
-        0.0,
-        body_mult,
-        0.0,
-        0.0,
-    )
-
-
 def _reaction_level_between(values: np.ndarray, first_x: float, second_x: float, *, find_low: bool) -> tuple[float, float]:
     start = int(max(np.floor(first_x), 0))
     stop = int(min(np.ceil(second_x), len(values) - 1))
@@ -815,7 +719,6 @@ def _combine_sparse_pivots(
     foundation_price: np.ndarray,
     foundation_index: np.ndarray,
     micro_price: np.ndarray,
-    micro_index: np.ndarray,
 ) -> np.ndarray:
     out = micro_price.copy()
     foundation_valid = np.isfinite(foundation_price) & np.isfinite(foundation_index)

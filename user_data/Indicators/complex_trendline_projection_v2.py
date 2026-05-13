@@ -73,8 +73,6 @@ class TrendlineProjectionV2Config:
     Tunable first-pass levers:
     - ``pivot_strength``: confirmed body pivot strength. A pivot is emitted only
       after this many candles have confirmed it.
-    - ``candidate_pivot_count``: retained for compatibility with older callers.
-      The current fixed sequence scans the supplied dataframe window.
     - ``max_slope_pct_per_bar``: removes extreme angle lines, normalized by
       price so the same rule can work across coins/timeframes.
     - ``min_anchor_bars``: removes pivot pairs that are too close together.
@@ -103,7 +101,6 @@ class TrendlineProjectionV2Config:
     output_prefix: str = "tlv2"
     timeframe: str = "4h"
     pivot_strength: int = 2
-    candidate_pivot_count: int = 36
     raw_line_output_count: int = 3
 
     min_anchor_bars: int = 10
@@ -114,8 +111,6 @@ class TrendlineProjectionV2Config:
     max_active_line_distance_pct: float = 0.08
     max_active_line_distance_atr_mult: float = 6.0
 
-    absorb_touch_tolerance_pct: float = 0.0045
-    absorb_angle_tolerance_pct: float = 0.18
     absorb_width_scale: float = 0.30
     duplicate_line_proximity_pct: float = 0.0060
     duplicate_angle_tolerance_pct: float = 0.20
@@ -1181,8 +1176,6 @@ def _validate_config(cfg: TrendlineProjectionV2Config) -> None:
     _normalize_timeframe(str(cfg.timeframe))
     if cfg.pivot_strength < 1:
         raise ValueError("pivot_strength must be positive")
-    if cfg.candidate_pivot_count < 3:
-        raise ValueError("candidate_pivot_count must be at least 3")
     if cfg.raw_line_output_count < 1:
         raise ValueError("raw_line_output_count must be positive")
     if cfg.min_anchor_bars < 1:
@@ -1197,8 +1190,6 @@ def _validate_config(cfg: TrendlineProjectionV2Config) -> None:
         raise ValueError("max_projection_bars must be positive")
     if cfg.max_active_line_distance_pct <= 0.0 or cfg.max_active_line_distance_atr_mult <= 0.0:
         raise ValueError("active line distance settings must be positive")
-    if cfg.absorb_touch_tolerance_pct <= 0.0 or cfg.absorb_angle_tolerance_pct <= 0.0:
-        raise ValueError("absorb tolerances must be positive")
     if cfg.absorb_width_scale < 0.0:
         raise ValueError("absorb_width_scale must be non-negative")
     if cfg.duplicate_line_proximity_pct <= 0.0 or cfg.duplicate_angle_tolerance_pct <= 0.0:
