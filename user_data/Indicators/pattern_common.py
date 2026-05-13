@@ -4,6 +4,11 @@ import numpy as np
 import pandas as pd
 from pandas import DataFrame, Series
 
+try:
+    from .pivot_foundation import build_clean_pivot_source
+except Exception:  # pragma: no cover - standalone scripts import directly
+    from pivot_foundation import build_clean_pivot_source  # type: ignore[no-redef]
+
 
 def _continuation_proof_columns(
     index: pd.Index,
@@ -337,6 +342,67 @@ def _pattern_geometry_arrays(
     high_index = _combine_sparse_indexes(high_pivot, high_index, micro_high_index)
     low_index = _combine_sparse_indexes(low_pivot, low_index, micro_low_index)
     return close, body_high, body_low, high_pivot, high_index, low_pivot, low_index
+
+
+def _with_foundation_pivots(
+    dataframe: DataFrame,
+    *,
+    pivot_prefix: str,
+    atr_period: int = 14,
+    pivot_strength: int = 2,
+    pivot_min_prominence_atr: float = 0.35,
+    pivot_min_prominence_pct: float = 0.0,
+    pivot_min_spacing_bars: int = 1,
+    pivot_min_distance_atr: float = 0.0,
+    pivot_min_distance_pct: float = 0.0,
+) -> DataFrame:
+    """Return a dataframe with canonical foundation pivot columns present."""
+
+    base = dataframe.copy()
+    pp = str(pivot_prefix)
+    required = (
+        f"{pp}_pivot_high",
+        f"{pp}_pivot_low",
+        f"{pp}_pivot_high_index",
+        f"{pp}_pivot_low_index",
+        f"{pp}_pivot_high_prominence_pct",
+        f"{pp}_pivot_low_prominence_pct",
+    )
+    if all(column in base.columns for column in required):
+        return base
+
+    open_ = _num(base["open"])
+    high = _num(base["high"])
+    low = _num(base["low"])
+    close = _num(base["close"])
+    body_high = pd.concat([open_, close], axis=1).max(axis=1)
+    body_low = pd.concat([open_, close], axis=1).min(axis=1)
+    previous_close = close.shift(1)
+    true_range = pd.concat(
+        [
+            (high - low).abs(),
+            (high - previous_close).abs(),
+            (low - previous_close).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+    atr = true_range.rolling(int(atr_period), min_periods=1).mean()
+    bar_index = pd.Series(np.arange(len(base), dtype="float64"), index=base.index)
+    pivots = build_clean_pivot_source(
+        body_high=body_high,
+        body_low=body_low,
+        atr=atr,
+        bar_index=bar_index,
+        strength=int(pivot_strength),
+        min_prominence_atr=float(pivot_min_prominence_atr),
+        min_prominence_pct=float(pivot_min_prominence_pct),
+        min_pivot_spacing_bars=int(pivot_min_spacing_bars),
+        min_pivot_distance_atr=float(pivot_min_distance_atr),
+        min_pivot_distance_pct=float(pivot_min_distance_pct),
+    )
+    for key, value in pivots.items():
+        base[f"{pp}_{key}"] = value
+    return base
 
 
 def _recent_confirmed_pattern_pivots(

@@ -12,9 +12,9 @@ except Exception:  # pragma: no cover - standalone review scripts import this mo
     from pivot_foundation import build_clean_pivot_source  # type: ignore[no-redef]
 
 from pattern_common import _num
-from pattern_channel import _channel_pattern_columns
+from pattern_channel import PatternChannelConfig, add_pattern_channel
 from pattern_continuation import _flag_pennant_columns
-from pattern_geometry import _triangle_wedge_columns
+from pattern_geometry_v2 import PatternGeometryV2Config, add_pattern_geometry_v2
 from pattern_multi_peak import _triple_reversal_columns
 from pattern_range import _rectangle_range_columns
 from pattern_reversal import _double_reversal_columns, _head_shoulders_columns
@@ -35,13 +35,13 @@ class PatternStructureConfig:
     """
 
     output_prefix: str = "pat"
+    timeframe: str = "4h"
     pivot_prefix: str = "pf"
     pivot_strength: int = 2
     pivot_min_prominence_atr: float = 0.0
     pivot_min_prominence_pct: float = 0.0
     pivot_min_spacing_bars: int = 1
     pivot_min_distance_atr: float = 0.0
-    pivot_min_distance_pct: float = 0.0
     # TODO_DELETE_CHECK: trendline_prefix is a compatibility no-op after TLV2
     # line-pair pattern detection was retired. Pivots come from
     # pivot_foundation directly, not through trendline/channel namespaces.
@@ -95,7 +95,6 @@ class PatternStructureConfig:
     min_triangle_width_pct: float = 0.006
     max_triangle_width_pct: float = 0.22
     geometry_boundary_touch_tolerance_pct: float = 0.012
-    min_triangle_prior_move_pct: float = 0.025
     min_geometry_containment_ratio: float = 0.68
     min_geometry_contraction_score: float = 0.16
     min_geometry_candidate_score: float = 5.0
@@ -113,25 +112,12 @@ class PatternStructureConfig:
     # Aggressive geometry rails can turn spike/crash candles into fake
     # triangles or wedges. Slopes are normalized by current price per candle.
     max_geometry_boundary_slope_pct_per_bar: float = 0.0024
-    aggressive_geometry_slope_pct_per_bar: float = 0.0014
-    aggressive_geometry_min_side_touches: int = 3
     min_compression_side_touches: int = 3
-    min_compression_anchor_balance_score: float = 0.45
-    min_compression_touch_balance_score: float = 0.42
     min_compression_contraction_score: float = 0.28
     min_geometry_side_switches: int = 2
     min_geometry_recent_touch_score: float = 0.24
-    min_geometry_anchor_balance_score: float = 0.18
-    min_geometry_touch_balance_score: float = 0.20
-    geometry_max_last_anchor_age_window_mult: float = 0.38
-    geometry_candidate_early_start_count: int = 2
-    geometry_candidate_middle_start_count: int = 6
-    geometry_candidate_recent_start_count: int = 4
-    geometry_candidate_min_span_mult: float = 0.45
-    geometry_candidate_min_span_bars: int = 2
     geometry_line_fit_tolerance_mult: float = 2.0
     geometry_envelope_min_span_mult: float = 2.5
-    geometry_envelope_start_count: int = 40
     geometry_envelope_pair_min_span_mult: float = 0.38
     geometry_envelope_touch_atr_mult: float = 0.95
     geometry_envelope_max_width_atr: float = 11.5
@@ -143,25 +129,13 @@ class PatternStructureConfig:
     geometry_envelope_proximity_grace_bars: int = 14
     geometry_envelope_proximity_ramp_bars: int = 3
     geometry_envelope_proximity_penalty_weight: float = 1.0
-    geometry_pivot_dominance_bars: int = 24
-    geometry_pivot_dominance_atr_mult: float = 0.16
-    geometry_pivot_merge_bars: int = 10
-    geometry_pivot_merge_atr_mult: float = 0.45
-    geometry_line_touch_weight: float = 0.38
-    geometry_line_fit_weight: float = 0.30
-    geometry_line_span_weight: float = 0.18
-    geometry_line_recency_weight: float = 0.14
+    geometry_pivot_dominance_bars: int = 18
+    geometry_pivot_dominance_atr_mult: float = 0.12
+    geometry_pivot_merge_bars: int = 8
+    geometry_pivot_merge_atr_mult: float = 0.35
     geometry_slot_duplicate_price_tolerance_pct: float = 0.010
     geometry_slot_duplicate_start_tolerance: float = 0.20
     geometry_body_invalidation_atr: float = 0.25
-    # Experimental lower-timeframe normalization. Defaults are neutral. When
-    # enabled, short-candle data can expand the triangle/wedge lookback so a
-    # 1h chart can inspect a similar calendar structure to a 4h chart without
-    # hardcoding timeframe names.
-    geometry_window_time_scale_power: float = 0.0
-    geometry_window_reference_seconds: float = 14400.0
-    geometry_window_max_mult: float = 4.0
-    geometry_timeframe_seconds: float = 0.0
     geometry_management_max_age_bars: int = 36
     geometry_output_slots: int = 1
     include_pattern_diagnostics: bool = False
@@ -203,10 +177,21 @@ class PatternStructureConfig:
     min_head_shoulders_bars: int = 12
     max_head_shoulders_bars: int = 90
     shoulder_tolerance_pct: float = 0.060
-    min_head_prominence_pct: float = 0.025
+    min_head_prominence_pct: float = 0.015
     min_head_shoulders_neckline_depth_pct: float = 0.018
     min_head_shoulders_prior_move_pct: float = 0.055
-    min_head_shoulders_quality: float = 0.78
+    min_head_shoulders_first_pivot_move_pct: float = 0.040
+    head_shoulders_premove_body_mult: float = 6.0
+    head_shoulders_p1_prior_window: int = 48
+    head_shoulders_p1_prior_atr_mult: float = 3.0
+    head_shoulders_prominence_body_mult: float = 1.5
+    head_shoulders_prominence_atr_mult: float = 0.35
+    head_shoulders_neckline_depth_body_mult: float = 3.0
+    head_shoulders_neckline_depth_atr_mult: float = 0.75
+    head_shoulders_base_return_buffer_body_mult: float = 0.8
+    min_head_shoulders_p1_dominance_score: float = 0.0
+    min_head_shoulders_peak_cleanliness_score: float = 0.20
+    min_head_shoulders_quality: float = 0.72
     min_head_shoulders_shoulder_score: float = 0.45
     min_head_shoulders_time_balance_score: float = 0.45
     min_head_shoulders_neckline_score: float = 0.35
@@ -228,6 +213,7 @@ class PatternStructureConfig:
     rectangle_max_width_pct: float = 0.18
     rectangle_boundary_tolerance_pct: float = 0.006
     rectangle_management_buffer_pct: float = 0.002
+    rectangle_max_boundary_slope_pct_per_bar: float = 0.00035
     rectangle_min_side_touches: int = 3
     min_rectangle_containment_ratio: float = 0.80
     min_rectangle_quality: float = 0.88
@@ -300,9 +286,9 @@ def add_pattern_structure(
     channel = _channel_columns(frame, cfg)
     prototypes = {
         **_flag_pennant_columns(frame, sequence, channel, cfg),
-        **_triangle_wedge_columns(frame, sequence, cfg),
+        **_triangle_wedge_v2_columns(frame, cfg),
         **_rectangle_range_columns(frame, cfg),
-        **_channel_pattern_columns(frame, cfg),
+        **_channel_pattern_v2_columns(frame, cfg),
         **_double_reversal_columns(frame, cfg),
         **_triple_reversal_columns(frame, cfg),
         **_head_shoulders_columns(frame, cfg),
@@ -314,6 +300,179 @@ def add_pattern_structure(
     clean = source.drop(columns=existing).copy() if existing else source.copy()
     features = pd.DataFrame({**sequence, **channel, **prototypes, **context}, index=frame.index)
     return pd.concat([clean, features], axis=1)
+
+
+_GEOMETRY_V2_FAMILY_CODES = {"triangle": 1, "wedge": 2, "compression": 3}
+_GEOMETRY_V2_FIELDS = (
+    "active",
+    "type",
+    "upper",
+    "lower",
+    "close_to_upper_atr",
+    "close_to_lower_atr",
+    "width_atr",
+    "age",
+    "upper_touch_count",
+    "lower_touch_count",
+    "upper_fit_error_atr",
+    "lower_fit_error_atr",
+)
+
+
+def _triangle_wedge_v2_columns(frame: DataFrame, cfg: PatternStructureConfig) -> dict[str, Series]:
+    """Expose geometry V2 through the historical ``pat_*`` geometry contract."""
+
+    p = cfg.output_prefix
+    gp = "_pat_pg2"
+    slot_count = min(max(int(cfg.geometry_output_slots), 1), 4)
+    view = add_pattern_geometry_v2(
+        frame,
+        PatternGeometryV2Config(
+            output_prefix=gp,
+            output_slots=slot_count,
+            timeframe=str(cfg.timeframe),
+            pivot_strength=int(cfg.pivot_strength),
+        ),
+    )
+    close = _num(frame["close"])
+    atr = _atr(frame, 14).replace(0.0, np.nan)
+    bar_index = _bar_index(frame)
+    nan = pd.Series(np.nan, index=frame.index, dtype="float64")
+    columns: dict[str, Series] = {}
+
+    for family, family_code in _GEOMETRY_V2_FAMILY_CODES.items():
+        for slot in range(1, slot_count + 1):
+            active = _bool(view[f"{gp}_slot_{slot}_active"]) & _num(view[f"{gp}_slot_{slot}_family"]).eq(float(family_code))
+            direction = _num(view[f"{gp}_slot_{slot}_direction"]).where(active, 0.0).fillna(0.0).astype("int8")
+            upper = _num(view[f"{gp}_slot_{slot}_upper"]).where(active)
+            lower = _num(view[f"{gp}_slot_{slot}_lower"]).where(active)
+            width_atr = _num(view[f"{gp}_slot_{slot}_width_atr"]).where(active)
+            start_index = _num(view[f"{gp}_slot_{slot}_start_index"]).where(active)
+            age = (bar_index - start_index).where(active).clip(lower=0.0)
+            upper_pivots = _num(view[f"{gp}_slot_{slot}_upper_pivots"]).where(active, 0.0)
+            lower_pivots = _num(view[f"{gp}_slot_{slot}_lower_pivots"]).where(active, 0.0)
+
+            base = f"{p}_{family}_{slot}"
+            values = {
+                "active": active.fillna(False),
+                "type": direction,
+                "upper": upper,
+                "lower": lower,
+                "close_to_upper_atr": ((upper - close) / atr).replace([np.inf, -np.inf], np.nan),
+                "close_to_lower_atr": ((close - lower) / atr).replace([np.inf, -np.inf], np.nan),
+                "width_atr": width_atr,
+                "age": age,
+                "upper_touch_count": upper_pivots,
+                "lower_touch_count": lower_pivots,
+                "upper_fit_error_atr": nan,
+                "lower_fit_error_atr": nan,
+            }
+            for field in _GEOMETRY_V2_FIELDS:
+                columns[f"{base}_{field}"] = values[field]
+    return columns
+
+
+def _channel_pattern_v2_columns(frame: DataFrame, cfg: PatternStructureConfig) -> dict[str, Series]:
+    """Expose the lean V2 channel detector through composite pattern columns."""
+
+    p = cfg.output_prefix
+    cp = "_pat_pch"
+    slot_count = 3
+    view = add_pattern_channel(
+        frame,
+        PatternChannelConfig(
+            output_prefix=cp,
+            output_slots=slot_count,
+            timeframe=str(cfg.timeframe),
+            pivot_strength=int(cfg.pivot_strength),
+        ),
+    )
+    index = frame.index
+    close = _num(frame["close"]).replace(0.0, np.nan)
+    false = pd.Series(False, index=index)
+    zero = pd.Series(0.0, index=index, dtype="float64")
+    nan = pd.Series(np.nan, index=index, dtype="float64")
+
+    best_active = _bool(view[f"{cp}_slot_1_active"])
+    best_upper = _num(view[f"{cp}_slot_1_upper"]).where(best_active)
+    best_lower = _num(view[f"{cp}_slot_1_lower"]).where(best_active)
+    best_position = _num(view[f"{cp}_best_position"]).where(best_active)
+    best_width_atr = _num(view[f"{cp}_best_width_atr"]).where(best_active)
+    width_pct = ((best_upper - best_lower) / close.abs()).replace([np.inf, -np.inf], np.nan).where(best_active)
+    breakout_up = _bool(view[f"{cp}_breakout_up"])
+    breakdown_down = _bool(view[f"{cp}_breakdown_down"])
+    avoid_long = _bool(view[f"{cp}_avoid_long"])
+    avoid_short = _bool(view[f"{cp}_avoid_short"])
+
+    def family_mask(slot: int, code: int) -> Series:
+        return _bool(view[f"{cp}_slot_{slot}_active"]) & _num(view[f"{cp}_slot_{slot}_family"]).eq(float(code))
+
+    def family_any(code: int) -> Series:
+        masks = [family_mask(slot, code) for slot in range(1, slot_count + 1)]
+        return pd.concat(masks, axis=1).any(axis=1) if masks else false
+
+    def family_near(code: int, field: str) -> Series:
+        masks = [
+            family_mask(slot, code) & _bool(view[f"{cp}_slot_{slot}_{field}"])
+            for slot in range(1, slot_count + 1)
+        ]
+        return pd.concat(masks, axis=1).any(axis=1) if masks else false
+
+    def family_quality(code: int) -> Series:
+        parts: list[Series] = []
+        tolerance = max(float(PatternChannelConfig().parallel_tolerance_atr_per_bar), 1e-9)
+        for slot in range(1, slot_count + 1):
+            active = family_mask(slot, code)
+            line_score = _clip01(_num(view[f"{cp}_slot_{slot}_line_score"]))
+            containment = _clip01(_num(view[f"{cp}_slot_{slot}_containment"]))
+            parallel = _clip01(1.0 - _num(view[f"{cp}_slot_{slot}_parallel_error"]) / tolerance)
+            quality = ((line_score + containment + parallel) / 3.0).where(active, 0.0)
+            parts.append(quality)
+        return pd.concat(parts, axis=1).max(axis=1) if parts else zero
+
+    rectangle = family_any(1)
+    ascending = family_any(2)
+    descending = family_any(3)
+    rectangle_go_long = family_near(1, "near_lower")
+    rectangle_go_short = family_near(1, "near_upper")
+    ascending_go_long = family_near(2, "near_lower")
+    ascending_go_short = family_near(2, "near_upper")
+    descending_go_long = family_near(3, "near_lower")
+    descending_go_short = family_near(3, "near_upper")
+
+    return {
+        f"{p}_channel_rectangle_setup": rectangle.fillna(False),
+        f"{p}_channel_rectangle_quality": family_quality(1),
+        f"{p}_channel_rectangle_go_long": rectangle_go_long.fillna(False),
+        f"{p}_channel_rectangle_go_short": rectangle_go_short.fillna(False),
+        f"{p}_ascending_channel_setup": ascending.fillna(False),
+        f"{p}_ascending_channel_quality": family_quality(2),
+        f"{p}_ascending_channel_go_long": ascending_go_long.fillna(False),
+        f"{p}_ascending_channel_go_short": ascending_go_short.fillna(False),
+        f"{p}_descending_channel_setup": descending.fillna(False),
+        f"{p}_descending_channel_quality": family_quality(3),
+        f"{p}_descending_channel_go_long": descending_go_long.fillna(False),
+        f"{p}_descending_channel_go_short": descending_go_short.fillna(False),
+        f"{p}_channel_pattern_upper": best_upper,
+        f"{p}_channel_pattern_lower": best_lower,
+        f"{p}_channel_pattern_position": best_position,
+        f"{p}_channel_pattern_width_pct": width_pct,
+        f"{p}_channel_pattern_width_atr": best_width_atr,
+        f"{p}_channel_pattern_breakout_up": breakout_up.fillna(False),
+        f"{p}_channel_pattern_breakdown_down": breakdown_down.fillna(False),
+        f"{p}_channel_pattern_avoid_long": avoid_long.fillna(False),
+        f"{p}_channel_pattern_avoid_short": avoid_short.fillna(False),
+        f"{p}_channel_pattern_exit_long": breakdown_down.fillna(False),
+        f"{p}_channel_pattern_exit_short": breakout_up.fillna(False),
+        f"{p}_broadening_top_setup_short": false,
+        f"{p}_broadening_bottom_setup_long": false,
+        f"{p}_broadening_top_go_short": false,
+        f"{p}_broadening_bottom_go_long": false,
+        f"{p}_broadening_top_quality": zero,
+        f"{p}_broadening_bottom_quality": zero,
+        f"{p}_broadening_pattern_upper": nan,
+        f"{p}_broadening_pattern_lower": nan,
+    }
 
 
 def _pivot_sequence_columns(frame: DataFrame, cfg: PatternStructureConfig) -> dict[str, Series]:
@@ -490,6 +649,9 @@ def _context_columns(
     rectangle_setup = prototypes[f"{p}_rectangle_setup"]
     rectangle_go_long = prototypes[f"{p}_rectangle_go_long"]
     rectangle_go_short = prototypes[f"{p}_rectangle_go_short"]
+    channel_rectangle = prototypes[f"{p}_channel_rectangle_setup"]
+    channel_rectangle_go_long = prototypes[f"{p}_channel_rectangle_go_long"]
+    channel_rectangle_go_short = prototypes[f"{p}_channel_rectangle_go_short"]
     ascending_channel = prototypes[f"{p}_ascending_channel_setup"]
     descending_channel = prototypes[f"{p}_descending_channel_setup"]
     ascending_channel_go_long = prototypes[f"{p}_ascending_channel_go_long"]
@@ -520,6 +682,12 @@ def _context_columns(
     triple_confirmed_short = triple_state_short.eq(2.0)
     head_shoulders_setup_long = prototypes[f"{p}_inverse_head_shoulders_setup_long"]
     head_shoulders_setup_short = prototypes[f"{p}_head_shoulders_setup_short"]
+    head_shoulders_state_long = _num(prototypes[f"{p}_inverse_head_shoulders_state"])
+    head_shoulders_state_short = _num(prototypes[f"{p}_head_shoulders_state"])
+    head_shoulders_current_long = head_shoulders_state_long.gt(0.0)
+    head_shoulders_current_short = head_shoulders_state_short.gt(0.0)
+    head_shoulders_confirmed_long = head_shoulders_state_long.eq(2.0)
+    head_shoulders_confirmed_short = head_shoulders_state_short.eq(2.0)
     geometric_setup_long = pd.Series(False, index=index)
     geometric_setup_short = pd.Series(False, index=index)
     if bool(cfg.include_double_reversal_patterns):
@@ -539,8 +707,8 @@ def _context_columns(
         rectangle_setup_long = pd.Series(False, index=index)
         rectangle_setup_short = pd.Series(False, index=index)
     if bool(cfg.include_channel_patterns):
-        channel_pattern_long = ascending_channel_go_long | descending_channel_go_long
-        channel_pattern_short = ascending_channel_go_short | descending_channel_go_short
+        channel_pattern_long = channel_rectangle_go_long | ascending_channel_go_long | descending_channel_go_long
+        channel_pattern_short = channel_rectangle_go_short | ascending_channel_go_short | descending_channel_go_short
     else:
         channel_pattern_long = pd.Series(False, index=index)
         channel_pattern_short = pd.Series(False, index=index)
@@ -561,11 +729,15 @@ def _context_columns(
         triple_reversal_entry_long = pd.Series(False, index=index)
         triple_reversal_entry_short = pd.Series(False, index=index)
     if bool(cfg.include_head_shoulders_patterns):
-        head_shoulders_long = head_shoulders_setup_long
-        head_shoulders_short = head_shoulders_setup_short
+        head_shoulders_long = head_shoulders_current_long
+        head_shoulders_short = head_shoulders_current_short
+        head_shoulders_entry_long = head_shoulders_confirmed_long
+        head_shoulders_entry_short = head_shoulders_confirmed_short
     else:
         head_shoulders_long = pd.Series(False, index=index)
         head_shoulders_short = pd.Series(False, index=index)
+        head_shoulders_entry_long = pd.Series(False, index=index)
+        head_shoulders_entry_short = pd.Series(False, index=index)
     # TODO_DELETE_CHECK: this broad scaffold is redundant once pattern-specific
     # setup columns are available. It failed as a primary setup source because
     # sequence+channel evidence can describe ordinary structure, not a named
@@ -619,7 +791,7 @@ def _context_columns(
         | broadening_pattern_long
         | reversal_entry_long
         | triple_reversal_entry_long
-        | head_shoulders_long
+        | head_shoulders_entry_long
         | channel_sequence_long
     )
     short_entry_source = (
@@ -631,7 +803,7 @@ def _context_columns(
         | broadening_pattern_short
         | reversal_entry_short
         | triple_reversal_entry_short
-        | head_shoulders_short
+        | head_shoulders_entry_short
         | channel_sequence_short
     )
 
@@ -708,6 +880,12 @@ def _context_columns(
         f"{p}_entry_pennant_setup_short": _dedupe_events(pennant_setup_short, cfg.entry_cooldown_bars),
         f"{p}_entry_rectangle_go_long": _dedupe_events(rectangle_setup_long, cfg.entry_cooldown_bars),
         f"{p}_entry_rectangle_go_short": _dedupe_events(rectangle_setup_short, cfg.entry_cooldown_bars),
+        f"{p}_entry_channel_rectangle_go_long": _dedupe_events(
+            channel_pattern_long & channel_rectangle_go_long, cfg.entry_cooldown_bars
+        ),
+        f"{p}_entry_channel_rectangle_go_short": _dedupe_events(
+            channel_pattern_short & channel_rectangle_go_short, cfg.entry_cooldown_bars
+        ),
         f"{p}_entry_ascending_channel_go_long": _dedupe_events(
             channel_pattern_long & ascending_channel_go_long, cfg.entry_cooldown_bars
         ),
@@ -736,14 +914,22 @@ def _context_columns(
         f"{p}_entry_triple_top_setup_short": _dedupe_events(triple_reversal_short, cfg.entry_cooldown_bars),
         f"{p}_entry_triple_bottom_confirmed_long": _dedupe_events(triple_reversal_entry_long, cfg.entry_cooldown_bars),
         f"{p}_entry_triple_top_confirmed_short": _dedupe_events(triple_reversal_entry_short, cfg.entry_cooldown_bars),
-        f"{p}_entry_inverse_head_shoulders_setup_long": _dedupe_events(head_shoulders_long, cfg.entry_cooldown_bars),
-        f"{p}_entry_head_shoulders_setup_short": _dedupe_events(head_shoulders_short, cfg.entry_cooldown_bars),
+        f"{p}_entry_inverse_head_shoulders_setup_long": _dedupe_events(head_shoulders_long & head_shoulders_setup_long, cfg.entry_cooldown_bars),
+        f"{p}_entry_head_shoulders_setup_short": _dedupe_events(head_shoulders_short & head_shoulders_setup_short, cfg.entry_cooldown_bars),
+        f"{p}_entry_inverse_head_shoulders_confirmed_long": _dedupe_events(head_shoulders_entry_long, cfg.entry_cooldown_bars),
+        f"{p}_entry_head_shoulders_confirmed_short": _dedupe_events(head_shoulders_entry_short, cfg.entry_cooldown_bars),
         f"{p}_attention_flag_long": _dedupe_events(flag_setup_long, cfg.entry_cooldown_bars),
         f"{p}_attention_flag_short": _dedupe_events(flag_setup_short, cfg.entry_cooldown_bars),
         f"{p}_attention_pennant_long": _dedupe_events(pennant_setup_long, cfg.entry_cooldown_bars),
         f"{p}_attention_pennant_short": _dedupe_events(pennant_setup_short, cfg.entry_cooldown_bars),
         f"{p}_attention_rectangle_long": _dedupe_events(rectangle_setup_long, cfg.entry_cooldown_bars),
         f"{p}_attention_rectangle_short": _dedupe_events(rectangle_setup_short, cfg.entry_cooldown_bars),
+        f"{p}_attention_channel_rectangle_long": _dedupe_events(
+            channel_pattern_long & channel_rectangle_go_long, cfg.entry_cooldown_bars
+        ),
+        f"{p}_attention_channel_rectangle_short": _dedupe_events(
+            channel_pattern_short & channel_rectangle_go_short, cfg.entry_cooldown_bars
+        ),
         f"{p}_attention_ascending_channel_long": _dedupe_events(
             channel_pattern_long & ascending_channel_go_long, cfg.entry_cooldown_bars
         ),
@@ -772,8 +958,10 @@ def _context_columns(
         f"{p}_attention_triple_top_short": _dedupe_events(triple_reversal_short, cfg.entry_cooldown_bars),
         f"{p}_attention_triple_bottom_confirmed_long": _dedupe_events(triple_reversal_entry_long, cfg.entry_cooldown_bars),
         f"{p}_attention_triple_top_confirmed_short": _dedupe_events(triple_reversal_entry_short, cfg.entry_cooldown_bars),
-        f"{p}_attention_inverse_head_shoulders_long": _dedupe_events(head_shoulders_long, cfg.entry_cooldown_bars),
-        f"{p}_attention_head_shoulders_short": _dedupe_events(head_shoulders_short, cfg.entry_cooldown_bars),
+        f"{p}_attention_inverse_head_shoulders_long": _dedupe_events(head_shoulders_long & head_shoulders_setup_long, cfg.entry_cooldown_bars),
+        f"{p}_attention_head_shoulders_short": _dedupe_events(head_shoulders_short & head_shoulders_setup_short, cfg.entry_cooldown_bars),
+        f"{p}_attention_inverse_head_shoulders_confirmed_long": _dedupe_events(head_shoulders_entry_long, cfg.entry_cooldown_bars),
+        f"{p}_attention_head_shoulders_confirmed_short": _dedupe_events(head_shoulders_entry_short, cfg.entry_cooldown_bars),
         f"{p}_long_setup": long_setup_event.fillna(False),
         f"{p}_short_setup": short_setup_event.fillna(False),
         f"{p}_attention_long": entry_long.fillna(False),
@@ -872,8 +1060,8 @@ def _resolve_config(config: PatternStructureConfig | None, overrides: dict[str, 
 
 
 def _validate_config(cfg: PatternStructureConfig) -> None:
-    if not cfg.output_prefix or not cfg.pivot_prefix or not cfg.channel_prefix:
-        raise ValueError("output_prefix, pivot_prefix, and channel_prefix must be set")
+    if not cfg.output_prefix or not cfg.timeframe or not cfg.pivot_prefix or not cfg.channel_prefix:
+        raise ValueError("output_prefix, timeframe, pivot_prefix, and channel_prefix must be set")
     if not cfg.channel_label:
         raise ValueError("channel_label must be set")
     if int(cfg.channel_rank) < 0:
@@ -888,8 +1076,6 @@ def _validate_config(cfg: PatternStructureConfig) -> None:
         raise ValueError("pivot_min_spacing_bars must be at least 1")
     if float(cfg.pivot_min_distance_atr) < 0.0:
         raise ValueError("pivot_min_distance_atr must be non-negative")
-    if float(cfg.pivot_min_distance_pct) < 0.0:
-        raise ValueError("pivot_min_distance_pct must be non-negative")
     if int(cfg.sequence_window) < 4:
         raise ValueError("sequence_window must be at least 4")
     if int(cfg.impulse_window) < 4:
@@ -966,8 +1152,6 @@ def _validate_config(cfg: PatternStructureConfig) -> None:
         raise ValueError("min_triangle_width_pct must be lower than max_triangle_width_pct")
     if float(cfg.geometry_boundary_touch_tolerance_pct) < 0.0:
         raise ValueError("geometry_boundary_touch_tolerance_pct must be non-negative")
-    if float(cfg.min_triangle_prior_move_pct) < 0.0:
-        raise ValueError("min_triangle_prior_move_pct must be non-negative")
     if not 0.0 <= float(cfg.min_geometry_containment_ratio) <= 1.0:
         raise ValueError("min_geometry_containment_ratio must be between 0 and 1")
     if not 0.0 <= float(cfg.min_geometry_contraction_score) <= 1.0:
@@ -988,51 +1172,18 @@ def _validate_config(cfg: PatternStructureConfig) -> None:
         raise ValueError("max_compression_boundary_intrusion_pct must be non-negative")
     if float(cfg.max_geometry_boundary_slope_pct_per_bar) <= 0.0:
         raise ValueError("max_geometry_boundary_slope_pct_per_bar must be positive")
-    if float(cfg.aggressive_geometry_slope_pct_per_bar) < 0.0:
-        raise ValueError("aggressive_geometry_slope_pct_per_bar must be non-negative")
-    if int(cfg.aggressive_geometry_min_side_touches) < 2:
-        raise ValueError("aggressive_geometry_min_side_touches must be at least 2")
     if int(cfg.min_compression_side_touches) < 2:
         raise ValueError("min_compression_side_touches must be at least 2")
-    if not 0.0 <= float(cfg.min_compression_anchor_balance_score) <= 1.0:
-        raise ValueError("min_compression_anchor_balance_score must be between 0 and 1")
-    if not 0.0 <= float(cfg.min_compression_touch_balance_score) <= 1.0:
-        raise ValueError("min_compression_touch_balance_score must be between 0 and 1")
     if not 0.0 <= float(cfg.min_compression_contraction_score) <= 1.0:
         raise ValueError("min_compression_contraction_score must be between 0 and 1")
     if int(cfg.min_geometry_side_switches) < 0:
         raise ValueError("min_geometry_side_switches must be non-negative")
     if not 0.0 <= float(cfg.min_geometry_recent_touch_score) <= 1.0:
         raise ValueError("min_geometry_recent_touch_score must be between 0 and 1")
-    if not 0.0 <= float(cfg.min_geometry_anchor_balance_score) <= 1.0:
-        raise ValueError("min_geometry_anchor_balance_score must be between 0 and 1")
-    if not 0.0 <= float(cfg.min_geometry_touch_balance_score) <= 1.0:
-        raise ValueError("min_geometry_touch_balance_score must be between 0 and 1")
-    if float(cfg.geometry_max_last_anchor_age_window_mult) < 0.0:
-        raise ValueError("geometry_max_last_anchor_age_window_mult must be non-negative")
-    if int(cfg.geometry_candidate_early_start_count) < 0:
-        raise ValueError("geometry_candidate_early_start_count must be non-negative")
-    if int(cfg.geometry_candidate_middle_start_count) < 0:
-        raise ValueError("geometry_candidate_middle_start_count must be non-negative")
-    if int(cfg.geometry_candidate_recent_start_count) < 0:
-        raise ValueError("geometry_candidate_recent_start_count must be non-negative")
-    if (
-        int(cfg.geometry_candidate_early_start_count)
-        + int(cfg.geometry_candidate_middle_start_count)
-        + int(cfg.geometry_candidate_recent_start_count)
-        < 2
-    ):
-        raise ValueError("geometry candidate start counts must total at least 2")
-    if float(cfg.geometry_candidate_min_span_mult) <= 0.0:
-        raise ValueError("geometry_candidate_min_span_mult must be positive")
-    if int(cfg.geometry_candidate_min_span_bars) < 1:
-        raise ValueError("geometry_candidate_min_span_bars must be at least 1")
     if float(cfg.geometry_line_fit_tolerance_mult) <= 0.0:
         raise ValueError("geometry_line_fit_tolerance_mult must be positive")
     if float(cfg.geometry_envelope_min_span_mult) <= 0.0:
         raise ValueError("geometry_envelope_min_span_mult must be positive")
-    if int(cfg.geometry_envelope_start_count) < 1:
-        raise ValueError("geometry_envelope_start_count must be at least 1")
     if float(cfg.geometry_envelope_pair_min_span_mult) <= 0.0:
         raise ValueError("geometry_envelope_pair_min_span_mult must be positive")
     if float(cfg.geometry_envelope_touch_atr_mult) <= 0.0:
@@ -1063,30 +1214,12 @@ def _validate_config(cfg: PatternStructureConfig) -> None:
         raise ValueError("geometry_pivot_merge_bars must be non-negative")
     if float(cfg.geometry_pivot_merge_atr_mult) < 0.0:
         raise ValueError("geometry_pivot_merge_atr_mult must be non-negative")
-    line_weights = [
-        float(cfg.geometry_line_touch_weight),
-        float(cfg.geometry_line_fit_weight),
-        float(cfg.geometry_line_span_weight),
-        float(cfg.geometry_line_recency_weight),
-    ]
-    if any(weight < 0.0 for weight in line_weights):
-        raise ValueError("geometry line weights must be non-negative")
-    if sum(line_weights) <= 0.0:
-        raise ValueError("at least one geometry line weight must be positive")
     if float(cfg.geometry_slot_duplicate_price_tolerance_pct) < 0.0:
         raise ValueError("geometry_slot_duplicate_price_tolerance_pct must be non-negative")
     if not 0.0 <= float(cfg.geometry_slot_duplicate_start_tolerance) <= 1.0:
         raise ValueError("geometry_slot_duplicate_start_tolerance must be between 0 and 1")
     if float(cfg.geometry_body_invalidation_atr) <= 0.0:
         raise ValueError("geometry_body_invalidation_atr must be positive")
-    if float(cfg.geometry_window_time_scale_power) < 0.0:
-        raise ValueError("geometry_window_time_scale_power must be non-negative")
-    if float(cfg.geometry_window_reference_seconds) <= 0.0:
-        raise ValueError("geometry_window_reference_seconds must be positive")
-    if float(cfg.geometry_window_max_mult) < 1.0:
-        raise ValueError("geometry_window_max_mult must be at least 1")
-    if float(cfg.geometry_timeframe_seconds) < 0.0:
-        raise ValueError("geometry_timeframe_seconds must be non-negative")
     if int(cfg.geometry_management_max_age_bars) < 1:
         raise ValueError("geometry_management_max_age_bars must be at least 1")
     if not 1 <= int(cfg.geometry_output_slots) <= 4:
@@ -1157,6 +1290,12 @@ def _validate_config(cfg: PatternStructureConfig) -> None:
         raise ValueError("min_head_shoulders_neckline_depth_pct must be non-negative")
     if float(cfg.min_head_shoulders_prior_move_pct) < 0.0:
         raise ValueError("min_head_shoulders_prior_move_pct must be non-negative")
+    if int(cfg.head_shoulders_p1_prior_window) < 1:
+        raise ValueError("head_shoulders_p1_prior_window must be at least 1")
+    if float(cfg.head_shoulders_p1_prior_atr_mult) < 0.0:
+        raise ValueError("head_shoulders_p1_prior_atr_mult must be non-negative")
+    if not 0.0 <= float(cfg.min_head_shoulders_p1_dominance_score) <= 1.0:
+        raise ValueError("min_head_shoulders_p1_dominance_score must be between 0 and 1")
     if not 0.0 <= float(cfg.min_head_shoulders_quality) <= 1.0:
         raise ValueError("min_head_shoulders_quality must be between 0 and 1")
     if not 0.0 <= float(cfg.min_head_shoulders_shoulder_score) <= 1.0:
@@ -1193,6 +1332,8 @@ def _validate_config(cfg: PatternStructureConfig) -> None:
         raise ValueError("rectangle_boundary_tolerance_pct must be positive")
     if float(cfg.rectangle_management_buffer_pct) < 0.0:
         raise ValueError("rectangle_management_buffer_pct must be non-negative")
+    if float(cfg.rectangle_max_boundary_slope_pct_per_bar) <= 0.0:
+        raise ValueError("rectangle_max_boundary_slope_pct_per_bar must be positive")
     if int(cfg.rectangle_min_side_touches) < 2:
         raise ValueError("rectangle_min_side_touches must be at least 2")
     if not 0.0 <= float(cfg.min_rectangle_containment_ratio) <= 1.0:
@@ -1288,7 +1429,6 @@ def _with_foundation_pivots(frame: DataFrame, cfg: PatternStructureConfig) -> Da
         min_prominence_pct=float(cfg.pivot_min_prominence_pct),
         min_pivot_spacing_bars=int(cfg.pivot_min_spacing_bars),
         min_pivot_distance_atr=float(cfg.pivot_min_distance_atr),
-        min_pivot_distance_pct=float(cfg.pivot_min_distance_pct),
     )
     out = frame.copy()
     pp = cfg.pivot_prefix

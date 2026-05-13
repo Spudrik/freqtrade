@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 from typing import Literal
 
 import numpy as np
@@ -13,6 +13,51 @@ except Exception:  # pragma: no cover - optional fallback for standalone noteboo
     from pivot_foundation import build_clean_pivot_source  # type: ignore[no-redef]
 
 LineSide = Literal["resistance", "support"]
+
+_PROFILE_FIELDS = (
+    "max_anchor_bars",
+    "max_projection_bars",
+    "max_active_line_distance_atr_mult",
+)
+_TIMEFRAME_PROFILES: dict[str, dict[str, object]] = {
+    "1h": {
+        "max_anchor_bars": 50,
+        "max_projection_bars": 50,
+        "max_active_line_distance_atr_mult": 6.0,
+    },
+    "4h": {
+        "max_anchor_bars": 50,
+        "max_projection_bars": 50,
+        "max_active_line_distance_atr_mult": 6.0,
+    },
+    "8h": {
+        "max_anchor_bars": 80,
+        "max_projection_bars": 80,
+        "max_active_line_distance_atr_mult": 7.0,
+    },
+    "1d": {
+        "max_anchor_bars": 80,
+        "max_projection_bars": 90,
+        "max_active_line_distance_atr_mult": 8.0,
+    },
+    "3d": {
+        "max_anchor_bars": 90,
+        "max_projection_bars": 110,
+        "max_active_line_distance_atr_mult": 9.0,
+    },
+}
+_TIMEFRAME_ALIASES = {
+    "1h": "1h",
+    "60m": "1h",
+    "4h": "4h",
+    "240m": "4h",
+    "8h": "8h",
+    "480m": "8h",
+    "1d": "1d",
+    "1day": "1d",
+    "3d": "3d",
+    "3day": "3d",
+}
 
 
 @dataclass(frozen=True)
@@ -28,11 +73,6 @@ class TrendlineProjectionV2Config:
     Tunable first-pass levers:
     - ``pivot_strength``: confirmed body pivot strength. A pivot is emitted only
       after this many candles have confirmed it.
-    - ``pivot_method``: ``body`` is the default because strength-2 body pivots
-      preserve enough local turning points for human-style trendline discovery.
-      ``atr_zigzag`` remains available when a sparse swing-only source is
-      explicitly wanted.
-    - ``zigzag_atr_mult``: ATR reversal size for the primary pivot source.
     - ``candidate_pivot_count``: retained for compatibility with older callers.
       The current fixed sequence scans the supplied dataframe window.
     - ``max_slope_pct_per_bar``: removes extreme angle lines, normalized by
@@ -61,11 +101,8 @@ class TrendlineProjectionV2Config:
     """
 
     output_prefix: str = "tlv2"
+    timeframe: str = "4h"
     pivot_strength: int = 2
-    pivot_method: Literal["body", "atr_zigzag"] = "body"
-    zigzag_atr_mult: float = 1.75
-    pivot_score_touch_atr_mult: float = 0.30
-    pivot_score_touch_pct: float = 0.0015
     candidate_pivot_count: int = 36
     raw_line_output_count: int = 3
 
@@ -167,10 +204,6 @@ def _base_inputs(frame: DataFrame, cfg: TrendlineProjectionV2Config) -> dict[str
         atr=atr,
         bar_index=bar_index,
         strength=int(cfg.pivot_strength),
-        method=cfg.pivot_method,
-        zigzag_atr_mult=float(cfg.zigzag_atr_mult),
-        touch_atr_mult=float(cfg.pivot_score_touch_atr_mult),
-        touch_pct=float(cfg.pivot_score_touch_pct),
     )
     return {
         "open": open_,
@@ -1098,9 +1131,39 @@ def _num(frame: DataFrame, column: str) -> Series:
 
 
 def _resolve_config(config: TrendlineProjectionV2Config | None, overrides: dict[str, object]) -> TrendlineProjectionV2Config:
-    cfg = config or TrendlineProjectionV2Config()
+    base = config or TrendlineProjectionV2Config()
+    valid = {field.name for field in fields(TrendlineProjectionV2Config)}
     clean = {key: value for key, value in overrides.items() if value is not None}
-    return replace(cfg, **clean) if clean else cfg
+    unknown = sorted(set(clean).difference(valid))
+    if unknown:
+        raise TypeError(f"Unknown trendline v2 config override(s): {', '.join(unknown)}")
+
+    requested = replace(base, **{name: clean[name] for name in clean if name in valid})
+    timeframe = _normalize_timeframe(str(requested.timeframe))
+    requested = replace(requested, timeframe=timeframe)
+    profile = _TIMEFRAME_PROFILES[timeframe]
+    if config is None:
+        profiled = replace(requested, **profile)
+    else:
+        default = TrendlineProjectionV2Config()
+        profile_updates = {
+            name: profile[name]
+            for name in _PROFILE_FIELDS
+            if name not in clean and getattr(config, name) == getattr(default, name)
+        }
+        profiled = replace(requested, **profile_updates)
+    if clean:
+        profiled = replace(profiled, **{name: clean[name] for name in clean if name in valid})
+        profiled = replace(profiled, timeframe=_normalize_timeframe(str(profiled.timeframe)))
+    return profiled
+
+
+def _normalize_timeframe(value: str) -> str:
+    key = str(value).strip().lower()
+    if key not in _TIMEFRAME_ALIASES:
+        allowed = ", ".join(sorted(_TIMEFRAME_PROFILES))
+        raise ValueError(f"timeframe must be one of: {allowed}")
+    return _TIMEFRAME_ALIASES[key]
 
 
 def _validate_dataframe(frame: DataFrame) -> None:
@@ -1111,14 +1174,9 @@ def _validate_dataframe(frame: DataFrame) -> None:
 
 
 def _validate_config(cfg: TrendlineProjectionV2Config) -> None:
+    _normalize_timeframe(str(cfg.timeframe))
     if cfg.pivot_strength < 1:
         raise ValueError("pivot_strength must be positive")
-    if cfg.pivot_method not in ("body", "atr_zigzag"):
-        raise ValueError("pivot_method must be 'body' or 'atr_zigzag'")
-    if cfg.zigzag_atr_mult <= 0.0:
-        raise ValueError("zigzag_atr_mult must be positive")
-    if cfg.pivot_score_touch_atr_mult < 0.0 or cfg.pivot_score_touch_pct < 0.0:
-        raise ValueError("pivot score touch tolerances must be non-negative")
     if cfg.candidate_pivot_count < 3:
         raise ValueError("candidate_pivot_count must be at least 3")
     if cfg.raw_line_output_count < 1:

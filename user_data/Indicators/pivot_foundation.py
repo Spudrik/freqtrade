@@ -1,13 +1,8 @@
 from __future__ import annotations
 
-from typing import Literal
-
 import numpy as np
 import pandas as pd
 from pandas import Series
-
-
-PivotMethod = Literal["body", "atr_zigzag"]
 
 
 def build_clean_pivot_source(
@@ -17,10 +12,6 @@ def build_clean_pivot_source(
     atr: Series,
     bar_index: Series,
     strength: int,
-    method: PivotMethod = "body",
-    zigzag_atr_mult: float = 1.75,
-    touch_atr_mult: float = 0.30,
-    touch_pct: float = 0.0015,
     min_prominence_atr: float = 0.0,
     min_prominence_pct: float = 0.0,
     min_pivot_spacing_bars: int = 1,
@@ -32,26 +23,20 @@ def build_clean_pivot_source(
     Pivots are emitted only after confirmation. Same-side pivot runs are
     collapsed and emitted when the opposite-side pivot confirms, so downstream
     indicators see the cleaned pivot only when it is knowable.
+
+    Height filters are timeframe-adaptive. ATR-based thresholds are the primary
+    gates. Legacy percent parameters are retained for caller compatibility and
+    may only cap ATR-derived distance thresholds; they are not standalone
+    minimum height rules.
     """
 
-    if method == "atr_zigzag":
-        raw = _confirmed_atr_zigzag_pivots(
-            body_high=body_high,
-            body_low=body_low,
-            atr=atr,
-            bar_index=bar_index,
-            atr_mult=float(zigzag_atr_mult),
-            touch_atr_mult=float(touch_atr_mult),
-            touch_pct=float(touch_pct),
-        )
-    else:
-        raw = _confirmed_body_pivots(
-            body_high=body_high,
-            body_low=body_low,
-            atr=atr,
-            bar_index=bar_index,
-            strength=int(strength),
-        )
+    raw = _confirmed_body_pivots(
+        body_high=body_high,
+        body_low=body_low,
+        atr=atr,
+        bar_index=bar_index,
+        strength=int(strength),
+    )
 
     filtered = _filter_raw_pivots(
         raw,
@@ -106,129 +91,6 @@ def _confirmed_body_pivots(
     }
 
 
-def _confirmed_atr_zigzag_pivots(
-    *,
-    body_high: Series,
-    body_low: Series,
-    atr: Series,
-    bar_index: Series,
-    atr_mult: float,
-    touch_atr_mult: float,
-    touch_pct: float,
-) -> dict[str, Series]:
-    rows = len(body_high)
-    out = {
-        "pivot_high": np.full(rows, np.nan, dtype="float64"),
-        "pivot_low": np.full(rows, np.nan, dtype="float64"),
-        "pivot_high_index": np.full(rows, np.nan, dtype="float64"),
-        "pivot_low_index": np.full(rows, np.nan, dtype="float64"),
-        "pivot_high_available_index": np.full(rows, np.nan, dtype="float64"),
-        "pivot_low_available_index": np.full(rows, np.nan, dtype="float64"),
-        "pivot_high_prominence": np.full(rows, np.nan, dtype="float64"),
-        "pivot_low_prominence": np.full(rows, np.nan, dtype="float64"),
-        "pivot_high_prominence_pct": np.full(rows, np.nan, dtype="float64"),
-        "pivot_low_prominence_pct": np.full(rows, np.nan, dtype="float64"),
-        "pivot_high_score": np.full(rows, np.nan, dtype="float64"),
-        "pivot_low_score": np.full(rows, np.nan, dtype="float64"),
-    }
-    if rows < 3:
-        return {name: pd.Series(values, index=body_high.index, dtype="float64") for name, values in out.items()}
-
-    high_values = body_high.to_numpy(dtype="float64")
-    low_values = body_low.to_numpy(dtype="float64")
-    atr_values = atr.replace(0.0, np.nan).to_numpy(dtype="float64")
-    bar_values = bar_index.to_numpy(dtype="float64")
-
-    direction = 0
-    extreme_price = float((high_values[0] + low_values[0]) / 2.0)
-    extreme_row = 0
-    extreme_side = ""
-    touches = 1
-
-    for row in range(1, rows):
-        if not np.isfinite(high_values[row]) or not np.isfinite(low_values[row]):
-            continue
-        threshold = float(atr_values[row] * atr_mult) if np.isfinite(atr_values[row]) else 0.0
-        if threshold <= 0.0:
-            threshold = max(abs(float(high_values[row])) * float(touch_pct), 1e-9)
-
-        if direction >= 0:
-            if high_values[row] >= extreme_price:
-                if abs(high_values[row] - extreme_price) <= max(threshold * float(touch_atr_mult), abs(high_values[row]) * float(touch_pct)):
-                    touches += 1
-                else:
-                    touches = 1
-                extreme_price = float(high_values[row])
-                extreme_row = row
-                extreme_side = "high"
-            elif extreme_price - low_values[row] >= threshold and extreme_side == "high":
-                _emit_zigzag_high(out, extreme_row, row, extreme_price, bar_values, atr_values, touches)
-                direction = -1
-                extreme_price = float(low_values[row])
-                extreme_row = row
-                extreme_side = "low"
-                touches = 1
-
-        if direction <= 0:
-            if low_values[row] <= extreme_price:
-                if abs(low_values[row] - extreme_price) <= max(threshold * float(touch_atr_mult), abs(low_values[row]) * float(touch_pct)):
-                    touches += 1
-                else:
-                    touches = 1
-                extreme_price = float(low_values[row])
-                extreme_row = row
-                extreme_side = "low"
-            elif high_values[row] - extreme_price >= threshold and extreme_side == "low":
-                _emit_zigzag_low(out, extreme_row, row, extreme_price, bar_values, atr_values, touches)
-                direction = 1
-                extreme_price = float(high_values[row])
-                extreme_row = row
-                extreme_side = "high"
-                touches = 1
-
-    return {name: pd.Series(values, index=body_high.index, dtype="float64") for name, values in out.items()}
-
-
-def _emit_zigzag_high(
-    out: dict[str, np.ndarray],
-    anchor_row: int,
-    confirm_row: int,
-    price: float,
-    bar_values: np.ndarray,
-    atr_values: np.ndarray,
-    touch_count: int,
-) -> None:
-    row = int(confirm_row)
-    atr_value = atr_values[anchor_row] if np.isfinite(atr_values[anchor_row]) and atr_values[anchor_row] > 0.0 else np.nan
-    prominence = abs(float(price) - float(np.nanmin([price, price - atr_value if np.isfinite(atr_value) else price]))) / max(atr_value, 1e-9)
-    out["pivot_high"][row] = float(price)
-    out["pivot_high_index"][row] = float(bar_values[anchor_row])
-    out["pivot_high_available_index"][row] = float(bar_values[row])
-    out["pivot_high_prominence"][row] = float(prominence)
-    out["pivot_high_prominence_pct"][row] = 0.0
-    out["pivot_high_score"][row] = _pivot_quality_score(float(prominence), int(touch_count))
-
-
-def _emit_zigzag_low(
-    out: dict[str, np.ndarray],
-    anchor_row: int,
-    confirm_row: int,
-    price: float,
-    bar_values: np.ndarray,
-    atr_values: np.ndarray,
-    touch_count: int,
-) -> None:
-    row = int(confirm_row)
-    atr_value = atr_values[anchor_row] if np.isfinite(atr_values[anchor_row]) and atr_values[anchor_row] > 0.0 else np.nan
-    prominence = abs(float(price) - float(np.nanmax([price, price + atr_value if np.isfinite(atr_value) else price]))) / max(atr_value, 1e-9)
-    out["pivot_low"][row] = float(price)
-    out["pivot_low_index"][row] = float(bar_values[anchor_row])
-    out["pivot_low_available_index"][row] = float(bar_values[row])
-    out["pivot_low_prominence"][row] = float(prominence)
-    out["pivot_low_prominence_pct"][row] = 0.0
-    out["pivot_low_score"][row] = _pivot_quality_score(float(prominence), int(touch_count))
-
-
 def _filter_raw_pivots(
     raw: dict[str, Series],
     *,
@@ -245,11 +107,15 @@ def _filter_raw_pivots(
         pivot_index = out[f"pivot_{side}_index"]
         prominence = out[f"pivot_{side}_prominence"]
         prominence_pct = out[f"pivot_{side}_prominence_pct"]
+        prominence_threshold = pd.Series(float(min_prominence_atr), index=price.index, dtype="float64")
+        if float(min_prominence_pct) > 0.0 and float(min_prominence_atr) > 0.0:
+            atr_pct = (prominence_pct / prominence.replace(0.0, np.nan)).replace([np.inf, -np.inf], np.nan)
+            pct_ceiling_atr = float(min_prominence_pct) / atr_pct
+            prominence_threshold = pd.concat([prominence_threshold, pct_ceiling_atr], axis=1).min(axis=1, skipna=True)
         confirmed = (
             price.notna()
             & pivot_index.notna()
-            & prominence.fillna(0.0).ge(float(min_prominence_atr))
-            & prominence_pct.fillna(0.0).ge(float(min_prominence_pct))
+            & prominence.fillna(0.0).ge(prominence_threshold.fillna(float(min_prominence_atr)))
         )
         confirmed = _filter_pivot_noise_values(
             confirmed,
@@ -288,9 +154,12 @@ def _filter_pivot_noise_values(
     prev_index = raw_index.dropna().shift(1).reindex(candidate_price.index).ffill()
     spacing_ok = (raw_index - prev_index).ge(float(min_pivot_spacing_bars)) | prev_index.isna()
     distance = (raw_price - prev_price).abs()
-    atr_ok = distance.ge(candidate_atr * float(min_pivot_distance_atr)) | prev_price.isna()
-    pct_ok = (distance / raw_price.abs()).ge(float(min_pivot_distance_pct)) | prev_price.isna()
-    return (confirmed & spacing_ok.fillna(False) & atr_ok.fillna(False) & pct_ok.fillna(False)).fillna(False)
+    dynamic_threshold = candidate_atr.fillna(0.0) * float(min_pivot_distance_atr)
+    if float(min_pivot_distance_pct) > 0.0 and float(min_pivot_distance_atr) > 0.0:
+        pct_ceiling = raw_price.abs() * float(min_pivot_distance_pct)
+        dynamic_threshold = pd.concat([dynamic_threshold, pct_ceiling], axis=1).min(axis=1, skipna=True)
+    distance_ok = distance.ge(dynamic_threshold.fillna(0.0)) | prev_price.isna() | dynamic_threshold.fillna(0.0).le(0.0)
+    return (confirmed & spacing_ok.fillna(False) & distance_ok.fillna(False)).fillna(False)
 
 
 def _clean_alternating_pivots(raw: dict[str, Series], index: pd.Index) -> dict[str, Series]:
@@ -395,4 +264,4 @@ def _safe_div(numerator: Series, denominator: Series) -> Series:
     return numerator / denominator
 
 
-__all__ = ["PivotMethod", "build_clean_pivot_source"]
+__all__ = ["build_clean_pivot_source"]

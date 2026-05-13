@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, fields, replace
 from typing import Any as PatternStructureConfig
 
 import numpy as np
@@ -27,7 +28,97 @@ from pattern_common import (
     _threshold_scale_pct,
     _top_base_is_held,
     _top_p1_dominance_score,
+    _with_foundation_pivots,
 )
+
+
+@dataclass(frozen=True)
+class PatternPeakConfig:
+    output_prefix: str = "pat"
+    timeframe: str = "4h"
+    pivot_prefix: str = "pf"
+    atr_period: int = 14
+    pivot_strength: int = 2
+    pivot_min_prominence_atr: float = 0.35
+    pivot_min_prominence_pct: float = 0.0
+    pivot_min_spacing_bars: int = 1
+    pivot_min_distance_atr: float = 0.0
+    pivot_min_distance_pct: float = 0.0
+    pattern_pivot_strength: int = 1
+    entry_cooldown_bars: int = 8
+    pattern_lifecycle_mature_bars: int = 12
+    pattern_lifecycle_stale_bars: int = 12
+    double_duplicate_overlap_pct: float = 0.70
+    double_duplicate_neckline_tolerance_pct: float = 0.012
+    peak_dynamic_body_window: int = 30
+    peak_dynamic_scale_window: int = 30
+    peak_premove_body_mult: float = 6.0
+    peak_level_tolerance_body_mult: float = 2.25
+    peak_level_tolerance_atr_mult: float = 0.35
+    peak_level_tolerance_prominence_mult: float = 0.20
+    peak_reaction_body_mult: float = 3.0
+    peak_base_return_buffer_body_mult: float = 0.8
+    triple_pattern_window: int = 110
+    min_triple_pattern_bars: int = 12
+    max_triple_pattern_bars: int = 90
+    min_triple_spacing_bars: int = 4
+    triple_max_candidate_pivots: int = 8
+    triple_peak_tolerance_pct: float = 0.040
+    min_triple_neckline_depth_pct: float = 0.018
+    min_triple_prior_move_pct: float = 0.040
+    min_triple_first_pivot_move_pct: float = 0.030
+    triple_reaction_max_bars: int = 24
+    min_triple_reaction_score: float = 0.12
+    min_triple_quality: float = 0.72
+    include_pattern_diagnostics: bool = False
+
+
+def add_pattern_peaks(
+    dataframe: DataFrame,
+    timeframe: str = "4h",
+    config: PatternPeakConfig | None = None,
+    **overrides: object,
+) -> DataFrame:
+    cfg = _resolve_config(config, timeframe, overrides)
+    _validate_ohlcv(dataframe)
+    frame = _with_foundation_pivots(
+        dataframe,
+        pivot_prefix=cfg.pivot_prefix,
+        atr_period=int(cfg.atr_period),
+        pivot_strength=int(cfg.pivot_strength),
+        pivot_min_prominence_atr=float(cfg.pivot_min_prominence_atr),
+        pivot_min_prominence_pct=float(cfg.pivot_min_prominence_pct),
+        pivot_min_spacing_bars=int(cfg.pivot_min_spacing_bars),
+        pivot_min_distance_atr=float(cfg.pivot_min_distance_atr),
+        pivot_min_distance_pct=float(cfg.pivot_min_distance_pct),
+    )
+    columns = _triple_reversal_columns(frame, cfg)
+    clean = dataframe.drop(columns=[column for column in columns if column in dataframe.columns]).copy()
+    return pd.concat([clean, pd.DataFrame(columns, index=frame.index)], axis=1)
+
+
+def _resolve_config(
+    config: PatternPeakConfig | None,
+    timeframe: str,
+    overrides: dict[str, object],
+) -> PatternPeakConfig:
+    cfg = config or PatternPeakConfig(timeframe=str(timeframe))
+    valid = {field.name for field in fields(PatternPeakConfig)}
+    clean = {key: value for key, value in overrides.items() if value is not None}
+    unknown = sorted(set(clean).difference(valid))
+    if unknown:
+        raise TypeError(f"Unknown peak config override(s): {', '.join(unknown)}")
+    if "timeframe" not in clean:
+        clean["timeframe"] = str(timeframe)
+    return replace(cfg, **clean) if clean else cfg
+
+
+def _validate_ohlcv(dataframe: DataFrame) -> None:
+    missing = [column for column in ("open", "high", "low", "close") if column not in dataframe.columns]
+    if missing:
+        raise ValueError(f"Dataframe missing required columns: {', '.join(missing)}")
+    if dataframe.empty:
+        raise ValueError("Dataframe must not be empty")
 
 
 def _triple_reversal_columns(frame: DataFrame, cfg: PatternStructureConfig) -> dict[str, Series]:
@@ -772,4 +863,4 @@ def _store_triple(out: dict[str, np.ndarray], row: int, name: str, candidate: di
     out[f"{name}_reaction_score"][row] = float(candidate["reaction_score"])
 
 
-__all__ = ["_triple_reversal_columns"]
+__all__ = ["PatternPeakConfig", "add_pattern_peaks", "_triple_reversal_columns"]

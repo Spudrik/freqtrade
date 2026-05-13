@@ -1,12 +1,98 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, fields, replace
 from typing import Any as PatternStructureConfig
 
 import numpy as np
 import pandas as pd
 from pandas import DataFrame, Series
 
-from pattern_common import _clip_value, _dedupe_interval_level_events, _lifecycle_state_from_events, _pattern_geometry_arrays
+from pattern_common import (
+    _clip_value,
+    _dedupe_interval_level_events,
+    _lifecycle_state_from_events,
+    _line_fit_with_error,
+    _pattern_geometry_arrays,
+    _with_foundation_pivots,
+)
+
+
+@dataclass(frozen=True)
+class PatternRangeConfig:
+    output_prefix: str = "pat"
+    timeframe: str = "4h"
+    pivot_prefix: str = "pf"
+    atr_period: int = 14
+    pivot_strength: int = 2
+    pivot_min_prominence_atr: float = 0.35
+    pivot_min_prominence_pct: float = 0.0
+    pivot_min_spacing_bars: int = 1
+    pivot_min_distance_atr: float = 0.0
+    pivot_min_distance_pct: float = 0.0
+    pattern_pivot_strength: int = 1
+    entry_cooldown_bars: int = 8
+    pattern_lifecycle_mature_bars: int = 12
+    pattern_lifecycle_stale_bars: int = 12
+    double_duplicate_overlap_pct: float = 0.70
+    double_duplicate_neckline_tolerance_pct: float = 0.012
+    rectangle_window: int = 80
+    min_rectangle_bars: int = 16
+    rectangle_min_width_pct: float = 0.008
+    rectangle_max_width_pct: float = 0.18
+    rectangle_boundary_tolerance_pct: float = 0.006
+    rectangle_management_buffer_pct: float = 0.002
+    rectangle_max_boundary_slope_pct_per_bar: float = 0.00035
+    rectangle_min_side_touches: int = 3
+    min_rectangle_containment_ratio: float = 0.80
+    min_rectangle_quality: float = 0.88
+
+
+def add_pattern_range(
+    dataframe: DataFrame,
+    timeframe: str = "4h",
+    config: PatternRangeConfig | None = None,
+    **overrides: object,
+) -> DataFrame:
+    cfg = _resolve_config(config, timeframe, overrides)
+    _validate_ohlcv(dataframe)
+    frame = _with_foundation_pivots(
+        dataframe,
+        pivot_prefix=cfg.pivot_prefix,
+        atr_period=int(cfg.atr_period),
+        pivot_strength=int(cfg.pivot_strength),
+        pivot_min_prominence_atr=float(cfg.pivot_min_prominence_atr),
+        pivot_min_prominence_pct=float(cfg.pivot_min_prominence_pct),
+        pivot_min_spacing_bars=int(cfg.pivot_min_spacing_bars),
+        pivot_min_distance_atr=float(cfg.pivot_min_distance_atr),
+        pivot_min_distance_pct=float(cfg.pivot_min_distance_pct),
+    )
+    columns = _rectangle_range_columns(frame, cfg)
+    clean = dataframe.drop(columns=[column for column in columns if column in dataframe.columns]).copy()
+    return pd.concat([clean, pd.DataFrame(columns, index=frame.index)], axis=1)
+
+
+def _resolve_config(
+    config: PatternRangeConfig | None,
+    timeframe: str,
+    overrides: dict[str, object],
+) -> PatternRangeConfig:
+    cfg = config or PatternRangeConfig(timeframe=str(timeframe))
+    valid = {field.name for field in fields(PatternRangeConfig)}
+    clean = {key: value for key, value in overrides.items() if value is not None}
+    unknown = sorted(set(clean).difference(valid))
+    if unknown:
+        raise TypeError(f"Unknown range config override(s): {', '.join(unknown)}")
+    if "timeframe" not in clean:
+        clean["timeframe"] = str(timeframe)
+    return replace(cfg, **clean) if clean else cfg
+
+
+def _validate_ohlcv(dataframe: DataFrame) -> None:
+    missing = [column for column in ("open", "high", "low", "close") if column not in dataframe.columns]
+    if missing:
+        raise ValueError(f"Dataframe missing required columns: {', '.join(missing)}")
+    if dataframe.empty:
+        raise ValueError("Dataframe must not be empty")
 
 
 def _rectangle_range_columns(frame: DataFrame, cfg: PatternStructureConfig) -> dict[str, Series]:
@@ -88,6 +174,7 @@ def _rectangle_range_arrays(frame: DataFrame, cfg: PatternStructureConfig) -> di
     min_touches = int(cfg.rectangle_min_side_touches)
     boundary_tolerance_pct = float(cfg.rectangle_boundary_tolerance_pct)
     management_buffer_pct = float(cfg.rectangle_management_buffer_pct)
+    max_boundary_slope_pct = float(cfg.rectangle_max_boundary_slope_pct_per_bar)
     min_width_pct = float(cfg.rectangle_min_width_pct)
     max_width_pct = float(cfg.rectangle_max_width_pct)
     min_quality = float(cfg.min_rectangle_quality)
@@ -139,6 +226,14 @@ def _rectangle_range_arrays(frame: DataFrame, cfg: PatternStructureConfig) -> di
         upper_count = int(upper_touch.sum())
         lower_count = int(lower_touch.sum())
         if upper_count < min_touches or lower_count < min_touches:
+            continue
+        upper_slope, _, _ = _line_fit_with_error(high_x[upper_touch], high_prices[upper_touch])
+        lower_slope, _, _ = _line_fit_with_error(low_x[lower_touch], low_prices[lower_touch])
+        if not np.isfinite([upper_slope, lower_slope]).all():
+            continue
+        if (abs(upper_slope) / reference) > max_boundary_slope_pct:
+            continue
+        if (abs(lower_slope) / reference) > max_boundary_slope_pct:
             continue
 
         first_touch = int(max(0.0, min(float(np.nanmin(high_x[upper_touch])), float(np.nanmin(low_x[lower_touch])))))
@@ -202,4 +297,4 @@ def _rectangle_range_arrays(frame: DataFrame, cfg: PatternStructureConfig) -> di
     return out
 
 
-__all__ = ["_rectangle_range_columns"]
+__all__ = ["PatternRangeConfig", "add_pattern_range", "_rectangle_range_columns"]

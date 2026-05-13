@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, fields, replace
 from typing import Any as PatternStructureConfig
 
 import numpy as np
@@ -17,7 +18,104 @@ from pattern_common import (
     _nanmax_pair,
     _num,
     _slope_from_points,
+    _with_foundation_pivots,
 )
+
+
+@dataclass(frozen=True)
+class PatternContinuationConfig:
+    output_prefix: str = "pat"
+    timeframe: str = "4h"
+    pivot_prefix: str = "pf"
+    atr_period: int = 14
+    pivot_strength: int = 2
+    pivot_min_prominence_atr: float = 0.35
+    pivot_min_prominence_pct: float = 0.0
+    pivot_min_spacing_bars: int = 1
+    pivot_min_distance_atr: float = 0.0
+    pivot_min_distance_pct: float = 0.0
+    entry_cooldown_bars: int = 8
+    impulse_window: int = 36
+    min_impulse_bars: int = 3
+    min_impulse_pct: float = 0.055
+    min_impulse_efficiency: float = 0.34
+    min_impulse_volume_ratio: float = 1.05
+    impulse_extreme_tolerance_pct: float = 0.004
+    impulse_dominance_mult: float = 1.08
+    min_impulse_dominance_score: float = 0.55
+    min_impulse_break_score: float = 0.15
+    max_consolidation_drift_pct_per_bar: float = 0.00075
+    max_impulse_extreme_age_bars: int = 32
+    pattern_pivot_strength: int = 1
+    min_pattern_bars: int = 4
+    min_setup_retrace_pct: float = 0.04
+    max_setup_retrace_pct: float = 0.65
+    max_setup_range_pct: float = 0.30
+    max_setup_to_impulse_range_mult: float = 1.05
+    max_pattern_breakout_pct: float = 0.018
+    max_pattern_boundary_excursion_pct: float = 0.006
+    pattern_side_dominance_mult: float = 1.03
+    min_pattern_side_pivots: int = 2
+    min_boundary_slope_pct_per_bar: float = 0.00018
+    max_flag_counter_slope_pct_per_bar: float = 0.0008
+    parallel_slope_tolerance_pct_per_bar: float = 0.0008
+    min_continuation_pole_score: float = 0.50
+    min_continuation_retrace_score: float = 0.18
+    min_continuation_containment_score: float = 0.62
+    min_continuation_terminal_score: float = 0.12
+    min_continuation_boundary_touch_score: float = 0.58
+    min_continuation_boundary_span_score: float = 0.35
+    min_flag_quality: float = 0.72
+    min_pennant_quality: float = 0.72
+    include_pattern_diagnostics: bool = False
+
+
+def add_pattern_continuation(
+    dataframe: DataFrame,
+    timeframe: str = "4h",
+    config: PatternContinuationConfig | None = None,
+    **overrides: object,
+) -> DataFrame:
+    cfg = _resolve_config(config, timeframe, overrides)
+    _validate_ohlcv(dataframe)
+    frame = _with_foundation_pivots(
+        dataframe,
+        pivot_prefix=cfg.pivot_prefix,
+        atr_period=int(cfg.atr_period),
+        pivot_strength=int(cfg.pivot_strength),
+        pivot_min_prominence_atr=float(cfg.pivot_min_prominence_atr),
+        pivot_min_prominence_pct=float(cfg.pivot_min_prominence_pct),
+        pivot_min_spacing_bars=int(cfg.pivot_min_spacing_bars),
+        pivot_min_distance_atr=float(cfg.pivot_min_distance_atr),
+        pivot_min_distance_pct=float(cfg.pivot_min_distance_pct),
+    )
+    columns = _flag_pennant_columns(frame, {}, {}, cfg)
+    clean = dataframe.drop(columns=[column for column in columns if column in dataframe.columns]).copy()
+    return pd.concat([clean, pd.DataFrame(columns, index=frame.index)], axis=1)
+
+
+def _resolve_config(
+    config: PatternContinuationConfig | None,
+    timeframe: str,
+    overrides: dict[str, object],
+) -> PatternContinuationConfig:
+    cfg = config or PatternContinuationConfig(timeframe=str(timeframe))
+    valid = {field.name for field in fields(PatternContinuationConfig)}
+    clean = {key: value for key, value in overrides.items() if value is not None}
+    unknown = sorted(set(clean).difference(valid))
+    if unknown:
+        raise TypeError(f"Unknown continuation config override(s): {', '.join(unknown)}")
+    if "timeframe" not in clean:
+        clean["timeframe"] = str(timeframe)
+    return replace(cfg, **clean) if clean else cfg
+
+
+def _validate_ohlcv(dataframe: DataFrame) -> None:
+    missing = [column for column in ("open", "high", "low", "close", "volume") if column not in dataframe.columns]
+    if missing:
+        raise ValueError(f"Dataframe missing required columns: {', '.join(missing)}")
+    if dataframe.empty:
+        raise ValueError("Dataframe must not be empty")
 
 
 def _flag_pennant_columns(
@@ -157,8 +255,9 @@ def _anchored_flag_pennant_arrays(frame: DataFrame, cfg: PatternStructureConfig)
     fallback_index = np.arange(rows, dtype="float64")
     high_index = _num(frame.get(f"{pp}_pivot_high_index", pd.Series(fallback_index, index=frame.index))).to_numpy(dtype="float64")
     low_index = _num(frame.get(f"{pp}_pivot_low_index", pd.Series(fallback_index, index=frame.index))).to_numpy(dtype="float64")
-    # Flags/pennants need local consolidation swings. The cleaned TLV2 pivots
-    # remain the shared foundation, but they are too sparse inside short flags.
+    # Flags/pennants need local consolidation swings. The cleaned pivot
+    # foundation remains the shared source, but it can be too sparse inside
+    # short flags.
     # This internal source is still no-lookahead: each micro pivot is emitted
     # only after ``pattern_pivot_strength`` future candles confirm it.
     pattern_high_pivot, pattern_high_index, pattern_low_pivot, pattern_low_index = _confirmed_micro_pivots(

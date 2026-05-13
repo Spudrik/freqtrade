@@ -16,7 +16,7 @@ except Exception:  # pragma: no cover - optional fallback for standalone noteboo
 @dataclass(frozen=True)
 class PivotStructureConfig:
     """
-    Settings for confirmed pivot and structure columns.
+    Settings for pivot-based market-structure columns.
 
     Pivots are only emitted on the confirmation candle. For example, strength 5
     confirms that the candle from five bars ago was a pivot only after the five
@@ -110,7 +110,7 @@ def add_pivot_structure(
     prefix: str | None = None,
 ) -> DataFrame:
     """
-    Append no-lookahead pivot structure and structural-zone columns.
+    Append no-lookahead pivot-based market-structure and structural-zone columns.
 
     Per-strength columns are precomputed so strategies can choose an active
     strength later without recalculating indicators during hyperopt. Active
