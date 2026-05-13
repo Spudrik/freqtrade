@@ -269,9 +269,8 @@ class PatternGeometryV2Config:
     alone as an entry trigger.
 
     Important scope note: some channel levers apply only to the pivot-envelope
-    channel builder, while TLV2-supplied line pairs are still governed by TLV2
-    line quality plus the shared containment/touch/family gates. The audit
-    list in the task notes calls out candidates that could be simplified.
+    channel builder, while TLV2-supplied line pairs are governed by TLV2 line
+    quality plus the shared containment, touch, and family gates.
     """
 
     output_prefix: str = "pg2"
@@ -586,7 +585,6 @@ def _pair_lines_as_pattern(
         lower_intercept=lower_intercept,
         lookback_bars=int(cfg.local_narrowing_lookback_bars),
     )
-    full_contraction = 1.0 - current_width / max(start_width, 1e-9)
     width_change_ratio = abs(current_width - start_width) / max(start_width, current_width, 1e-9)
 
     line_score = min(float(upper.score), float(lower_line.score))
@@ -1311,11 +1309,9 @@ def _apply_channel_lifecycle(
                 cfg=cfg,
             )
             break_run = _channel_break_run_after_row(channel_state, projected, close, atr, row, cfg)
-            channel_state["break_run"] = float(break_run)
-            if projected is not None:
-                refreshed_state = _channel_state_from_candidate(projected)
-                refreshed_state["break_run"] = float(break_run)
-                channel_state = refreshed_state
+            refreshed_state = _channel_state_from_candidate(projected)
+            refreshed_state["break_run"] = float(break_run)
+            channel_state = refreshed_state
             return non_channels + [projected], channel_state, break_run >= int(cfg.channel_lifecycle_confirm_break_bars)
         channel_state = None
 
