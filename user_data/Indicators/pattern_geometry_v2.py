@@ -21,6 +21,12 @@ Example: a BTC 4h compressing pattern and a SOL 1h compressing pattern should
 be judged by how narrow the current width is versus current ATR, how recently
 both rails were touched, and whether candle bodies stay inside the rails. They
 should not be judged by a fixed percent of price.
+
+The combined ``add_pattern_geometry_v2`` call emits every enabled family.
+Family-specific wrappers such as ``add_triangle_geometry_v2`` and
+``add_rectangle_geometry_v2`` run with all other geometry families disabled,
+which keeps strategy and hyperopt experiments from paying for unrelated output
+selection.
 """
 
 from __future__ import annotations
@@ -54,6 +60,15 @@ _FAMILY_CODE = {
     "descending_channel": 6,
 }
 _COMPRESSIVE_FAMILY_CODES = {1, 2, 3}
+_CHANNEL_FAMILIES = {"rectangle", "ascending_channel", "descending_channel"}
+_FAMILY_INCLUDE_FIELDS = {
+    "triangle": "include_triangle_patterns",
+    "wedge": "include_wedge_patterns",
+    "compression": "include_compression_patterns",
+    "rectangle": "include_rectangle_patterns",
+    "ascending_channel": "include_ascending_channel_patterns",
+    "descending_channel": "include_descending_channel_patterns",
+}
 
 # Slot fields describe an active pattern instance. Strategy code should treat
 # each slot as one complete geometry object for that candle:
@@ -121,6 +136,7 @@ _PROFILE_FIELDS = (
     "channel_min_width_atr",
     "channel_max_width_atr",
     "channel_max_width_change_ratio",
+    "channel_rectangle_max_drift_width_ratio",
     "channel_min_containment",
     "channel_min_quality",
     "channel_envelope_start_options",
@@ -151,7 +167,8 @@ _TIMEFRAME_PROFILES: dict[str, dict[str, object]] = {
         "channel_min_width_atr": 1.0,
         "channel_max_width_atr": 8.0,
         "channel_max_width_change_ratio": 0.22,
-        "channel_min_containment": 0.68,
+        "channel_rectangle_max_drift_width_ratio": 0.60,
+        "channel_min_containment": 0.80,
         "channel_min_quality": 0.82,
         "channel_envelope_start_options": 10,
         "channel_lifecycle_confirm_break_bars": 2,
@@ -169,7 +186,8 @@ _TIMEFRAME_PROFILES: dict[str, dict[str, object]] = {
         "channel_min_width_atr": 1.0,
         "channel_max_width_atr": 8.0,
         "channel_max_width_change_ratio": 0.22,
-        "channel_min_containment": 0.68,
+        "channel_rectangle_max_drift_width_ratio": 0.60,
+        "channel_min_containment": 0.80,
         "channel_min_quality": 0.82,
         "channel_envelope_start_options": 10,
         "channel_lifecycle_confirm_break_bars": 2,
@@ -187,6 +205,7 @@ _TIMEFRAME_PROFILES: dict[str, dict[str, object]] = {
         "channel_min_width_atr": 0.75,
         "channel_max_width_atr": 8.5,
         "channel_max_width_change_ratio": 0.26,
+        "channel_rectangle_max_drift_width_ratio": 0.60,
         "channel_min_containment": 0.66,
         "channel_min_quality": 0.80,
         "channel_envelope_start_options": 14,
@@ -205,6 +224,7 @@ _TIMEFRAME_PROFILES: dict[str, dict[str, object]] = {
         "channel_min_width_atr": 0.50,
         "channel_max_width_atr": 9.0,
         "channel_max_width_change_ratio": 0.32,
+        "channel_rectangle_max_drift_width_ratio": 0.60,
         "channel_min_containment": 0.62,
         "channel_min_quality": 0.78,
         "channel_envelope_start_options": 22,
@@ -223,6 +243,7 @@ _TIMEFRAME_PROFILES: dict[str, dict[str, object]] = {
         "channel_min_width_atr": 0.35,
         "channel_max_width_atr": 10.0,
         "channel_max_width_change_ratio": 0.36,
+        "channel_rectangle_max_drift_width_ratio": 0.60,
         "channel_min_containment": 0.58,
         "channel_min_quality": 0.76,
         "channel_envelope_start_options": 30,
@@ -271,12 +292,24 @@ class PatternGeometryV2Config:
     Important scope note: some channel levers apply only to the pivot-envelope
     channel builder, while TLV2-supplied line pairs are governed by TLV2 line
     quality plus the shared containment, touch, and family gates.
+
+    The ``include_*_patterns`` flags are family gates. They are public so the
+    combined geometry file can still be used as six separate pattern
+    indicators when a strategy wants only one family. The older
+    ``include_channel_patterns`` flag remains a master switch for all three
+    channel-like families.
     """
 
     output_prefix: str = "pg2"
     output_slots: int = 4
     timeframe: str = "4h"
     pivot_strength: int = 2
+    include_triangle_patterns: bool = True
+    include_wedge_patterns: bool = True
+    include_compression_patterns: bool = True
+    include_rectangle_patterns: bool = True
+    include_ascending_channel_patterns: bool = True
+    include_descending_channel_patterns: bool = True
     pair_start_mode: str = "old"
     min_pattern_bars: int = 12
     max_pattern_bars: int = 72
@@ -295,6 +328,7 @@ class PatternGeometryV2Config:
     channel_parallel_tolerance_atr_per_bar: float = 0.018
     channel_flat_slope_atr_per_bar: float = 0.012
     channel_min_slope_atr_per_bar: float = 0.018
+    channel_rectangle_max_drift_width_ratio: float = 0.60
     channel_min_containment: float = 0.68
     channel_min_quality: float = 0.82
     channel_min_side_pivots: int = 3
@@ -354,8 +388,8 @@ def add_pattern_geometry_v2(
 ) -> DataFrame:
     """Append geometry v2 columns to an OHLCV frame.
 
-    This function is the only public entry point in this file. Strategies call
-    it with a timeframe, for example:
+    This is the combined public entry point. Strategies call it with a
+    timeframe, for example:
 
     ``add_pattern_geometry_v2(df, timeframe="4h")``
 
@@ -363,7 +397,8 @@ def add_pattern_geometry_v2(
     columns. Per-slot columns describe concrete patterns. Row-level columns
     summarize the best active compression/channel state for simple strategy
     use. Existing ``pg2_*`` columns are removed first so repeated indicator
-    calls do not leave stale outputs.
+    calls do not leave stale outputs. Use the family-specific wrappers when
+    only one geometry family should be evaluated.
     """
     cfg = _resolve_config(config, overrides)
     _validate_config(cfg)
@@ -394,6 +429,115 @@ def add_pattern_geometry_v2(
     existing = [col for col in source.columns if str(col).startswith(f"{p}_")]
     clean = source.drop(columns=existing).copy() if existing else source.copy()
     return pd.concat([clean, pd.DataFrame(columns, index=dataframe.index)], axis=1)
+
+
+def add_pattern_geometry_family_v2(
+    dataframe: DataFrame,
+    family: str,
+    config: PatternGeometryV2Config | None = None,
+    **overrides: object,
+) -> DataFrame:
+    """Append geometry v2 columns for exactly one requested family.
+
+    The output schema stays identical to ``add_pattern_geometry_v2`` so a
+    strategy can swap between the combined and family-specific calls without
+    learning different column names. Set a distinct ``output_prefix`` when
+    composing several family wrappers on the same frame. The family wrappers
+    below are thin aliases around this function.
+    """
+    family_name = _normalize_family_name(family)
+    family_overrides = dict(overrides)
+    family_overrides.update(_single_family_overrides(family_name))
+    return add_pattern_geometry_v2(dataframe, config, **family_overrides)
+
+
+def add_triangle_geometry_v2(
+    dataframe: DataFrame,
+    config: PatternGeometryV2Config | None = None,
+    **overrides: object,
+) -> DataFrame:
+    return add_pattern_geometry_family_v2(dataframe, "triangle", config, **overrides)
+
+
+def add_wedge_geometry_v2(
+    dataframe: DataFrame,
+    config: PatternGeometryV2Config | None = None,
+    **overrides: object,
+) -> DataFrame:
+    return add_pattern_geometry_family_v2(dataframe, "wedge", config, **overrides)
+
+
+def add_compression_geometry_v2(
+    dataframe: DataFrame,
+    config: PatternGeometryV2Config | None = None,
+    **overrides: object,
+) -> DataFrame:
+    return add_pattern_geometry_family_v2(dataframe, "compression", config, **overrides)
+
+
+def add_rectangle_geometry_v2(
+    dataframe: DataFrame,
+    config: PatternGeometryV2Config | None = None,
+    **overrides: object,
+) -> DataFrame:
+    return add_pattern_geometry_family_v2(dataframe, "rectangle", config, **overrides)
+
+
+def add_ascending_channel_geometry_v2(
+    dataframe: DataFrame,
+    config: PatternGeometryV2Config | None = None,
+    **overrides: object,
+) -> DataFrame:
+    return add_pattern_geometry_family_v2(dataframe, "ascending_channel", config, **overrides)
+
+
+def add_descending_channel_geometry_v2(
+    dataframe: DataFrame,
+    config: PatternGeometryV2Config | None = None,
+    **overrides: object,
+) -> DataFrame:
+    return add_pattern_geometry_family_v2(dataframe, "descending_channel", config, **overrides)
+
+
+def _normalize_family_name(value: str) -> str:
+    family = str(value).strip().lower().replace("-", "_").replace(" ", "_")
+    if family not in _FAMILY_CODE:
+        allowed = ", ".join(_FAMILY_CODE)
+        raise ValueError(f"geometry family must be one of: {allowed}")
+    return family
+
+
+def _single_family_overrides(family: str) -> dict[str, object]:
+    family = _normalize_family_name(family)
+    overrides: dict[str, object] = {
+        field_name: False
+        for field_name in _FAMILY_INCLUDE_FIELDS.values()
+    }
+    overrides[_FAMILY_INCLUDE_FIELDS[family]] = True
+    overrides["include_channel_patterns"] = family in _CHANNEL_FAMILIES
+    return overrides
+
+
+def _family_enabled(cfg: PatternGeometryV2Config, family: str) -> bool:
+    if family not in _FAMILY_INCLUDE_FIELDS:
+        family = _normalize_family_name(family)
+    if family in _CHANNEL_FAMILIES and not bool(cfg.include_channel_patterns):
+        return False
+    return bool(getattr(cfg, _FAMILY_INCLUDE_FIELDS[family]))
+
+
+def _any_channel_family_enabled(cfg: PatternGeometryV2Config) -> bool:
+    return bool(cfg.include_channel_patterns) and any(
+        bool(getattr(cfg, _FAMILY_INCLUDE_FIELDS[family]))
+        for family in _CHANNEL_FAMILIES
+    )
+
+
+def _any_family_enabled(cfg: PatternGeometryV2Config) -> bool:
+    return any(
+        _family_enabled(cfg, family)
+        for family in _FAMILY_CODE
+    )
 
 
 def _geometry_v2_arrays(frame: DataFrame, cfg: PatternGeometryV2Config) -> dict[str, np.ndarray]:
@@ -657,6 +801,13 @@ def _pair_lines_as_pattern(
         lookback_bars=int(cfg.local_narrowing_lookback_bars),
     )
     width_change_ratio = abs(current_width - start_width) / max(start_width, current_width, 1e-9)
+    channel_drift_width_ratio = _channel_drift_width_ratio(
+        upper_slope=upper_slope,
+        lower_slope=lower_slope,
+        span=span,
+        start_width=start_width,
+        current_width=current_width,
+    )
 
     line_score = min(float(upper.score), float(lower_line.score))
     if line_score < float(cfg.min_line_score):
@@ -718,6 +869,7 @@ def _pair_lines_as_pattern(
         local_contraction=local_contraction,
         width_atr=width_atr,
         width_change_ratio=width_change_ratio,
+        channel_drift_width_ratio=channel_drift_width_ratio,
         span=span,
         containment=containment,
         cfg=cfg,
@@ -769,6 +921,7 @@ def _pair_lines_as_pattern(
         "width_atr": float(width_atr),
         "shape_score": float(shape_score),
         "width_change_ratio": float(width_change_ratio),
+        "channel_drift_width_ratio": float(channel_drift_width_ratio),
         "upper_pivots": float(upper_pivots),
         "lower_pivots": float(lower_pivots),
         "upper_touch_age": float(upper_touch_age),
@@ -805,7 +958,7 @@ def _channel_envelope_candidates(
     rather than boundary touches; the upper fit drifts into the middle and
     fails width/containment/parallel checks.
     """
-    if not bool(cfg.include_channel_patterns):
+    if not _any_channel_family_enabled(cfg):
         return []
 
     candidates: list[dict[str, float]] = []
@@ -838,8 +991,7 @@ def _channel_envelope_candidates(
         atr_scale = max(_atr_window_median(atr, start_index, row, atr_finite_prefix), float(atr[row]), 1e-9)
         upper_slope_atr = upper_slope / atr_scale
         lower_slope_atr = lower_slope / atr_scale
-        family = _channel_pattern_family(upper_slope_atr, lower_slope_atr, cfg)
-        if family is None:
+        if abs(float(lower_slope_atr) - float(upper_slope_atr)) > float(cfg.channel_parallel_tolerance_atr_per_bar):
             continue
 
         start_width = upper_start - lower_start
@@ -850,6 +1002,13 @@ def _channel_envelope_candidates(
         width_change_ratio = abs(current_width - start_width) / max(start_width, current_width, 1e-9)
         if width_change_ratio > float(cfg.channel_max_width_change_ratio):
             continue
+        channel_drift_width_ratio = _channel_drift_width_ratio(
+            upper_slope=upper_slope,
+            lower_slope=lower_slope,
+            span=span,
+            start_width=start_width,
+            current_width=current_width,
+        )
 
         high_span_ratio = _pivot_span_ratio(high_x, start_index, row)
         low_span_ratio = _pivot_span_ratio(low_x, start_index, row)
@@ -922,6 +1081,15 @@ def _channel_envelope_candidates(
         if quality < float(cfg.channel_min_quality):
             continue
 
+        family = _channel_pattern_family(
+            upper_slope_atr,
+            lower_slope_atr,
+            cfg,
+            channel_drift_width_ratio=channel_drift_width_ratio,
+        )
+        if family is None:
+            continue
+
         direction = 0 if family == "rectangle" else _direction_code(upper_slope_atr, lower_slope_atr, float(cfg.channel_min_slope_atr_per_bar))
         candidates.append(
             {
@@ -943,6 +1111,7 @@ def _channel_envelope_candidates(
                 "width_atr": float(width_atr),
                 "shape_score": float(quality),
                 "width_change_ratio": float(width_change_ratio),
+                "channel_drift_width_ratio": float(channel_drift_width_ratio),
                 "upper_pivots": float(len(high_x)),
                 "lower_pivots": float(len(low_x)),
                 "upper_touch_age": float(upper_touch_age),
@@ -1034,18 +1203,47 @@ def _atr_window_median(
     return float(np.nanmedian(values))
 
 
-def _channel_pattern_family(upper_slope_atr: float, lower_slope_atr: float, cfg: PatternGeometryV2Config) -> str | None:
+def _channel_drift_width_ratio(
+    *,
+    upper_slope: float,
+    lower_slope: float,
+    span: int | float,
+    start_width: float,
+    current_width: float,
+) -> float:
+    avg_width = 0.5 * (float(start_width) + float(current_width))
+    if avg_width <= 0.0:
+        return np.inf
+    mid_slope = 0.5 * (float(upper_slope) + float(lower_slope))
+    return float(abs(mid_slope) * max(float(span), 0.0) / avg_width)
+
+
+def _channel_pattern_family(
+    upper_slope_atr: float,
+    lower_slope_atr: float,
+    cfg: PatternGeometryV2Config,
+    *,
+    channel_drift_width_ratio: float | None = None,
+) -> str | None:
+    if not _any_channel_family_enabled(cfg):
+        return None
     if not np.isfinite([upper_slope_atr, lower_slope_atr]).all():
         return None
     if abs(float(lower_slope_atr) - float(upper_slope_atr)) > float(cfg.channel_parallel_tolerance_atr_per_bar):
         return None
     mid_slope = 0.5 * (float(upper_slope_atr) + float(lower_slope_atr))
-    if abs(mid_slope) <= float(cfg.channel_flat_slope_atr_per_bar):
-        return "rectangle"
+    slope_is_rectangle = abs(mid_slope) <= float(cfg.channel_flat_slope_atr_per_bar)
+    if channel_drift_width_ratio is not None and np.isfinite(channel_drift_width_ratio):
+        drift_is_rectangle = float(channel_drift_width_ratio) <= float(cfg.channel_rectangle_max_drift_width_ratio)
+    else:
+        drift_is_rectangle = False
+    is_rectangle = slope_is_rectangle or drift_is_rectangle
+    if is_rectangle:
+        return "rectangle" if _family_enabled(cfg, "rectangle") else None
     if mid_slope >= float(cfg.channel_min_slope_atr_per_bar):
-        return "ascending_channel"
+        return "ascending_channel" if _family_enabled(cfg, "ascending_channel") else None
     if mid_slope <= -float(cfg.channel_min_slope_atr_per_bar):
-        return "descending_channel"
+        return "descending_channel" if _family_enabled(cfg, "descending_channel") else None
     return None
 
 
@@ -1238,6 +1436,7 @@ def _classify_geometry_family(
     local_contraction: float,
     width_atr: float,
     width_change_ratio: float,
+    channel_drift_width_ratio: float,
     span: int,
     containment: float,
     cfg: PatternGeometryV2Config,
@@ -1264,9 +1463,9 @@ def _classify_geometry_family(
             flat_slope=float(cfg.flat_slope_atr_per_bar),
         )
         if compression_family is not None:
-            return compression_family
+            return compression_family if _family_enabled(cfg, compression_family) else None
 
-    if not bool(cfg.include_channel_patterns):
+    if not _any_channel_family_enabled(cfg):
         return None
     if span < int(cfg.channel_min_pattern_bars):
         return None
@@ -1279,14 +1478,12 @@ def _classify_geometry_family(
     if abs(float(lower_slope_atr) - float(upper_slope_atr)) > float(cfg.channel_parallel_tolerance_atr_per_bar):
         return None
 
-    mid_slope = 0.5 * (float(upper_slope_atr) + float(lower_slope_atr))
-    if abs(mid_slope) <= float(cfg.channel_flat_slope_atr_per_bar):
-        return "rectangle"
-    if mid_slope >= float(cfg.channel_min_slope_atr_per_bar):
-        return "ascending_channel"
-    if mid_slope <= -float(cfg.channel_min_slope_atr_per_bar):
-        return "descending_channel"
-    return None
+    return _channel_pattern_family(
+        upper_slope_atr,
+        lower_slope_atr,
+        cfg,
+        channel_drift_width_ratio=channel_drift_width_ratio,
+    )
 
 
 def _compressive_pattern_family(
@@ -1456,6 +1653,7 @@ def _channel_state_from_candidate(candidate: dict[str, float]) -> dict[str, floa
             "upper_pivots",
             "lower_pivots",
             "shape_score",
+            "channel_drift_width_ratio",
         )
         if key in candidate
     }
@@ -1492,6 +1690,24 @@ def _project_channel_state(
     start_width = upper_start - lower_start
     width_atr = current_width / max(float(atr[row]), 1e-9)
     if width_atr < float(cfg.channel_min_width_atr) or width_atr > float(cfg.channel_max_width_atr):
+        return None
+    channel_drift_width_ratio = _channel_drift_width_ratio(
+        upper_slope=upper_slope,
+        lower_slope=lower_slope,
+        span=span,
+        start_width=start_width,
+        current_width=current_width,
+    )
+    atr_scale = max(_atr_window_median(atr, start_index, row), float(atr[row]), 1e-9)
+    upper_slope_atr = upper_slope / atr_scale
+    lower_slope_atr = lower_slope / atr_scale
+    family = _channel_pattern_family(
+        upper_slope_atr,
+        lower_slope_atr,
+        cfg,
+        channel_drift_width_ratio=channel_drift_width_ratio,
+    )
+    if family is None:
         return None
 
     containment = _containment_ratio(
@@ -1532,8 +1748,12 @@ def _project_channel_state(
     )
 
     return {
-        "family_code": float(channel_state["family_code"]),
-        "direction": float(channel_state["direction"]),
+        "family_code": float(_FAMILY_CODE[family]),
+        "direction": float(
+            0
+            if family == "rectangle"
+            else _direction_code(upper_slope_atr, lower_slope_atr, float(cfg.channel_min_slope_atr_per_bar))
+        ),
         "upper": float(upper_now),
         "lower": float(lower_now),
         "upper_start": float(upper_start),
@@ -1546,10 +1766,11 @@ def _project_channel_state(
         "lower_intercept": float(lower_intercept),
         "line_score": float(channel_state.get("line_score", 0.0)),
         "contraction": float(1.0 - current_width / max(start_width, 1e-9)),
-        "containment": float(max(containment, float(channel_state.get("containment", 0.0)))),
+        "containment": float(containment),
         "width_atr": float(width_atr),
         "shape_score": float(channel_state.get("shape_score", channel_state.get("line_score", 0.0))),
         "width_change_ratio": float(abs(current_width - start_width) / max(start_width, current_width, 1e-9)),
+        "channel_drift_width_ratio": float(channel_drift_width_ratio),
         "upper_pivots": float(channel_state.get("upper_pivots", 2.0)),
         "lower_pivots": float(channel_state.get("lower_pivots", 2.0)),
         "upper_touch_age": float(upper_touch_age),
@@ -1867,6 +2088,8 @@ def _validate_config(cfg: PatternGeometryV2Config) -> None:
     if int(cfg.output_slots) < 1:
         raise ValueError("output_slots must be at least 1")
     _normalize_timeframe(str(cfg.timeframe))
+    if not _any_family_enabled(cfg):
+        raise ValueError("at least one geometry family include flag must be enabled")
     if int(cfg.pivot_strength) < 1:
         raise ValueError("pivot_strength must be at least 1")
     if str(cfg.pair_start_mode) not in {"old", "x_new", "active_start"}:
@@ -1901,6 +2124,8 @@ def _validate_config(cfg: PatternGeometryV2Config) -> None:
         raise ValueError("channel_flat_slope_atr_per_bar must be positive")
     if float(cfg.channel_min_slope_atr_per_bar) <= 0.0:
         raise ValueError("channel_min_slope_atr_per_bar must be positive")
+    if float(cfg.channel_rectangle_max_drift_width_ratio) < 0.0:
+        raise ValueError("channel_rectangle_max_drift_width_ratio must be non-negative")
     if not 0.0 <= float(cfg.channel_min_containment) <= 1.0:
         raise ValueError("channel_min_containment must be between 0 and 1")
     if not 0.0 <= float(cfg.channel_min_quality) <= 1.0:
@@ -1953,5 +2178,12 @@ def _validate_config(cfg: PatternGeometryV2Config) -> None:
 
 __all__ = [
     "PatternGeometryV2Config",
+    "add_ascending_channel_geometry_v2",
+    "add_compression_geometry_v2",
+    "add_descending_channel_geometry_v2",
     "add_pattern_geometry_v2",
+    "add_pattern_geometry_family_v2",
+    "add_rectangle_geometry_v2",
+    "add_triangle_geometry_v2",
+    "add_wedge_geometry_v2",
 ]
