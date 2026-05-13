@@ -336,6 +336,8 @@ class _LineCandidate:
     score: float
     pivot_count: float
     absorbed_pivot_count: float
+    impulse_span: float
+    impulse_slope_atr: float
 
 
 @dataclass(frozen=True)
@@ -438,8 +440,8 @@ def _geometry_v2_arrays(frame: DataFrame, cfg: PatternGeometryV2Config) -> dict[
         resistance_lines: list[_LineCandidate] = []
         support_lines: list[_LineCandidate] = []
     else:
-        resistance_lines = _line_candidates_from_frame(candidates, "resistance")
-        support_lines = _line_candidates_from_frame(candidates, "support")
+        resistance_lines = _line_candidates_from_frame(candidates, "resistance", atr)
+        support_lines = _line_candidates_from_frame(candidates, "support", atr)
 
     channel_state: dict[str, float] | None = None
     expire_channel_after_row = False
@@ -531,7 +533,7 @@ def _geometry_v2_arrays(frame: DataFrame, cfg: PatternGeometryV2Config) -> dict[
     return out
 
 
-def _line_candidates_from_frame(candidates: DataFrame, side: str) -> list[_LineCandidate]:
+def _line_candidates_from_frame(candidates: DataFrame, side: str, atr: np.ndarray) -> list[_LineCandidate]:
     frame = candidates[candidates["side"].eq(side)]
     if frame.empty:
         return []
@@ -542,6 +544,13 @@ def _line_candidates_from_frame(candidates: DataFrame, side: str) -> list[_LineC
         live_start = float(getattr(row, "live_start", x_new)) if has_live_start else x_new
         if not np.isfinite(live_start):
             live_start = x_new
+        impulse_span, impulse_slope_atr = _line_impulse_from_anchors(
+            x_old=float(row.x_old),
+            x_new=x_new,
+            y_old=float(row.y_old),
+            y_new=float(row.y_new),
+            atr=atr,
+        )
         lines.append(
             _LineCandidate(
                 x_old=float(row.x_old),
@@ -555,6 +564,8 @@ def _line_candidates_from_frame(candidates: DataFrame, side: str) -> list[_LineC
                 score=float(row.score),
                 pivot_count=float(getattr(row, "pivot_count", 2.0)),
                 absorbed_pivot_count=float(getattr(row, "absorbed_pivot_count", getattr(row, "pivot_count", 2.0))),
+                impulse_span=impulse_span,
+                impulse_slope_atr=impulse_slope_atr,
             )
         )
     return lines
@@ -971,8 +982,7 @@ def _confirmed_pivots_between(
     )
     x = events.anchor_index[mask]
     y = events.price[mask]
-    order = np.argsort(x)
-    return x[order], y[order]
+    return x, y
 
 
 def _fit_line(x: np.ndarray, y: np.ndarray) -> tuple[float, float] | None:
@@ -982,14 +992,14 @@ def _fit_line(x: np.ndarray, y: np.ndarray) -> tuple[float, float] | None:
         return None
     x_float = x.astype("float64", copy=False)
     y_float = y.astype("float64", copy=False)
-    x_mean = float(np.mean(x_float))
-    y_mean = float(np.mean(y_float))
-    x_delta = x_float - x_mean
-    denominator = float(np.dot(x_delta, x_delta))
+    count = float(len(x_float))
+    sum_x = float(np.sum(x_float))
+    sum_y = float(np.sum(y_float))
+    denominator = count * float(np.dot(x_float, x_float)) - sum_x * sum_x
     if denominator <= 0.0:
         return None
-    slope = float(np.dot(x_delta, y_float - y_mean) / denominator)
-    intercept = float(y_mean - slope * x_mean)
+    slope = float((count * float(np.dot(x_float, y_float)) - sum_x * sum_y) / denominator)
+    intercept = float((sum_y - slope * sum_x) / count)
     if not np.isfinite([slope, intercept]).all():
         return None
     return float(slope), float(intercept)
@@ -1128,13 +1138,39 @@ def _line_fails_impulse_filter(line: object, atr: np.ndarray, cfg: PatternGeomet
 
 
 def _line_impulse_metrics(line: object, atr: np.ndarray) -> tuple[float, float] | None:
+    cached_span = getattr(line, "impulse_span", np.nan)
+    cached_slope = getattr(line, "impulse_slope_atr", np.nan)
+    if np.isfinite([cached_span, cached_slope]).all():
+        return float(cached_span), float(cached_slope)
     x_old = int(round(float(getattr(line, "x_old"))))
     x_new = int(round(float(getattr(line, "x_new"))))
-    span = float(x_new - x_old)
-    if span <= 0.0:
-        return None
     y_old = _line_anchor_value(line, "x_old", "y_old")
     y_new = _line_anchor_value(line, "x_new", "y_new")
+    span, slope_atr = _line_impulse_from_anchors(
+        x_old=float(x_old),
+        x_new=float(x_new),
+        y_old=float(y_old),
+        y_new=float(y_new),
+        atr=atr,
+    )
+    if not np.isfinite([span, slope_atr]).all():
+        return None
+    return span, slope_atr
+
+
+def _line_impulse_from_anchors(
+    *,
+    x_old: float,
+    x_new: float,
+    y_old: float,
+    y_new: float,
+    atr: np.ndarray,
+) -> tuple[float, float]:
+    old_index = int(round(float(x_old)))
+    new_index = int(round(float(x_new)))
+    span = float(new_index - old_index)
+    if span <= 0.0:
+        return np.nan, np.nan
     atr_scale = _atr_window_median(atr, x_old, x_new)
     atr_scale = max(atr_scale, 1e-9)
     slope_atr = abs((y_new - y_old) / span) / atr_scale
