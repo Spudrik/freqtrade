@@ -53,6 +53,7 @@ class RunTab(BaseTab):
         ttk.Button(buttons, text="Run", command=self._run).pack(side="left", padx=(0, 6))
         ttk.Button(buttons, text="Launch FreqUI", command=self.run_frequi).pack(side="left", padx=(0, 6))
         ttk.Button(buttons, text="Launch/Refresh Data Tools", command=self.ensure_data_tools_running).pack(side="left", padx=(0, 6))
+        ttk.Button(buttons, text="Launch Watchdog", command=self.launch_watchdog).pack(side="left", padx=(0, 6))
         ttk.Button(buttons, text="Stop", command=self._stop).pack(side="left", padx=(0, 6))
 
         preview = ttk.LabelFrame(self, text="Generated command")
@@ -279,6 +280,20 @@ class RunTab(BaseTab):
         self.context.emit("save_state", {"reason": "data_tools_ensure_running"})
         if errors:
             messagebox.showwarning("Data tools", "Some data tools could not be started:\n\n" + "\n".join(errors), parent=self)
+
+    def launch_watchdog(self) -> None:
+        tab = self.context.registry.get("data_watchdog")
+        if tab is None:
+            messagebox.showerror("Data watchdog", "Watchdog tab is not loaded.", parent=self)
+            return
+        try:
+            tab.install_task()
+        except Exception as exc:
+            messagebox.showerror("Data watchdog", f"Could not launch watchdog:\n{exc}", parent=self)
+            return
+        self.context.shared.status.set("Data watchdog launched/updated")
+        if self.raw_console is not None:
+            self.raw_console.append("Data watchdog launched/updated.\n")
 
     def _ensure_research_collector(self, label: str, tab_key: str) -> tuple[bool, str]:
         tab = self.context.registry.get(tab_key)
