@@ -430,6 +430,7 @@ def _geometry_v2_arrays(frame: DataFrame, cfg: PatternGeometryV2Config) -> dict[
     low = base["low"].to_numpy(dtype="float64")
     close = base["close"].replace(0.0, np.nan).to_numpy(dtype="float64")
     atr = base["atr"].clip(lower=1e-9).to_numpy(dtype="float64")
+    atr_finite_prefix = np.r_[0, np.cumsum(np.isfinite(atr).astype("int64"))]
     high_pivot = base["pivot_high"].to_numpy(dtype="float64")
     high_index = base["pivot_high_index"].to_numpy(dtype="float64")
     low_pivot = base["pivot_low"].to_numpy(dtype="float64")
@@ -440,8 +441,8 @@ def _geometry_v2_arrays(frame: DataFrame, cfg: PatternGeometryV2Config) -> dict[
         resistance_lines: list[_LineCandidate] = []
         support_lines: list[_LineCandidate] = []
     else:
-        resistance_lines = _line_candidates_from_frame(candidates, "resistance", atr)
-        support_lines = _line_candidates_from_frame(candidates, "support", atr)
+        resistance_lines = _line_candidates_from_frame(candidates, "resistance", atr, atr_finite_prefix)
+        support_lines = _line_candidates_from_frame(candidates, "support", atr, atr_finite_prefix)
 
     channel_state: dict[str, float] | None = None
     expire_channel_after_row = False
@@ -466,6 +467,7 @@ def _geometry_v2_arrays(frame: DataFrame, cfg: PatternGeometryV2Config) -> dict[
                         high=high,
                         low=low,
                         atr=atr,
+                        atr_finite_prefix=atr_finite_prefix,
                         body_high=body_high,
                         body_low=body_low,
                         upper=upper,
@@ -487,6 +489,7 @@ def _geometry_v2_arrays(frame: DataFrame, cfg: PatternGeometryV2Config) -> dict[
                 high=high,
                 low=low,
                 atr=atr,
+                atr_finite_prefix=atr_finite_prefix,
                 body_high=body_high,
                 body_low=body_low,
                 cfg=cfg,
@@ -533,7 +536,12 @@ def _geometry_v2_arrays(frame: DataFrame, cfg: PatternGeometryV2Config) -> dict[
     return out
 
 
-def _line_candidates_from_frame(candidates: DataFrame, side: str, atr: np.ndarray) -> list[_LineCandidate]:
+def _line_candidates_from_frame(
+    candidates: DataFrame,
+    side: str,
+    atr: np.ndarray,
+    atr_finite_prefix: np.ndarray,
+) -> list[_LineCandidate]:
     frame = candidates[candidates["side"].eq(side)]
     if frame.empty:
         return []
@@ -550,6 +558,7 @@ def _line_candidates_from_frame(candidates: DataFrame, side: str, atr: np.ndarra
             y_old=float(row.y_old),
             y_new=float(row.y_new),
             atr=atr,
+            atr_finite_prefix=atr_finite_prefix,
         )
         lines.append(
             _LineCandidate(
@@ -591,6 +600,7 @@ def _pair_lines_as_pattern(
     high: np.ndarray,
     low: np.ndarray,
     atr: np.ndarray,
+    atr_finite_prefix: np.ndarray,
     body_high: np.ndarray,
     body_low: np.ndarray,
     upper: object,
@@ -698,7 +708,7 @@ def _pair_lines_as_pattern(
     if upper_touch_age > allowed_touch_age or lower_touch_age > allowed_touch_age:
         return None
 
-    span_atr = _atr_window_median(atr, start_index, end_index)
+    span_atr = _atr_window_median(atr, start_index, end_index, atr_finite_prefix)
     slope_scale = max(span_atr, max(float(atr[row]), 1e-9), 1e-9)
     upper_slope_atr = upper_slope / slope_scale
     lower_slope_atr = lower_slope / slope_scale
@@ -775,6 +785,7 @@ def _channel_envelope_candidates(
     high: np.ndarray,
     low: np.ndarray,
     atr: np.ndarray,
+    atr_finite_prefix: np.ndarray,
     body_high: np.ndarray,
     body_low: np.ndarray,
     cfg: PatternGeometryV2Config,
@@ -824,7 +835,7 @@ def _channel_envelope_candidates(
         ):
             continue
 
-        atr_scale = max(_atr_window_median(atr, start_index, row), float(atr[row]), 1e-9)
+        atr_scale = max(_atr_window_median(atr, start_index, row, atr_finite_prefix), float(atr[row]), 1e-9)
         upper_slope_atr = upper_slope / atr_scale
         lower_slope_atr = lower_slope / atr_scale
         family = _channel_pattern_family(upper_slope_atr, lower_slope_atr, cfg)
@@ -988,30 +999,37 @@ def _confirmed_pivots_between(
 def _fit_line(x: np.ndarray, y: np.ndarray) -> tuple[float, float] | None:
     if len(x) < 2 or len(y) < 2:
         return None
-    if not np.isfinite(x).all() or not np.isfinite(y).all():
-        return None
     x_float = x.astype("float64", copy=False)
     y_float = y.astype("float64", copy=False)
     count = float(len(x_float))
-    sum_x = float(np.sum(x_float))
-    sum_y = float(np.sum(y_float))
-    denominator = count * float(np.dot(x_float, x_float)) - sum_x * sum_x
+    sum_x = float(x_float.sum())
+    sum_y = float(y_float.sum())
+    denominator = count * float(x_float.dot(x_float)) - sum_x * sum_x
     if denominator <= 0.0:
         return None
-    slope = float((count * float(np.dot(x_float, y_float)) - sum_x * sum_y) / denominator)
+    slope = float((count * float(x_float.dot(y_float)) - sum_x * sum_y) / denominator)
     intercept = float((sum_y - slope * sum_x) / count)
     if not np.isfinite([slope, intercept]).all():
         return None
     return float(slope), float(intercept)
 
 
-def _atr_window_median(atr: np.ndarray, start_index: int, end_index: int) -> float:
+def _atr_window_median(
+    atr: np.ndarray,
+    start_index: int,
+    end_index: int,
+    finite_prefix: np.ndarray | None = None,
+) -> float:
     if end_index < start_index:
         return np.nan
-    values = atr[max(int(start_index), 0) : int(end_index) + 1]
+    start = max(int(start_index), 0)
+    end = int(end_index)
+    values = atr[start : end + 1]
     if values.size == 0:
         return np.nan
-    if np.isfinite(values).all():
+    if finite_prefix is not None and int(finite_prefix[end + 1] - finite_prefix[start]) == values.size:
+        return float(np.median(values))
+    if finite_prefix is None and np.isfinite(values).all():
         return float(np.median(values))
     return float(np.nanmedian(values))
 
@@ -1050,7 +1068,7 @@ def _line_touch_ratio(x: np.ndarray, y: np.ndarray, slope: float, intercept: flo
     if len(x) == 0:
         return 0.0
     distance = np.abs(y - (float(slope) * x + float(intercept)))
-    return float(np.nanmean((distance <= max(float(atr_scale) * 0.75, 1e-9)).astype("float64")))
+    return float((distance <= max(float(atr_scale) * 0.75, 1e-9)).mean())
 
 
 def _clip01(value: float) -> float:
@@ -1081,7 +1099,7 @@ def _containment_ratio(
     upper_intrusion = np.maximum(body_high[start_index : end_index + 1] - upper_line, 0.0)
     lower_intrusion = np.maximum(lower_line - body_low[start_index : end_index + 1], 0.0)
     respected = (upper_intrusion <= tolerance) & (lower_intrusion <= tolerance)
-    return float(np.nanmean(respected.astype("float64")))
+    return float(respected.mean())
 
 
 def _pair_start_index(upper: object, lower_line: object, mode: str) -> int:
@@ -1165,13 +1183,14 @@ def _line_impulse_from_anchors(
     y_old: float,
     y_new: float,
     atr: np.ndarray,
+    atr_finite_prefix: np.ndarray | None = None,
 ) -> tuple[float, float]:
     old_index = int(round(float(x_old)))
     new_index = int(round(float(x_new)))
     span = float(new_index - old_index)
     if span <= 0.0:
         return np.nan, np.nan
-    atr_scale = _atr_window_median(atr, x_old, x_new)
+    atr_scale = _atr_window_median(atr, x_old, x_new, atr_finite_prefix)
     atr_scale = max(atr_scale, 1e-9)
     slope_atr = abs((y_new - y_old) / span) / atr_scale
     return span, float(slope_atr)
