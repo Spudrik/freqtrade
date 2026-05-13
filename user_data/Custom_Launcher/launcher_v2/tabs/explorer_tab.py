@@ -93,6 +93,7 @@ class ExplorerTab(BaseTab):
         default_settings = ExplorerRunSettings.from_state({}, context.app_dir)
         self.split_venv_pipeline_var = tk.BooleanVar(value=False)
         self.backtest_python_exe_var = tk.StringVar(value=default_settings.backtest_python_exe)
+        self.backtest_worker_count_var = tk.StringVar(value=default_settings.backtest_worker_count)
         self.pipeline_handoff_dir_var = tk.StringVar(value=default_settings.pipeline_handoff_dir)
         self.sieve_strategy_filter_var = tk.StringVar(value="sieve1_*.py")
         self.sieve_take_profit_var = tk.StringVar(value="2")
@@ -170,6 +171,8 @@ class ExplorerTab(BaseTab):
         ttk.Checkbutton(controls, text="Split-venv pipeline", variable=self.split_venv_pipeline_var).grid(row=4, column=0, columnspan=2, sticky="w", padx=8, pady=4)
         self._editable_entry(controls, 4, 2, "Backtest Python", self.backtest_python_exe_var)
         self._editable_entry(controls, 4, 4, "Handoff dir", self.pipeline_handoff_dir_var)
+        ttk.Label(controls, text="Backtest workers").grid(row=5, column=0, sticky="w", padx=8, pady=4)
+        ttk.Combobox(controls, textvariable=self.backtest_worker_count_var, values=[str(index) for index in range(1, 10)], state="readonly").grid(row=5, column=1, sticky="ew", padx=8, pady=4)
 
         windows = ttk.Frame(main, style="App.TFrame")
         windows.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 8))
@@ -650,6 +653,7 @@ class ExplorerTab(BaseTab):
             "sampling_seed": self.sampling_seed_var.get(),
             "split_venv_pipeline": self.split_venv_pipeline_var.get(),
             "backtest_python_exe": self.backtest_python_exe_var.get(),
+            "backtest_worker_count": self.backtest_worker_count_var.get(),
             "pipeline_handoff_dir": self.pipeline_handoff_dir_var.get(),
         }
         return ExplorerRunSettings.from_state(state, self.context.app_dir)
@@ -666,6 +670,7 @@ class ExplorerTab(BaseTab):
             sampling_seed=self.sampling_seed_var.get(),
             split_venv_pipeline=self.split_venv_pipeline_var.get(),
             backtest_python_exe=self.backtest_python_exe_var.get(),
+            backtest_worker_count=self.backtest_worker_count_var.get(),
             pipeline_handoff_dir=self.pipeline_handoff_dir_var.get(),
             strategy_filter=self.sieve_strategy_filter_var.get(),
             take_profit_pct=self.sieve_take_profit_var.get(),
@@ -1012,6 +1017,8 @@ class ExplorerTab(BaseTab):
             "sampling_seed": self.sampling_seed_var.get(),
             "split_venv_pipeline": self.split_venv_pipeline_var.get(),
             "backtest_python_exe": self.backtest_python_exe_var.get(),
+            "backtest_python_exes": self._settings().backtest_python_exes,
+            "backtest_worker_count": self.backtest_worker_count_var.get(),
             "pipeline_handoff_dir": self.pipeline_handoff_dir_var.get(),
             "sieve_strategy_filter": self.sieve_strategy_filter_var.get(),
             "sieve_take_profit_pct": self.sieve_take_profit_var.get(),
@@ -1044,6 +1051,7 @@ class ExplorerTab(BaseTab):
         self.sampling_seed_var.set(settings.sampling_seed)
         self.split_venv_pipeline_var.set(bool(settings.split_venv_pipeline))
         self.backtest_python_exe_var.set(settings.backtest_python_exe)
+        self.backtest_worker_count_var.set(settings.backtest_worker_count)
         self.pipeline_handoff_dir_var.set(settings.pipeline_handoff_dir)
         self.sieve_strategy_filter_var.set(str(state.get("sieve_strategy_filter") or "sieve1_*.py"))
         self.sieve_take_profit_var.set(str(state.get("sieve_take_profit_pct") or "2"))

@@ -25,6 +25,47 @@ def _split_list(value: Any) -> list[str]:
     return [item.strip() for item in text.split(",") if item.strip()]
 
 
+def _dedupe_paths(paths: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for raw_path in paths:
+        text = str(raw_path or "").strip()
+        if not text:
+            continue
+        try:
+            key = str(Path(text).expanduser().resolve()).lower()
+        except OSError:
+            key = str(Path(text).expanduser()).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(text)
+    return deduped
+
+
+def _normalize_worker_count(value: Any, default: str = "2") -> str:
+    try:
+        count = int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+    return str(min(9, max(1, count)))
+
+
+def _default_repo_root(app_dir: Path) -> Path:
+    return Path(app_dir).resolve().parent.parent
+
+
+def _default_backtest_pythons(app_dir: Path) -> list[str]:
+    worker_root = _default_repo_root(app_dir) / "runtime" / "venvs"
+    return [
+        str(worker_root / "freqtrade-backtest" / "Scripts" / "python.exe"),
+        *[
+            str(worker_root / f"freqtrade-backtest-{index:02d}" / "Scripts" / "python.exe")
+            for index in range(1, 9)
+        ],
+    ]
+
+
 @dataclass
 class EntrySieveSettings:
     preset_name: str = "LauncherV2-auto"
@@ -39,6 +80,8 @@ class EntrySieveSettings:
     sampling_seed: str = ""
     split_venv_pipeline: bool = False
     backtest_python_exe: str = ""
+    backtest_python_exes: list[str] = field(default_factory=list)
+    backtest_worker_count: str = "2"
     pipeline_handoff_dir: str = ""
     strategy_filter: str = "sieve1_*.py"
     take_profit_pct: str = "2"
@@ -52,6 +95,7 @@ class EntrySieveService:
         self.app_dir = Path(app_dir)
         self.python_exe = python_exe or sys.executable
         self.runtime_dir = self.app_dir / "launcher_v2" / "runtime" / "entry_sieve"
+        self.default_backtest_pythons = _default_backtest_pythons(self.app_dir)
 
     @property
     def jobs_dir(self) -> Path:
@@ -125,6 +169,12 @@ class EntrySieveService:
             "sampling_seed": str(settings.sampling_seed),
             "split_venv_pipeline": bool(settings.split_venv_pipeline),
             "backtest_python_exe": str(settings.backtest_python_exe),
+            "backtest_python_exes": _dedupe_paths([
+                str(settings.backtest_python_exe),
+                *list(settings.backtest_python_exes),
+                *self.default_backtest_pythons,
+            ]),
+            "backtest_worker_count": _normalize_worker_count(settings.backtest_worker_count, "2"),
             "pipeline_handoff_dir": str(settings.pipeline_handoff_dir),
             "strategy_filter": str(settings.strategy_filter),
             "take_profit_pct": str(settings.take_profit_pct),
@@ -416,6 +466,13 @@ class EntrySieveService:
             pairs = self._parse_target_pairs(settings.target_sweep_pairs)
             if not pairs:
                 raise ValueError("Entry Sieve target sweep requires at least one TP/SL pair such as 1/1, 2/2, 3/2.")
+        if settings.split_venv_pipeline:
+            try:
+                worker_count = int(str(settings.backtest_worker_count or "").strip())
+            except (TypeError, ValueError):
+                raise ValueError("Entry Sieve backtest workers must be an integer from 1 to 9.") from None
+            if worker_count < 1 or worker_count > 9:
+                raise ValueError("Entry Sieve backtest workers must be between 1 and 9.")
 
     @staticmethod
     def _strategy_class_name(path: Path) -> str:

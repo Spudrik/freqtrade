@@ -16,6 +16,32 @@ def _split_list(value: Any) -> list[str]:
     return [item.strip() for item in text.split(",") if item.strip()]
 
 
+def _dedupe_paths(paths: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for raw_path in paths:
+        text = str(raw_path or "").strip()
+        if not text:
+            continue
+        try:
+            key = str(Path(text).expanduser().resolve()).lower()
+        except OSError:
+            key = str(Path(text).expanduser()).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(text)
+    return deduped
+
+
+def _normalize_worker_count(value: Any, default: str = "2") -> str:
+    try:
+        count = int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+    return str(min(9, max(1, count)))
+
+
 def _to_bool(value: Any) -> bool:
     if isinstance(value, bool):
         return value
@@ -63,6 +89,18 @@ def _default_backtest_python(app_dir: Path) -> str:
     return str(_default_repo_root(app_dir) / "runtime" / "venvs" / "freqtrade-backtest" / "Scripts" / "python.exe")
 
 
+def _default_backtest_pythons(app_dir: Path) -> list[str]:
+    repo_root = _default_repo_root(app_dir)
+    worker_root = repo_root / "runtime" / "venvs"
+    return [
+        str(worker_root / "freqtrade-backtest" / "Scripts" / "python.exe"),
+        *[
+            str(worker_root / f"freqtrade-backtest-{index:02d}" / "Scripts" / "python.exe")
+            for index in range(1, 9)
+        ],
+    ]
+
+
 def _default_handoff_dir(app_dir: Path) -> str:
     return str(Path(app_dir).resolve().parent / "explorer_reports" / "pipeline")
 
@@ -90,6 +128,8 @@ class ExplorerRunSettings:
     strategy_param_file: str = ""
     split_venv_pipeline: bool = False
     backtest_python_exe: str = ""
+    backtest_python_exes: list[str] = field(default_factory=list)
+    backtest_worker_count: str = "2"
     pipeline_handoff_dir: str = ""
 
     @classmethod
@@ -98,7 +138,10 @@ class ExplorerRunSettings:
         if preset_name in {"test-hyperopt", "Backup"}:
             preset_name = "BackTest2021-26"
         default_backtest_python = _default_backtest_python(app_dir) if app_dir is not None else ""
+        default_backtest_pythons = _default_backtest_pythons(app_dir) if app_dir is not None else ([default_backtest_python] if default_backtest_python else [])
         default_handoff_dir = _default_handoff_dir(app_dir) if app_dir is not None else "../explorer_reports/pipeline"
+        primary_backtest_python = str(state.get("backtest_python_exe") or state.get("explorer_backtest_python_exe") or default_backtest_python)
+        configured_backtest_pythons = _split_list(state.get("backtest_python_exes") or state.get("explorer_backtest_python_exes"))
         return cls(
             preset_name=preset_name,
             preset_file=_normalize_preset_file(state.get("preset_file")),
@@ -120,7 +163,9 @@ class ExplorerRunSettings:
             sampling_seed=str(state.get("sampling_seed") or ""),
             strategy_param_file=str(state.get("strategy_param_file") or ""),
             split_venv_pipeline=_to_bool(state.get("split_venv_pipeline") or state.get("explorer_split_venv_pipeline")),
-            backtest_python_exe=str(state.get("backtest_python_exe") or state.get("explorer_backtest_python_exe") or default_backtest_python),
+            backtest_python_exe=primary_backtest_python,
+            backtest_python_exes=_dedupe_paths([primary_backtest_python, *configured_backtest_pythons, *default_backtest_pythons]),
+            backtest_worker_count=_normalize_worker_count(state.get("backtest_worker_count") or state.get("explorer_backtest_worker_count"), "2"),
             pipeline_handoff_dir=str(state.get("pipeline_handoff_dir") or state.get("explorer_pipeline_handoff_dir") or default_handoff_dir),
         )
 
@@ -147,6 +192,8 @@ class ExplorerRunSettings:
             "strategy_param_file": self.strategy_param_file,
             "split_venv_pipeline": self.split_venv_pipeline,
             "backtest_python_exe": self.backtest_python_exe,
+            "backtest_python_exes": list(self.backtest_python_exes),
+            "backtest_worker_count": self.backtest_worker_count,
             "pipeline_handoff_dir": self.pipeline_handoff_dir,
         }
 
@@ -208,6 +255,8 @@ class ExplorerService:
         self._append(command, "--strategy-param-file", settings.strategy_param_file)
         if settings.split_venv_pipeline:
             self._append(command, "--backtest-python-exe", settings.backtest_python_exe)
+            self._append(command, "--backtest-python-exes-json", json.dumps(settings.backtest_python_exes, separators=(",", ":")))
+            self._append(command, "--backtest-worker-count", settings.backtest_worker_count)
             self._append(command, "--handoff-dir", settings.pipeline_handoff_dir)
         return command
 
@@ -281,6 +330,12 @@ class ExplorerService:
         if settings.split_venv_pipeline:
             if not str(settings.backtest_python_exe or "").strip():
                 raise ValueError("Split-venv pipeline requires a backtest Python executable.")
+            try:
+                worker_count = int(str(settings.backtest_worker_count or "").strip())
+            except (TypeError, ValueError):
+                raise ValueError("Split-venv backtest workers must be an integer from 1 to 9.") from None
+            if worker_count < 1 or worker_count > 9:
+                raise ValueError("Split-venv backtest workers must be between 1 and 9.")
             if not str(settings.pipeline_handoff_dir or "").strip():
                 raise ValueError("Split-venv pipeline requires a handoff directory.")
         if not settings.training_windows:

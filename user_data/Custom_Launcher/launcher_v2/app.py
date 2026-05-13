@@ -265,6 +265,8 @@ class LauncherV2(tk.Tk):
                 "sampling_seed": preset.get("explorer_sampling_seed"),
                 "split_venv_pipeline": preset.get("explorer_split_venv_pipeline"),
                 "backtest_python_exe": preset.get("explorer_backtest_python_exe"),
+                "backtest_python_exes": preset.get("explorer_backtest_python_exes"),
+                "backtest_worker_count": preset.get("explorer_backtest_worker_count"),
                 "pipeline_handoff_dir": preset.get("explorer_pipeline_handoff_dir"),
             },
             "news": {
@@ -435,6 +437,8 @@ class LauncherV2(tk.Tk):
             "explorer_sampling_seed": explorer.get("sampling_seed", ""),
             "explorer_split_venv_pipeline": bool(explorer.get("split_venv_pipeline", False)),
             "explorer_backtest_python_exe": explorer.get("backtest_python_exe", ""),
+            "explorer_backtest_python_exes": list(explorer.get("backtest_python_exes") or []),
+            "explorer_backtest_worker_count": explorer.get("backtest_worker_count", "2"),
             "explorer_pipeline_handoff_dir": explorer.get("pipeline_handoff_dir", ""),
             "news_config_path": news.get("config_path", ""),
             "news_data_dir": news.get("data_dir", ""),

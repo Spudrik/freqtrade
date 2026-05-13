@@ -21,6 +21,7 @@ Use simple tab modules and shared helpers to replace the monolithic launcher gra
 - Root-cause first: fix mapping/config/state issues at source before adding fallback/workaround code.
 - Do not add runtime rescue logic by default; use one-time migration when needed.
 - If a workaround is truly unavoidable, stop and ask for explicit approval before adding it.
+- Runtime Python environments are documented in the repo-root `AGENTS.md`. Keep Explorer/Sieve split-venv worker lanes under `runtime/venvs`, queue work by configured worker count, and fail early when a configured interpreter path is missing.
 
 ## Strategy Research Notes
 

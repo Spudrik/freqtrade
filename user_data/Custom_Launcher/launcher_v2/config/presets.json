@@ -726,6 +726,18 @@
     "explorer_sampling_seed": "",
     "explorer_split_venv_pipeline": true,
     "explorer_backtest_python_exe": "C:\\FreqTradeStuff\\runtime\\venvs\\freqtrade-backtest\\Scripts\\python.exe",
+    "explorer_backtest_python_exes": [
+      "C:\\FreqTradeStuff\\runtime\\venvs\\freqtrade-backtest\\Scripts\\python.exe",
+      "C:\\FreqTradeStuff\\runtime\\venvs\\freqtrade-backtest-01\\Scripts\\python.exe",
+      "C:\\FreqTradeStuff\\runtime\\venvs\\freqtrade-backtest-02\\Scripts\\python.exe",
+      "C:\\FreqTradeStuff\\runtime\\venvs\\freqtrade-backtest-03\\Scripts\\python.exe",
+      "C:\\FreqTradeStuff\\runtime\\venvs\\freqtrade-backtest-04\\Scripts\\python.exe",
+      "C:\\FreqTradeStuff\\runtime\\venvs\\freqtrade-backtest-05\\Scripts\\python.exe",
+      "C:\\FreqTradeStuff\\runtime\\venvs\\freqtrade-backtest-06\\Scripts\\python.exe",
+      "C:\\FreqTradeStuff\\runtime\\venvs\\freqtrade-backtest-07\\Scripts\\python.exe",
+      "C:\\FreqTradeStuff\\runtime\\venvs\\freqtrade-backtest-08\\Scripts\\python.exe"
+    ],
+    "explorer_backtest_worker_count": "2",
     "explorer_pipeline_handoff_dir": "C:\\FreqTradeStuff\\user_data\\explorer_reports\\pipeline",
     "news_config_path": "C:\\FreqTradeStuff\\user_data\\Custom_Launcher\\research\\config\\news_research_sources.json",
     "news_data_dir": "C:\\FreqTradeStuff\\user_data\\research_news_data\\news",

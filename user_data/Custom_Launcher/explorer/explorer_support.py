@@ -318,6 +318,8 @@ def hyperopt_results_dir(preset: dict[str, Any]) -> Path:
 
 
 def backtest_results_dir(preset: dict[str, Any]) -> Path:
+    if preset.get("backtest_directory"):
+        return Path(str(preset["backtest_directory"]))
     userdir = Path(str(preset.get("userdir") or "user_data"))
     return userdir / "backtest_results"
 

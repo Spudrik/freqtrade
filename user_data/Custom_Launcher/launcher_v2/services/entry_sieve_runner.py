@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
@@ -34,6 +34,9 @@ from explorer.explorer_support import (
 )
 from explorer.explorer_targets import resolve_params
 from explorer.explorer_windows import compact_window, load_window_manifest, resolve_windows, window_label
+
+
+BACKTEST_LANE_START_STAGGER_SECONDS = 1.0
 
 
 def load_json(path: Path, default: Any) -> Any:
@@ -408,6 +411,13 @@ def _run_backtest_batch(batch: PendingBacktests, python_exe: str) -> list[dict[s
     return rows
 
 
+def _run_backtest_batch_on_lane(batch: PendingBacktests, python_exe: str, lane_index: int) -> list[dict[str, Any]]:
+    if lane_index > 1:
+        time.sleep((lane_index - 1) * BACKTEST_LANE_START_STAGGER_SECONDS)
+    print(f"Entry Sieve backtest lane {lane_index}: {batch.strategy.get('name') or batch.strategy.get('strategy_class')} | {python_exe}")
+    return _run_backtest_batch(batch, python_exe)
+
+
 def _error_rows_for_batch(batch: PendingBacktests, error: str) -> list[dict[str, Any]]:
     return [
         _error_row_for_task(batch, task, error)
@@ -446,6 +456,33 @@ def _finish_pending(
             message=f"Backtests {done}/{total_backtests}: {row.get('strategy') or pending.strategy.get('name')}",
         )
     return written
+
+
+def _finish_one_pending(
+    runtime_dir: Path,
+    pending_batches: list[PendingBacktests],
+    *,
+    job_id: str,
+    completed_backtests: int,
+    total_backtests: int,
+) -> int:
+    if not pending_batches:
+        return 0
+    completed = [batch for batch in pending_batches if batch.future is not None and batch.future.done()]
+    if not completed:
+        futures = [batch.future for batch in pending_batches if batch.future is not None]
+        if futures:
+            done, _ = wait(futures, return_when=FIRST_COMPLETED)
+            completed = [batch for batch in pending_batches if batch.future in done]
+    batch = completed[0] if completed else pending_batches[0]
+    pending_batches.remove(batch)
+    return _finish_pending(
+        runtime_dir,
+        batch,
+        job_id=job_id,
+        completed_backtests=completed_backtests,
+        total_backtests=total_backtests,
+    )
 
 
 def _prepare_strategy_window(
@@ -616,17 +653,63 @@ def _target_pairs(job: dict[str, Any]) -> list[dict[str, Any]]:
     return pairs
 
 
-def _backtest_lanes(*, base_python_exe: str, backtest_python_exe: str, split_venv_pipeline: bool) -> list[str]:
-    lanes = [str(backtest_python_exe or base_python_exe or sys.executable)]
-    if split_venv_pipeline:
-        primary = str(base_python_exe or sys.executable)
+def _split_python_exes(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    text = str(value or "").replace(";", ",").replace("\n", ",")
+    return [item.strip() for item in text.split(",") if item.strip()]
+
+
+def _dedupe_python_exes(paths: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for raw_path in paths:
+        text = str(raw_path or "").strip()
+        if not text:
+            continue
         try:
-            same_exe = Path(primary).resolve() == Path(lanes[0]).resolve()
+            key = str(Path(text).expanduser().resolve()).lower()
         except OSError:
-            same_exe = primary == lanes[0]
-        if not same_exe:
-            lanes.insert(0, primary)
-    return lanes
+            key = str(Path(text).expanduser()).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(text)
+    return deduped
+
+
+def _worker_count(value: Any, *, default: int) -> int:
+    try:
+        count = int(str(value).strip())
+    except (TypeError, ValueError):
+        count = default
+    return min(9, max(1, count))
+
+
+def _backtest_lanes(
+    *,
+    base_python_exe: str,
+    backtest_python_exe: str,
+    backtest_python_exes: list[str],
+    split_venv_pipeline: bool,
+    backtest_worker_count: int,
+) -> list[str]:
+    if split_venv_pipeline:
+        candidates = _dedupe_python_exes([
+            str(backtest_python_exe or ""),
+            *backtest_python_exes,
+        ])
+    else:
+        candidates = _dedupe_python_exes([str(backtest_python_exe or base_python_exe or sys.executable)])
+    return candidates[: max(1, min(backtest_worker_count, len(candidates)))]
+
+
+def _verify_python_lanes(lanes: list[str]) -> None:
+    if not lanes:
+        raise SystemExit("Entry Sieve split-venv mode has no configured backtest worker Python executables.")
+    missing = [str(Path(lane).expanduser()) for lane in lanes if not Path(lane).expanduser().exists()]
+    if missing:
+        raise SystemExit("Entry Sieve configured Python executable does not exist: " + ", ".join(missing))
 
 
 def _run_backtest_lane(
@@ -638,6 +721,8 @@ def _run_backtest_lane(
 ) -> int:
     completed = 0
     total = len(work_items)
+    if lane_index > 1:
+        time.sleep((lane_index - 1) * BACKTEST_LANE_START_STAGGER_SECONDS)
     for index, (batch, task) in enumerate(work_items, start=1):
         print(
             f"Target sweep lane {lane_index}: {index}/{total} | "
@@ -738,9 +823,20 @@ def main(argv: list[str] | None = None) -> int:
     split_venv_pipeline = bool(job.get("split_venv_pipeline"))
     target_sweep_enabled = bool(job.get("target_sweep_enabled"))
     base_python_exe = str(base_preset.get("python_exe") or job.get("python_exe") or sys.executable)
-    backtest_python_exe = str(job.get("backtest_python_exe") or base_preset.get("python_exe") or sys.executable)
-    if split_venv_pipeline and not Path(backtest_python_exe).expanduser().exists():
-        raise SystemExit(f"Entry Sieve split-venv backtest Python does not exist: {backtest_python_exe}")
+    if split_venv_pipeline:
+        backtest_python_exe = str(job.get("backtest_python_exe") or "")
+    else:
+        backtest_python_exe = str(job.get("backtest_python_exe") or base_preset.get("python_exe") or sys.executable)
+    backtest_python_exes = _split_python_exes(job.get("backtest_python_exes"))
+    backtest_worker_count = _worker_count(job.get("backtest_worker_count"), default=2 if split_venv_pipeline else 1)
+    backtest_lanes = _backtest_lanes(
+        base_python_exe=base_python_exe,
+        backtest_python_exe=backtest_python_exe,
+        backtest_python_exes=backtest_python_exes,
+        split_venv_pipeline=split_venv_pipeline,
+        backtest_worker_count=backtest_worker_count,
+    )
+    _verify_python_lanes(backtest_lanes)
     state_file = runtime_dir / "state.json"
     state = explorer_load_json(state_file, {})
     if not isinstance(state, dict):
@@ -752,7 +848,9 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Entry Sieve job: {job_id}")
     print(f"Strategies: {len(strategies)} | training windows: {len(training_windows)} | validation windows: {len(validation_windows)} | runs: {total_runs}")
     if split_venv_pipeline:
-        print(f"Split-venv backtests: {backtest_python_exe}")
+        print(f"Split-venv backtest lanes ({len(backtest_lanes)}/{backtest_worker_count} requested):")
+        for lane_index, lane in enumerate(backtest_lanes, start=1):
+            print(f"  lane {lane_index}: {lane}")
     if target_sweep_enabled:
         pairs = _target_pairs(job)
         pair_text = ", ".join(f"{pair['take_profit_pct']}/{pair['stoploss_pct']}" for pair in pairs)
@@ -867,17 +965,14 @@ def main(argv: list[str] | None = None) -> int:
             runtime_dir=runtime_dir,
             job_id=job_id,
             batches=pending_batches,
-            lanes=_backtest_lanes(
-                base_python_exe=base_python_exe,
-                backtest_python_exe=backtest_python_exe,
-                split_venv_pipeline=split_venv_pipeline,
-            ),
+            lanes=backtest_lanes,
             total_backtests=total_backtests,
         )
     else:
-        pending: PendingBacktests | None = None
+        queued_batches: list[PendingBacktests] = []
         completed_backtests = 0
-        with ThreadPoolExecutor(max_workers=1, thread_name_prefix="entry-sieve-backtest") as executor:
+        lane_cursor = 0
+        with ThreadPoolExecutor(max_workers=max(1, len(backtest_lanes)), thread_name_prefix="entry-sieve-backtest") as executor:
             for strategy in strategies:
                 strategy_name = strategy.get("name") or Path(str(strategy.get("strategy_file") or "")).stem
                 for training_window in training_windows:
@@ -908,17 +1003,25 @@ def main(argv: list[str] | None = None) -> int:
                             validation_windows=validation_windows,
                         )
                         if split_venv_pipeline:
-                            completed_backtests += _finish_pending(
-                                runtime_dir,
-                                pending,
-                                job_id=job_id,
-                                completed_backtests=completed_backtests,
-                                total_backtests=total_backtests,
+                            while len(queued_batches) >= len(backtest_lanes):
+                                completed_backtests += _finish_one_pending(
+                                    runtime_dir,
+                                    queued_batches,
+                                    job_id=job_id,
+                                    completed_backtests=completed_backtests,
+                                    total_backtests=total_backtests,
+                                )
+                            lane_index = lane_cursor % len(backtest_lanes)
+                            batch.future = executor.submit(
+                                _run_backtest_batch_on_lane,
+                                batch,
+                                backtest_lanes[lane_index],
+                                lane_index + 1,
                             )
-                            batch.future = executor.submit(_run_backtest_batch, batch, backtest_python_exe)
-                            pending = batch
+                            queued_batches.append(batch)
+                            lane_cursor += 1
                         else:
-                            rows = _run_backtest_batch(batch, backtest_python_exe)
+                            rows = _run_backtest_batch(batch, backtest_lanes[0])
                             for row in rows:
                                 _append_result(runtime_dir, row)
                             completed_backtests += len(rows)
@@ -934,7 +1037,7 @@ def main(argv: list[str] | None = None) -> int:
                             completed_backtests=completed_backtests,
                             current_strategy=strategy_name,
                             current_training_window=window_label(training_window),
-                            message=f"Run complete {run_index}/{total_runs}: {strategy_name}",
+                            message=f"Run queued {run_index}/{total_runs}: {strategy_name}" if split_venv_pipeline else f"Run complete {run_index}/{total_runs}: {strategy_name}",
                         )
                     except Exception as exc:
                         print(f"Entry Sieve run failed: {exc}")
@@ -967,13 +1070,14 @@ def main(argv: list[str] | None = None) -> int:
                             current_training_window=window_label(training_window),
                             message=f"Run failed {run_index}/{total_runs}: {strategy_name}",
                         )
-            completed_backtests += _finish_pending(
-                runtime_dir,
-                pending,
-                job_id=job_id,
-                completed_backtests=completed_backtests,
-                total_backtests=total_backtests,
-            )
+            while queued_batches:
+                completed_backtests += _finish_one_pending(
+                    runtime_dir,
+                    queued_batches,
+                    job_id=job_id,
+                    completed_backtests=completed_backtests,
+                    total_backtests=total_backtests,
+                )
         final_completed_backtests = completed_backtests
     _write_run_status(
         runtime_dir,

@@ -19,6 +19,7 @@ from pathlib import Path
 import random
 import subprocess
 import sys
+import time
 from typing import Any
 
 from .explorer_catalog import load_catalog
@@ -39,6 +40,9 @@ from .explorer_scoring import aggregate, compare, score_window
 from .explorer_support import flatten_params, metric_summary
 from .explorer_targets import choose_target, resolve_params, update_usage_counts
 from .explorer_windows import compact_window, load_window_manifest, resolve_windows, window_label
+
+
+BACKTEST_LANE_START_STAGGER_SECONDS = 1.0
 
 
 @dataclass
@@ -95,6 +99,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--state-file", required=True)
     parser.add_argument("--strategy-param-file", default="")
     parser.add_argument("--backtest-python-exe", required=True)
+    parser.add_argument("--backtest-python-exes-json", default="")
+    parser.add_argument("--backtest-worker-count", type=int, default=2)
     parser.add_argument("--handoff-dir", required=True)
     return parser.parse_args(argv)
 
@@ -140,6 +146,46 @@ def verify_backtest_python(python_exe: str, cwd: Path) -> None:
     for command in commands:
         _verify_command(command, cwd)
     print(f"Backtest venv verified: {path}")
+
+
+def _split_python_exes_json(value: str) -> list[str]:
+    text = str(value or "").strip()
+    if not text:
+        return []
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        parsed = text
+    if isinstance(parsed, list):
+        return [str(item).strip() for item in parsed if str(item).strip()]
+    return [item.strip() for item in str(parsed).replace(";", ",").replace("\n", ",").split(",") if item.strip()]
+
+
+def _dedupe_python_exes(paths: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for raw_path in paths:
+        text = str(raw_path or "").strip()
+        if not text:
+            continue
+        try:
+            key = str(Path(text).expanduser().resolve()).lower()
+        except OSError:
+            key = str(Path(text).expanduser()).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(text)
+    return deduped
+
+
+def _backtest_lanes(*, backtest_python_exe: str, backtest_python_exes_json: str, worker_count: int) -> list[str]:
+    candidates = _dedupe_python_exes([
+        str(backtest_python_exe or ""),
+        *_split_python_exes_json(backtest_python_exes_json),
+    ])
+    count = min(9, max(1, int(worker_count or 1)))
+    return candidates[: max(1, min(count, len(candidates)))]
 
 
 def _snapshot_values(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -238,27 +284,32 @@ def _backtest_snapshot(
     role: str,
     run_dir: Path,
 ) -> tuple[list[Any], list[dict[str, Any]]]:
-    runtime_strategy, runtime_params = _prepare_runtime_strategy(
-        source_strategy_file=source_strategy_file,
-        strategy_class=strategy_class,
-        snapshot_file=snapshot_file,
-        run_dir=run_dir / role,
-    )
-    backtest_preset = deepcopy(preset)
-    backtest_preset["strategy_file"] = str(runtime_strategy)
-    backtest_preset["strategy_class"] = strategy_class
-    userdir = Path(str(backtest_preset.get("userdir") or "user_data")).expanduser()
+    base_preset = deepcopy(preset)
+    userdir = Path(str(base_preset.get("userdir") or "user_data")).expanduser()
     env = _backtest_env(cwd, source_strategy_file.parent, userdir)
 
     scored = []
     records: list[dict[str, Any]] = []
     for window in validation_windows:
+        window_dir = run_dir / role / _safe_name(window_label(window))
+        runtime_strategy, runtime_params = _prepare_runtime_strategy(
+            source_strategy_file=source_strategy_file,
+            strategy_class=strategy_class,
+            snapshot_file=snapshot_file,
+            run_dir=window_dir,
+        )
+        window_preset = deepcopy(base_preset)
+        window_preset["strategy_file"] = str(runtime_strategy)
+        window_preset["strategy_class"] = strategy_class
+        output_dir = window_dir / "results"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        window_preset["backtest_directory"] = str(output_dir)
         timerange = str(window.get("timerange") or "")
         print(f"Starting split-venv {role} backtest: {window_label(window)} {timerange}")
         metrics, result_file = run_backtest(
             python_exe=python_exe,
             cwd=cwd,
-            preset=backtest_preset,
+            preset=window_preset,
             timerange=timerange,
             env=env,
         )
@@ -278,10 +329,52 @@ def _backtest_snapshot(
     return scored, records
 
 
+def _run_validation_window(
+    *,
+    python_exe: str,
+    cwd: Path,
+    preset: dict[str, Any],
+    source_strategy_file: Path,
+    strategy_class: str,
+    snapshot_file: Path,
+    window: dict[str, Any],
+    role: str,
+    run_dir: Path,
+    window_index: int,
+) -> tuple[str, int, Any, dict[str, Any]]:
+    scored, records = _backtest_snapshot(
+        python_exe=python_exe,
+        cwd=cwd,
+        preset=preset,
+        source_strategy_file=source_strategy_file,
+        strategy_class=strategy_class,
+        snapshot_file=snapshot_file,
+        validation_windows=[window],
+        role=role,
+        run_dir=run_dir,
+    )
+    return role, window_index, scored[0], records[0]
+
+
+def _run_validation_lane(
+    *,
+    lane_index: int,
+    python_exe: str,
+    work_items: list[dict[str, Any]],
+) -> list[tuple[str, int, Any, dict[str, Any]]]:
+    if lane_index > 1:
+        time.sleep((lane_index - 1) * BACKTEST_LANE_START_STAGGER_SECONDS)
+    rows: list[tuple[str, int, Any, dict[str, Any]]] = []
+    for item in work_items:
+        print(f"Explorer backtest lane {lane_index}: {item['role']} {window_label(item['window'])} | {python_exe}")
+        rows.append(_run_validation_window(python_exe=python_exe, **item))
+    return rows
+
+
 def run_validation_pair(
     *,
     handoff: HyperoptHandoff,
-    backtest_python_exe: str,
+    backtest_lanes: list[str],
     cwd: Path,
     preset: dict[str, Any],
     source_strategy_file: Path,
@@ -289,8 +382,58 @@ def run_validation_pair(
     handoff_dir: Path,
 ) -> ValidationResult:
     run_dir = handoff_dir / f"loop_{handoff.loop_index:05d}" / "backtests"
+    lanes = backtest_lanes or [sys.executable]
+    if len(lanes) > 1:
+        work_items: list[dict[str, Any]] = []
+        for index, window in enumerate(handoff.validation_windows):
+            work_items.append(
+                {
+                    "cwd": cwd,
+                    "preset": deepcopy(preset),
+                    "source_strategy_file": source_strategy_file,
+                    "strategy_class": strategy_class,
+                    "snapshot_file": handoff.champion_file,
+                    "window": window,
+                    "role": "champion",
+                    "run_dir": run_dir,
+                    "window_index": index,
+                }
+            )
+            work_items.append(
+                {
+                    "cwd": cwd,
+                    "preset": deepcopy(preset),
+                    "source_strategy_file": source_strategy_file,
+                    "strategy_class": strategy_class,
+                    "snapshot_file": handoff.challenger_file,
+                    "window": window,
+                    "role": "challenger",
+                    "run_dir": run_dir,
+                    "window_index": index,
+                }
+            )
+        assigned: list[list[dict[str, Any]]] = [[] for _ in lanes]
+        for index, item in enumerate(work_items):
+            assigned[index % len(lanes)].append(item)
+        results: list[tuple[str, int, Any, dict[str, Any]]] = []
+        with ThreadPoolExecutor(max_workers=len(lanes), thread_name_prefix="explorer-validation-lane") as executor:
+            futures = [
+                executor.submit(_run_validation_lane, lane_index=index + 1, python_exe=lanes[index], work_items=items)
+                for index, items in enumerate(assigned)
+                if items
+            ]
+            for future in futures:
+                results.extend(future.result())
+        champion_by_window = {index: (scored, record) for role, index, scored, record in results if role == "champion"}
+        challenger_by_window = {index: (scored, record) for role, index, scored, record in results if role == "challenger"}
+        champion_scored = [champion_by_window[index][0] for index in range(len(handoff.validation_windows))]
+        champion_records = [champion_by_window[index][1] for index in range(len(handoff.validation_windows))]
+        challenger_scored = [challenger_by_window[index][0] for index in range(len(handoff.validation_windows))]
+        challenger_records = [challenger_by_window[index][1] for index in range(len(handoff.validation_windows))]
+        return ValidationResult(champion_scored, challenger_scored, champion_records, challenger_records)
+
     champion_scored, champion_records = _backtest_snapshot(
-        python_exe=backtest_python_exe,
+        python_exe=lanes[0],
         cwd=cwd,
         preset=preset,
         source_strategy_file=source_strategy_file,
@@ -301,7 +444,7 @@ def run_validation_pair(
         run_dir=run_dir,
     )
     challenger_scored, challenger_records = _backtest_snapshot(
-        python_exe=backtest_python_exe,
+        python_exe=lanes[0],
         cwd=cwd,
         preset=preset,
         source_strategy_file=source_strategy_file,
@@ -651,13 +794,20 @@ def main(argv: list[str] | None = None) -> int:
     if not strategy_param_file.is_absolute():
         strategy_param_file = (cwd / strategy_param_file).resolve()
 
-    verify_backtest_python(args.backtest_python_exe, cwd)
-
     all_windows = load_window_manifest(args.market_windows_file)
     training_windows = resolve_windows(all_windows, args.training_windows_json, label="training")
     validation_windows = resolve_windows(all_windows, args.validation_windows_json, label="validation")
     rng = random.Random(args.sampling_seed)
     python_exe = str(preset.get("python_exe") or sys.executable)
+    backtest_lanes = _backtest_lanes(
+        backtest_python_exe=args.backtest_python_exe,
+        backtest_python_exes_json=args.backtest_python_exes_json,
+        worker_count=args.backtest_worker_count,
+    )
+    if not backtest_lanes:
+        raise SystemExit("Explorer split-venv mode has no configured backtest worker Python executables.")
+    for lane in backtest_lanes:
+        verify_backtest_python(lane, cwd)
     env = build_child_env(os.environ.copy(), cwd)
     state_file = Path(args.state_file)
     state = load_json(state_file, deepcopy(DEFAULT_STATE))
@@ -688,10 +838,15 @@ def main(argv: list[str] | None = None) -> int:
         "strategy_file": str(strategy_file.resolve()),
         "strategy_class": strategy_class,
         "backtest_python_exe": str(Path(args.backtest_python_exe).expanduser()),
+        "backtest_lanes": [str(Path(lane).expanduser()) for lane in backtest_lanes],
+        "backtest_worker_count": args.backtest_worker_count,
         "handoff_dir": str(handoff_dir),
         "args": vars(args),
         "loops": [],
     }
+    print(f"Explorer split-venv backtest lanes ({len(backtest_lanes)}/{args.backtest_worker_count} requested):")
+    for lane_index, lane in enumerate(backtest_lanes, start=1):
+        print(f"  lane {lane_index}: {lane}")
 
     loop_total_display = "infinite" if args.max_loops == 0 else str(args.max_loops)
     next_loop_index = 1
@@ -856,7 +1011,7 @@ def main(argv: list[str] | None = None) -> int:
             future = executor.submit(
                 run_validation_pair,
                 handoff=handoff,
-                backtest_python_exe=str(Path(args.backtest_python_exe).expanduser()),
+                backtest_lanes=backtest_lanes,
                 cwd=cwd,
                 preset=deepcopy(preset),
                 source_strategy_file=strategy_file,
