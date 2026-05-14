@@ -61,10 +61,13 @@ items as they are resolved, retested, and either committed or explicitly parked.
 1. `pattern_reversal.py`
    - Active fixed price-percent gates were replaced with rolling body/ATR/pivot
      prominence scaling.
-   - Current moderate defaults had positive weighted forward-return edge for
-     double tops, double bottoms, and normal H&S in the cleanup window pack.
-   - Inverse H&S remains inconsistent in the cleanup window pack and should be
-     retuned or marked lower confidence before strategies rely on it.
+   - H&S / inverse H&S now have public leg-spacing, leg-reaction,
+     middle-cleanliness, and late setup-break levers.
+   - Conservative H&S defaults preserve BTC 1h/4h outputs from the prior
+     baseline while trimming duplicated inverse-H&S structures in the test pack.
+   - Reversal outputs should still be treated as pattern context first; the
+     forward-return checks do not prove H&S / inverse H&S are reliable standalone
+     entry flags.
 
 2. `pattern_wolfe_waves.py`
    - Sparse but interesting.

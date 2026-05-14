@@ -72,6 +72,7 @@ class PatternReversalConfig:
     head_shoulders_window: int = 100
     min_head_shoulders_bars: int = 12
     max_head_shoulders_bars: int = 90
+    min_head_shoulders_leg_spacing_bars: int = 5
     head_shoulders_premove_body_mult: float = 6.0
     head_shoulders_premove_atr_mult: float = 2.0
     head_shoulders_p1_prior_window: int = 48
@@ -81,6 +82,13 @@ class PatternReversalConfig:
     head_shoulders_neckline_depth_body_mult: float = 4.0
     head_shoulders_neckline_depth_atr_mult: float = 1.0
     head_shoulders_base_return_buffer_body_mult: float = 0.8
+    head_shoulders_reaction_body_mult: float = 1.0
+    head_shoulders_reaction_atr_mult: float = 0.25
+    min_head_shoulders_leg_reaction_score: float = 0.30
+    head_shoulders_allowed_extra_same_side_pivots: int = 6
+    min_head_shoulders_middle_cleanliness_score: float = 0.35
+    head_shoulders_max_setup_break_body_mult: float = 6.0
+    head_shoulders_max_setup_break_atr_mult: float = 1.50
     min_head_shoulders_p1_dominance_score: float = 0.0
     min_head_shoulders_peak_cleanliness_score: float = 0.20
     min_head_shoulders_quality: float = 0.72
@@ -1439,6 +1447,19 @@ def _score_head_shoulders(
         body_mult=cfg.head_shoulders_neckline_proximity_body_mult,
         atr_mult=cfg.head_shoulders_neckline_proximity_atr_mult,
     )
+    reaction_threshold = _dynamic_pattern_scale_pct(
+        body_ref,
+        atr_ref,
+        body_mult=cfg.head_shoulders_reaction_body_mult,
+        atr_mult=cfg.head_shoulders_reaction_atr_mult,
+    )
+    setup_break_threshold = _dynamic_pattern_scale_pct(
+        body_ref,
+        atr_ref,
+        body_mult=cfg.head_shoulders_max_setup_break_body_mult,
+        atr_mult=cfg.head_shoulders_max_setup_break_atr_mult,
+    )
+    min_leg_spacing = max(int(cfg.min_head_shoulders_leg_spacing_bars), 1)
     max_candidates = max(int(getattr(cfg, "head_shoulders_max_candidate_pivots", 18)), 3)
     candidate_start = max(0, len(recent) - max_candidates)
     for left_pos in range(candidate_start, len(recent) - 1):
@@ -1452,6 +1473,8 @@ def _score_head_shoulders(
                 continue
             left_time = head_x - left_x
             right_time = right_x - head_x
+            if left_time < min_leg_spacing or right_time < min_leg_spacing:
+                continue
             time_balance_score = min(left_time, right_time) / max(left_time, right_time, 1e-9)
             if time_balance_score < float(cfg.min_head_shoulders_time_balance_score):
                 continue
@@ -1528,6 +1551,21 @@ def _score_head_shoulders(
                 depth_pct = (head_y - max(neckline_left, neckline_right)) / max(abs(close[row]), 1e-9)
             if depth_pct < depth_threshold:
                 continue
+            setup_neckline = _line_value_at(float(row), left_x, neckline_left, right_x, neckline_right)
+            if not np.isfinite(setup_neckline):
+                continue
+            if inverse:
+                setup_break_pct = max(
+                    (float(close[row]) - setup_neckline) / max(abs(float(close[row])), 1e-9),
+                    0.0,
+                )
+            else:
+                setup_break_pct = max(
+                    (setup_neckline - float(close[row])) / max(abs(float(close[row])), 1e-9),
+                    0.0,
+                )
+            if setup_break_pct > setup_break_threshold:
+                continue
             left_neck_x = float(neckline_index[left_neck_row])
             right_neck_x = float(neckline_index[right_neck_row])
             neckline_position_score = _head_shoulders_neckline_position_score(
@@ -1577,6 +1615,38 @@ def _score_head_shoulders(
                 inverse=inverse,
             )
             if neckline_body_respect_ratio < float(cfg.min_head_shoulders_neckline_body_respect_ratio):
+                continue
+            leg_reaction_score = _head_shoulders_leg_reaction_score(
+                body_high,
+                body_low,
+                row,
+                left_x,
+                head_x,
+                right_x,
+                left_y,
+                head_y,
+                right_y,
+                neckline_left,
+                neckline_right,
+                reaction_threshold,
+                inverse=inverse,
+            )
+            if leg_reaction_score < float(cfg.min_head_shoulders_leg_reaction_score):
+                continue
+            middle_cleanliness_score = _head_shoulders_middle_cleanliness_score(
+                pivot,
+                pivot_index,
+                row,
+                left_x,
+                head_x,
+                right_x,
+                left_y,
+                right_y,
+                shoulder_tolerance_pct,
+                int(cfg.head_shoulders_allowed_extra_same_side_pivots),
+                inverse=inverse,
+            )
+            if middle_cleanliness_score < float(cfg.min_head_shoulders_middle_cleanliness_score):
                 continue
             prior_direction, close_prior_move_pct = _prior_pattern_move(close, left_x, span)
             if prior_direction != prior_direction_required:
@@ -1918,6 +1988,106 @@ def _activate_head_shoulders_setups(
                     _copy_head_shoulders_candidate(out, int(structure_row), row, name)
                     out[f"{name}_reaction_score"][row] = reaction_score
                     break
+
+
+def _head_shoulders_leg_reaction_score(
+    body_high: np.ndarray,
+    body_low: np.ndarray,
+    row: int,
+    left_x: float,
+    head_x: float,
+    right_x: float,
+    left_y: float,
+    head_y: float,
+    right_y: float,
+    neckline_left: float,
+    neckline_right: float,
+    min_reaction_pct: float,
+    *,
+    inverse: bool,
+) -> float:
+    if not np.isfinite(
+        [
+            left_x,
+            head_x,
+            right_x,
+            left_y,
+            head_y,
+            right_y,
+            neckline_left,
+            neckline_right,
+            min_reaction_pct,
+        ]
+    ).all():
+        return 0.0
+    reference = max(abs(float(right_y)), abs(float(head_y)), abs(float(left_y)), 1e-9)
+    threshold = max(float(min_reaction_pct), 1e-9)
+    start = int(max(np.floor(float(right_x)), 0))
+    stop = int(min(max(int(row), start), len(body_high) - 1))
+    if inverse:
+        right_sample = np.asarray(body_high[start : stop + 1], dtype="float64")
+        right_reaction = (
+            max((float(np.nanmax(right_sample)) - float(right_y)) / reference, 0.0)
+            if np.isfinite(right_sample).any()
+            else 0.0
+        )
+        reactions = (
+            max((float(neckline_left) - float(left_y)) / reference, 0.0),
+            max((float(neckline_right) - float(head_y)) / reference, 0.0),
+            right_reaction,
+        )
+    else:
+        right_sample = np.asarray(body_low[start : stop + 1], dtype="float64")
+        right_reaction = (
+            max((float(right_y) - float(np.nanmin(right_sample))) / reference, 0.0)
+            if np.isfinite(right_sample).any()
+            else 0.0
+        )
+        reactions = (
+            max((float(left_y) - float(neckline_left)) / reference, 0.0),
+            max((float(head_y) - float(neckline_right)) / reference, 0.0),
+            right_reaction,
+        )
+    return _clip_value(min(reactions) / threshold)
+
+
+def _head_shoulders_middle_cleanliness_score(
+    pivot: np.ndarray,
+    pivot_index: np.ndarray,
+    row: int,
+    left_x: float,
+    head_x: float,
+    right_x: float,
+    left_y: float,
+    right_y: float,
+    shoulder_tolerance_pct: float,
+    allowed_extra_pivots: int,
+    *,
+    inverse: bool,
+) -> float:
+    if not np.isfinite([left_x, head_x, right_x, left_y, right_y, shoulder_tolerance_pct]).all():
+        return 0.0
+    shoulder_ref = max((abs(float(left_y)) + abs(float(right_y))) / 2.0, 1e-9)
+    tolerance = shoulder_ref * max(float(shoulder_tolerance_pct), 0.0)
+    if inverse:
+        shoulder_level = min(float(left_y), float(right_y))
+        significant = pivot <= shoulder_level + tolerance
+    else:
+        shoulder_level = max(float(left_y), float(right_y))
+        significant = pivot >= shoulder_level - tolerance
+    confirmed = np.arange(len(pivot)) <= int(row)
+    between = (
+        confirmed
+        & np.isfinite(pivot)
+        & np.isfinite(pivot_index)
+        & significant
+        & (pivot_index > float(left_x))
+        & (pivot_index < float(right_x))
+    )
+    anchor_mask = np.abs(pivot_index - float(head_x)) <= 0.50
+    extra_count = int(np.count_nonzero(between & ~anchor_mask))
+    excess = max(extra_count - max(int(allowed_extra_pivots), 0), 0)
+    return _clip_value(1.0 - excess / 3.0)
 
 
 def _head_shoulders_quality(
