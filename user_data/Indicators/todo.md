@@ -81,6 +81,9 @@ items as they are resolved, retested, and either committed or explicitly parked.
      path and replaced with rolling body/ATR/pivot-prominence scales.
    - Current dynamic defaults are intentionally sparse. Keep as experimental
      unless strategy/hyperopt finds clear value beyond `pattern_reversal.py`.
+   - Quick breakout check found triple-bottom neckline longs more interesting
+     than triple-top neckline shorts or failed-top breakout longs. Details are
+     documented in `INDICATOR_STRATEGY_REFERENCE.md`.
 
 4. `pattern_continuation.py`
    - Weakest technical indicator in the review.

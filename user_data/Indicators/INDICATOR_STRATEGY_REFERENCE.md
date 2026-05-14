@@ -148,8 +148,21 @@ Continuation Pattern Strategy / Hyperopt Guidance:
 
 Multi-Peak Strategy / Hyperopt Guidance:
 - Treat multi-peak output as pattern identity evidence only. A valid triple top/bottom is not a trade by itself; strategy logic still owns confirmation, direction, stop, target, timeframe weighting, and context filters.
-- First-pass hyperopt surface should stay small and identity-focused: `min_triple_spacing_bars`, `min_triple_touch_similarity_score`, `min_triple_touch_turn_score`, `triple_level_breach_tolerance_mult`, `triple_level_breach_pivot_grace_bars`, and `min_triple_quality`.
-- Second-pass surface may add pivot, impulse, and dynamic scale controls if plots show identity problems: `pivot_strength`, `pattern_pivot_strength`, `peak_premove_body_mult`, `peak_premove_atr_mult`, `peak_depth_body_mult`, `peak_depth_atr_mult`, and `peak_prior_impulse_min_efficiency`.
+- Conventional use: a triple top is usually bearish only after price breaks below its reaction/neckline level. A triple bottom is usually bullish only after price breaks above its reaction/neckline level. The touch itself is just a watched structure, not a complete entry.
+- Alternative use worth hyperopt testing: failed triple tops can become bullish continuation if price closes above all three peaks; failed triple bottoms can become bearish continuation if price closes below all three troughs. Treat these as separate breakout hypotheses, not as the same signal as neckline confirmation.
+- Current quick breakout check across local BTC/ETH/SOL `1h`, `4h`, and `1d` data:
+  - Triple-top break above peaks as long: 15 triggers, 46.7% winrate at 6/12 bars, 33.3% at 24 bars. Not good standalone.
+  - Triple-top break below neckline as short: 35 triggers, 45.7% winrate at 6 bars, 48.6% at 12 bars, 51.4% at 24 bars. Weak/noisy standalone.
+  - Triple-bottom break above neckline as long: 36 triggers, 63.9% winrate at 6 bars, 69.4% at 12 bars, 61.1% at 24 bars. This is the most interesting first-pass hypothesis.
+  - Triple-bottom break below troughs as short: 18 triggers, 50.0% winrate at 6/12 bars, 33.3% at 24 bars. Weak standalone.
+- Strategy-facing outputs to test: `pat_triple_top_pattern_present`, `pat_triple_top_pattern_confirmed`, `pat_triple_top_indicator_score`, `pat_triple_top_confirmation_level`, `pat_triple_top_target_level`, `pat_triple_top_p1_index`, `pat_triple_top_p2_index`, `pat_triple_top_p3_index`, plus the equivalent `pat_triple_bottom_*` columns.
+- First-pass hyperopt surface should stay small and identity/entry-focused: `min_triple_spacing_bars`, `min_triple_touch_similarity_score`, `min_triple_touch_turn_score`, `triple_level_breach_tolerance_mult`, `triple_level_breach_pivot_grace_bars`, and `min_triple_quality`.
+- First-pass strategy-entry switches to test separately:
+  - `triple_bottom_pattern_confirmed` / close above `pat_triple_bottom_confirmation_level` for long.
+  - `triple_top_pattern_confirmed` / close below `pat_triple_top_confirmation_level` for short.
+  - Close above max high of `pat_triple_top_p1_index`, `p2_index`, and `p3_index` for failed-top long.
+  - Close below min low of `pat_triple_bottom_p1_index`, `p2_index`, and `p3_index` for failed-bottom short.
+- Second-pass surface may add pivot, impulse, and dynamic scale controls if plots show identity problems: `pivot_strength`, `pattern_pivot_strength`, `peak_premove_body_mult`, `peak_premove_atr_mult`, `peak_level_tolerance_body_mult`, `peak_level_tolerance_atr_mult`, `peak_level_tolerance_prominence_mult`, `peak_depth_body_mult`, `peak_depth_atr_mult`, `peak_reaction_body_mult`, `peak_base_return_buffer_body_mult`, `duplicate_neckline_tolerance_body_mult`, `duplicate_neckline_tolerance_atr_mult`, and `peak_prior_impulse_min_efficiency`.
 - Avoid broad hyperopt over every internal scale knob initially. The dynamic body/ATR/prominence multipliers can interact heavily and may overfit samples before the pattern identity surface is stable.
 - Sensible breach-grace search should keep `triple_level_breach_pivot_grace_bars` small, for example 0-4 bars. Larger values can forgive real breaks and turn failed structures back into accepted patterns.
 - `min_triple_touch_turn_score` is a clipped score, so useful values should stay at or below 1.0.
