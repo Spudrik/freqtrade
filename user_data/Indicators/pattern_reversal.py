@@ -15,7 +15,6 @@ from pattern_common import (
     _bottom_p1_dominance_score,
     _peak_confirmation_state,
     _peak_retest_quality,
-    _dynamic_height_tolerance_pct,
     _num,
     _prior_pattern_move,
     _prior_impulse_score,
@@ -41,22 +40,24 @@ class PatternReversalConfig:
     atr_period: int = 14
     pivot_strength: int = 2
     pivot_min_prominence_atr: float = 0.35
-    pivot_min_prominence_pct: float = 0.0
     pivot_min_spacing_bars: int = 1
     pivot_min_distance_atr: float = 0.0
-    pivot_min_distance_pct: float = 0.0
     pattern_pivot_strength: int = 1
     entry_cooldown_bars: int = 8
     pattern_lifecycle_mature_bars: int = 12
     pattern_lifecycle_stale_bars: int = 12
-    double_duplicate_overlap_pct: float = 0.70
-    double_duplicate_neckline_tolerance_pct: float = 0.012
+    duplicate_overlap_ratio: float = 0.70
+    duplicate_neckline_tolerance_body_mult: float = 2.0
+    duplicate_neckline_tolerance_atr_mult: float = 0.50
     peak_dynamic_body_window: int = 30
     peak_dynamic_scale_window: int = 30
     peak_premove_body_mult: float = 6.0
+    peak_premove_atr_mult: float = 2.0
     peak_level_tolerance_body_mult: float = 2.25
     peak_level_tolerance_atr_mult: float = 0.35
     peak_level_tolerance_prominence_mult: float = 0.20
+    peak_depth_body_mult: float = 4.0
+    peak_depth_atr_mult: float = 1.0
     peak_reaction_body_mult: float = 3.0
     peak_base_return_buffer_body_mult: float = 0.8
     peak_prior_impulse_min_bars: int = 3
@@ -64,10 +65,6 @@ class PatternReversalConfig:
     double_pattern_window: int = 80
     min_double_pattern_bars: int = 8
     max_double_pattern_bars: int = 64
-    double_peak_tolerance_pct: float = 0.040
-    min_double_neckline_depth_pct: float = 0.025
-    min_double_prior_move_pct: float = 0.040
-    min_double_first_pivot_move_pct: float = 0.030
     double_reaction_max_bars: int = 24
     min_double_quality: float = 0.72
     min_double_reaction_score: float = 0.12
@@ -75,18 +72,14 @@ class PatternReversalConfig:
     head_shoulders_window: int = 100
     min_head_shoulders_bars: int = 12
     max_head_shoulders_bars: int = 90
-    shoulder_tolerance_pct: float = 0.060
-    min_head_prominence_pct: float = 0.015
-    min_head_shoulders_neckline_depth_pct: float = 0.018
-    min_head_shoulders_prior_move_pct: float = 0.055
-    min_head_shoulders_first_pivot_move_pct: float = 0.040
     head_shoulders_premove_body_mult: float = 6.0
+    head_shoulders_premove_atr_mult: float = 2.0
     head_shoulders_p1_prior_window: int = 48
     head_shoulders_p1_prior_atr_mult: float = 3.0
     head_shoulders_prominence_body_mult: float = 1.5
     head_shoulders_prominence_atr_mult: float = 0.35
-    head_shoulders_neckline_depth_body_mult: float = 3.0
-    head_shoulders_neckline_depth_atr_mult: float = 0.75
+    head_shoulders_neckline_depth_body_mult: float = 4.0
+    head_shoulders_neckline_depth_atr_mult: float = 1.0
     head_shoulders_base_return_buffer_body_mult: float = 0.8
     min_head_shoulders_p1_dominance_score: float = 0.0
     min_head_shoulders_peak_cleanliness_score: float = 0.20
@@ -98,10 +91,11 @@ class PatternReversalConfig:
     min_head_shoulders_head_position_score: float = 0.20
     min_head_shoulders_neckline_clearance_score: float = 0.22
     min_head_shoulders_neckline_body_respect_ratio: float = 0.70
-    head_shoulders_max_neckline_slope_pct_per_bar: float = 0.0030
+    head_shoulders_max_neckline_slope_atr_per_bar: float = 0.15
     min_head_shoulders_right_reaction_score: float = 0.10
     head_shoulders_setup_monitor_bars: int = 16
-    head_shoulders_neckline_proximity_pct: float = 0.018
+    head_shoulders_neckline_proximity_body_mult: float = 3.0
+    head_shoulders_neckline_proximity_atr_mult: float = 0.50
     head_shoulders_max_candidate_pivots: int = 14
     include_pattern_diagnostics: bool = False
 
@@ -120,10 +114,10 @@ def add_pattern_reversal(
         atr_period=int(cfg.atr_period),
         pivot_strength=int(cfg.pivot_strength),
         pivot_min_prominence_atr=float(cfg.pivot_min_prominence_atr),
-        pivot_min_prominence_pct=float(cfg.pivot_min_prominence_pct),
+        pivot_min_prominence_pct=0.0,
         pivot_min_spacing_bars=int(cfg.pivot_min_spacing_bars),
         pivot_min_distance_atr=float(cfg.pivot_min_distance_atr),
-        pivot_min_distance_pct=float(cfg.pivot_min_distance_pct),
+        pivot_min_distance_pct=0.0,
     )
     columns = {**_double_reversal_columns(frame, cfg), **_head_shoulders_columns(frame, cfg)}
     existing = [
@@ -166,6 +160,34 @@ def _validate_ohlcv(dataframe: DataFrame) -> None:
         raise ValueError("Dataframe must not be empty")
 
 
+def _dynamic_pattern_scale_pct(
+    body_ref_pct: float,
+    atr_ref_pct: float,
+    prominence_ref_pct: float = 0.0,
+    *,
+    body_mult: float = 0.0,
+    atr_mult: float = 0.0,
+    prominence_mult: float = 0.0,
+    minimum: float = 1e-9,
+) -> float:
+    """Return a local scale without a fixed price-percent floor or cap.
+
+    Reversal patterns compare prices as normalized distances internally, but the
+    thresholds must come from the candle regime being scored. This keeps a quiet
+    1h consolidation, a volatile 4h reversal, and a 3d swing from inheriting the
+    same absolute percentage gate.
+    """
+
+    return float(
+        max(
+            float(body_ref_pct) * float(body_mult),
+            float(atr_ref_pct) * float(atr_mult),
+            float(prominence_ref_pct) * float(prominence_mult),
+            float(minimum),
+        )
+    )
+
+
 def _double_reversal_columns(frame: DataFrame, cfg: PatternReversalConfig) -> dict[str, Series]:
     """Detect double top / double bottom attention at the second confirmed pivot."""
 
@@ -180,9 +202,9 @@ def _double_reversal_columns(frame: DataFrame, cfg: PatternReversalConfig) -> di
             arrays["double_top_first_index"],
             arrays["double_top_second_index"],
             arrays["double_top_neckline"],
+            arrays["double_top_duplicate_tolerance_pct"],
             int(cfg.entry_cooldown_bars),
-            float(cfg.double_duplicate_overlap_pct),
-            float(cfg.double_duplicate_neckline_tolerance_pct),
+            float(cfg.duplicate_overlap_ratio),
         ),
         index=frame.index,
         dtype="bool",
@@ -193,9 +215,9 @@ def _double_reversal_columns(frame: DataFrame, cfg: PatternReversalConfig) -> di
             arrays["double_bottom_first_index"],
             arrays["double_bottom_second_index"],
             arrays["double_bottom_neckline"],
+            arrays["double_bottom_duplicate_tolerance_pct"],
             int(cfg.entry_cooldown_bars),
-            float(cfg.double_duplicate_overlap_pct),
-            float(cfg.double_duplicate_neckline_tolerance_pct),
+            float(cfg.duplicate_overlap_ratio),
         ),
         index=frame.index,
         dtype="bool",
@@ -362,6 +384,7 @@ def _double_reversal_arrays(frame: DataFrame, cfg: PatternReversalConfig) -> dic
         "double_top_second_price": np.full(rows, np.nan, dtype="float64"),
         "double_top_neckline_index": np.full(rows, np.nan, dtype="float64"),
         "double_top_neckline": np.full(rows, np.nan, dtype="float64"),
+        "double_top_duplicate_tolerance_pct": np.zeros(rows, dtype="float64"),
         "double_top_neckline_score": np.zeros(rows, dtype="float64"),
         "double_top_reaction_score": np.zeros(rows, dtype="float64"),
         "double_top_between_cleanliness_score": np.zeros(rows, dtype="float64"),
@@ -371,6 +394,7 @@ def _double_reversal_arrays(frame: DataFrame, cfg: PatternReversalConfig) -> dic
         "double_bottom_second_price": np.full(rows, np.nan, dtype="float64"),
         "double_bottom_neckline_index": np.full(rows, np.nan, dtype="float64"),
         "double_bottom_neckline": np.full(rows, np.nan, dtype="float64"),
+        "double_bottom_duplicate_tolerance_pct": np.zeros(rows, dtype="float64"),
         "double_bottom_neckline_score": np.zeros(rows, dtype="float64"),
         "double_bottom_reaction_score": np.zeros(rows, dtype="float64"),
         "double_bottom_between_cleanliness_score": np.zeros(rows, dtype="float64"),
@@ -378,9 +402,6 @@ def _double_reversal_arrays(frame: DataFrame, cfg: PatternReversalConfig) -> dic
     window = int(cfg.double_pattern_window)
     min_bars = int(cfg.min_double_pattern_bars)
     max_bars = int(cfg.max_double_pattern_bars)
-    tolerance_pct = float(cfg.double_peak_tolerance_pct)
-    min_depth = float(cfg.min_double_neckline_depth_pct)
-    min_prior_move = float(cfg.min_double_prior_move_pct)
     scale_window = int(getattr(cfg, "peak_dynamic_scale_window", cfg.peak_dynamic_body_window))
     body_pct = _rolling_body_pct(frame, scale_window)
     atr_pct = _rolling_atr_pct(frame, scale_window)
@@ -407,10 +428,6 @@ def _double_reversal_arrays(frame: DataFrame, cfg: PatternReversalConfig) -> dic
                 window,
                 min_bars,
                 max_bars,
-                tolerance_pct,
-                min_depth,
-                min_prior_move,
-                float(cfg.min_double_first_pivot_move_pct),
                 int(cfg.double_reaction_max_bars),
                 float(cfg.min_double_reaction_score),
                 float(cfg.min_double_between_cleanliness_score),
@@ -418,11 +435,16 @@ def _double_reversal_arrays(frame: DataFrame, cfg: PatternReversalConfig) -> dic
                 atr_pct,
                 prominence_pct,
                 float(cfg.peak_premove_body_mult),
+                float(cfg.peak_premove_atr_mult),
                 float(cfg.peak_level_tolerance_body_mult),
                 float(cfg.peak_level_tolerance_atr_mult),
                 float(cfg.peak_level_tolerance_prominence_mult),
+                float(cfg.peak_depth_body_mult),
+                float(cfg.peak_depth_atr_mult),
                 float(cfg.peak_reaction_body_mult),
                 float(cfg.peak_base_return_buffer_body_mult),
+                float(cfg.duplicate_neckline_tolerance_body_mult),
+                float(cfg.duplicate_neckline_tolerance_atr_mult),
                 float(getattr(cfg, "peak_prior_impulse_min_efficiency", 0.0)),
                 int(getattr(cfg, "peak_prior_impulse_min_bars", 1)),
             )
@@ -436,6 +458,7 @@ def _double_reversal_arrays(frame: DataFrame, cfg: PatternReversalConfig) -> dic
                 out["double_top_second_price"][row] = float(top["second_price"])
                 out["double_top_neckline_index"][row] = float(top["neckline_index"])
                 out["double_top_neckline"][row] = float(top["neckline"])
+                out["double_top_duplicate_tolerance_pct"][row] = float(top["duplicate_tolerance_pct"])
                 out["double_top_neckline_score"][row] = float(top["neckline_score"])
                 out["double_top_reaction_score"][row] = float(top["reaction_score"])
                 out["double_top_between_cleanliness_score"][row] = float(top["between_cleanliness_score"])
@@ -451,10 +474,6 @@ def _double_reversal_arrays(frame: DataFrame, cfg: PatternReversalConfig) -> dic
                 window,
                 min_bars,
                 max_bars,
-                tolerance_pct,
-                min_depth,
-                min_prior_move,
-                float(cfg.min_double_first_pivot_move_pct),
                 int(cfg.double_reaction_max_bars),
                 float(cfg.min_double_reaction_score),
                 float(cfg.min_double_between_cleanliness_score),
@@ -462,11 +481,16 @@ def _double_reversal_arrays(frame: DataFrame, cfg: PatternReversalConfig) -> dic
                 atr_pct,
                 prominence_pct,
                 float(cfg.peak_premove_body_mult),
+                float(cfg.peak_premove_atr_mult),
                 float(cfg.peak_level_tolerance_body_mult),
                 float(cfg.peak_level_tolerance_atr_mult),
                 float(cfg.peak_level_tolerance_prominence_mult),
+                float(cfg.peak_depth_body_mult),
+                float(cfg.peak_depth_atr_mult),
                 float(cfg.peak_reaction_body_mult),
                 float(cfg.peak_base_return_buffer_body_mult),
+                float(cfg.duplicate_neckline_tolerance_body_mult),
+                float(cfg.duplicate_neckline_tolerance_atr_mult),
                 float(getattr(cfg, "peak_prior_impulse_min_efficiency", 0.0)),
                 int(getattr(cfg, "peak_prior_impulse_min_bars", 1)),
             )
@@ -480,6 +504,7 @@ def _double_reversal_arrays(frame: DataFrame, cfg: PatternReversalConfig) -> dic
                 out["double_bottom_second_price"][row] = float(bottom["second_price"])
                 out["double_bottom_neckline_index"][row] = float(bottom["neckline_index"])
                 out["double_bottom_neckline"][row] = float(bottom["neckline"])
+                out["double_bottom_duplicate_tolerance_pct"][row] = float(bottom["duplicate_tolerance_pct"])
                 out["double_bottom_neckline_score"][row] = float(bottom["neckline_score"])
                 out["double_bottom_reaction_score"][row] = float(bottom["reaction_score"])
                 out["double_bottom_between_cleanliness_score"][row] = float(bottom["between_cleanliness_score"])
@@ -497,10 +522,6 @@ def _score_double_top(
     window: int,
     min_bars: int,
     max_bars: int,
-    tolerance_pct: float,
-    min_depth: float,
-    min_prior_move: float,
-    min_first_pivot_move: float,
     reaction_max_bars: int,
     min_reaction_score: float,
     min_between_cleanliness_score: float,
@@ -508,11 +529,16 @@ def _score_double_top(
     atr_pct: np.ndarray,
     prominence_pct: np.ndarray,
     premove_body_mult: float,
+    premove_atr_mult: float,
     level_body_mult: float,
     level_atr_mult: float,
     level_prominence_mult: float,
+    depth_body_mult: float,
+    depth_atr_mult: float,
     reaction_body_mult: float,
     base_buffer_body_mult: float,
+    duplicate_tolerance_body_mult: float,
+    duplicate_tolerance_atr_mult: float,
     prior_impulse_min_efficiency: float,
     prior_impulse_min_bars: int,
 ) -> dict[str, float]:
@@ -528,6 +554,7 @@ def _score_double_top(
         "second_price": second_y,
         "neckline_index": np.nan,
         "neckline": np.nan,
+        "duplicate_tolerance_pct": 0.0,
         "neckline_score": 0.0,
         "reaction_score": 0.0,
         "between_cleanliness_score": 0.0,
@@ -535,18 +562,34 @@ def _score_double_top(
     body_ref = _threshold_body_pct(body_pct, row)
     atr_ref = _threshold_scale_pct(atr_pct, row, minimum=0.0005)
     prominence_ref = _threshold_scale_pct(prominence_pct, row)
-    level_tolerance_pct = _dynamic_height_tolerance_pct(
-        float(tolerance_pct),
+    level_tolerance_pct = _dynamic_pattern_scale_pct(
         body_ref,
         atr_ref,
         prominence_ref,
-        float(level_body_mult),
-        float(level_atr_mult),
-        float(level_prominence_mult),
+        body_mult=level_body_mult,
+        atr_mult=level_atr_mult,
+        prominence_mult=level_prominence_mult,
     )
-    move_threshold = max(float(min_prior_move), float(min_first_pivot_move), body_ref * float(premove_body_mult))
-    reaction_threshold = max(float(min_depth) * 0.55, body_ref * float(reaction_body_mult))
+    move_threshold = _dynamic_pattern_scale_pct(
+        body_ref,
+        atr_ref,
+        body_mult=premove_body_mult,
+        atr_mult=premove_atr_mult,
+    )
+    depth_threshold = _dynamic_pattern_scale_pct(
+        body_ref,
+        atr_ref,
+        body_mult=depth_body_mult,
+        atr_mult=depth_atr_mult,
+    )
+    reaction_threshold = max(depth_threshold * 0.55, body_ref * float(reaction_body_mult))
     base_buffer_pct = body_ref * float(base_buffer_body_mult)
+    duplicate_tolerance_pct = _dynamic_pattern_scale_pct(
+        body_ref,
+        atr_ref,
+        body_mult=duplicate_tolerance_body_mult,
+        atr_mult=duplicate_tolerance_atr_mult,
+    )
     for candidate in candidates:
         first_x = float(high_index[candidate])
         span = second_x - first_x
@@ -578,8 +621,6 @@ def _score_double_top(
             top=True,
         )
         first_move_pct = float(prior["move_pct"])
-        if first_move_pct < max(float(min_prior_move), float(min_first_pivot_move)):
-            continue
         if first_move_pct < move_threshold:
             continue
         impulse_score = _prior_impulse_score(
@@ -613,7 +654,7 @@ def _score_double_top(
         quality = _peak_retest_quality(
             similarity,
             depth_pct,
-            reaction_threshold,
+            depth_threshold,
             first_move_pct,
             move_threshold,
             max(turn_pct, first_reaction_pct * 0.35),
@@ -632,6 +673,7 @@ def _score_double_top(
                 "second_price": second_y,
                 "neckline_index": neckline_index,
                 "neckline": neckline,
+                "duplicate_tolerance_pct": duplicate_tolerance_pct,
                 "neckline_score": dominance_score,
                 "reaction_score": reaction_score,
                 "between_cleanliness_score": between_cleanliness_score,
@@ -650,10 +692,6 @@ def _score_double_bottom(
     window: int,
     min_bars: int,
     max_bars: int,
-    tolerance_pct: float,
-    min_depth: float,
-    min_prior_move: float,
-    min_first_pivot_move: float,
     reaction_max_bars: int,
     min_reaction_score: float,
     min_between_cleanliness_score: float,
@@ -661,11 +699,16 @@ def _score_double_bottom(
     atr_pct: np.ndarray,
     prominence_pct: np.ndarray,
     premove_body_mult: float,
+    premove_atr_mult: float,
     level_body_mult: float,
     level_atr_mult: float,
     level_prominence_mult: float,
+    depth_body_mult: float,
+    depth_atr_mult: float,
     reaction_body_mult: float,
     base_buffer_body_mult: float,
+    duplicate_tolerance_body_mult: float,
+    duplicate_tolerance_atr_mult: float,
     prior_impulse_min_efficiency: float,
     prior_impulse_min_bars: int,
 ) -> dict[str, float]:
@@ -681,6 +724,7 @@ def _score_double_bottom(
         "second_price": second_y,
         "neckline_index": np.nan,
         "neckline": np.nan,
+        "duplicate_tolerance_pct": 0.0,
         "neckline_score": 0.0,
         "reaction_score": 0.0,
         "between_cleanliness_score": 0.0,
@@ -688,18 +732,34 @@ def _score_double_bottom(
     body_ref = _threshold_body_pct(body_pct, row)
     atr_ref = _threshold_scale_pct(atr_pct, row, minimum=0.0005)
     prominence_ref = _threshold_scale_pct(prominence_pct, row)
-    level_tolerance_pct = _dynamic_height_tolerance_pct(
-        float(tolerance_pct),
+    level_tolerance_pct = _dynamic_pattern_scale_pct(
         body_ref,
         atr_ref,
         prominence_ref,
-        float(level_body_mult),
-        float(level_atr_mult),
-        float(level_prominence_mult),
+        body_mult=level_body_mult,
+        atr_mult=level_atr_mult,
+        prominence_mult=level_prominence_mult,
     )
-    move_threshold = max(float(min_prior_move), float(min_first_pivot_move), body_ref * float(premove_body_mult))
-    reaction_threshold = max(float(min_depth) * 0.55, body_ref * float(reaction_body_mult))
+    move_threshold = _dynamic_pattern_scale_pct(
+        body_ref,
+        atr_ref,
+        body_mult=premove_body_mult,
+        atr_mult=premove_atr_mult,
+    )
+    depth_threshold = _dynamic_pattern_scale_pct(
+        body_ref,
+        atr_ref,
+        body_mult=depth_body_mult,
+        atr_mult=depth_atr_mult,
+    )
+    reaction_threshold = max(depth_threshold * 0.55, body_ref * float(reaction_body_mult))
     base_buffer_pct = body_ref * float(base_buffer_body_mult)
+    duplicate_tolerance_pct = _dynamic_pattern_scale_pct(
+        body_ref,
+        atr_ref,
+        body_mult=duplicate_tolerance_body_mult,
+        atr_mult=duplicate_tolerance_atr_mult,
+    )
     for candidate in candidates:
         first_x = float(low_index[candidate])
         span = second_x - first_x
@@ -731,8 +791,6 @@ def _score_double_bottom(
             top=False,
         )
         first_move_pct = float(prior["move_pct"])
-        if first_move_pct < max(float(min_prior_move), float(min_first_pivot_move)):
-            continue
         if first_move_pct < move_threshold:
             continue
         impulse_score = _prior_impulse_score(
@@ -766,7 +824,7 @@ def _score_double_bottom(
         quality = _peak_retest_quality(
             similarity,
             depth_pct,
-            reaction_threshold,
+            depth_threshold,
             first_move_pct,
             move_threshold,
             max(turn_pct, first_reaction_pct * 0.35),
@@ -785,6 +843,7 @@ def _score_double_bottom(
                 "second_price": second_y,
                 "neckline_index": neckline_index,
                 "neckline": neckline,
+                "duplicate_tolerance_pct": duplicate_tolerance_pct,
                 "neckline_score": dominance_score,
                 "reaction_score": reaction_score,
                 "between_cleanliness_score": between_cleanliness_score,
@@ -871,9 +930,9 @@ def _dedupe_double_events(
     first_index: np.ndarray,
     second_index: np.ndarray,
     neckline: np.ndarray,
+    neckline_tolerance_pct: np.ndarray,
     cooldown_bars: int,
     overlap_pct: float,
-    neckline_tolerance_pct: float,
 ) -> np.ndarray:
     """Suppress repeated double-pattern attention without looking ahead.
 
@@ -888,7 +947,7 @@ def _dedupe_double_events(
     selected_rows: list[int] = []
     cooldown = max(int(cooldown_bars), 1)
     min_overlap = float(overlap_pct)
-    neck_tolerance = float(neckline_tolerance_pct)
+    tolerance = np.asarray(neckline_tolerance_pct, dtype="float64")
     for row in np.flatnonzero(clean):
         if not np.isfinite([first_index[row], second_index[row], neckline[row]]).all():
             continue
@@ -905,7 +964,7 @@ def _dedupe_double_events(
                 second_index[prior],
                 neckline[prior],
                 min_overlap,
-                neck_tolerance,
+                max(float(tolerance[row]), float(tolerance[prior]), 1e-9),
             ):
                 duplicate = True
                 break
@@ -948,9 +1007,9 @@ def _head_shoulders_columns(frame: DataFrame, cfg: PatternReversalConfig) -> dic
             arrays["head_shoulders_right_index"],
             arrays["head_shoulders_neckline_left"],
             arrays["head_shoulders_neckline_right"],
+            arrays["head_shoulders_duplicate_tolerance_pct"],
             int(cfg.entry_cooldown_bars),
-            float(cfg.double_duplicate_overlap_pct),
-            float(cfg.double_duplicate_neckline_tolerance_pct),
+            float(cfg.duplicate_overlap_ratio),
         ),
         index=frame.index,
         dtype="bool",
@@ -963,9 +1022,9 @@ def _head_shoulders_columns(frame: DataFrame, cfg: PatternReversalConfig) -> dic
             arrays["inverse_head_shoulders_right_index"],
             arrays["inverse_head_shoulders_neckline_left"],
             arrays["inverse_head_shoulders_neckline_right"],
+            arrays["inverse_head_shoulders_duplicate_tolerance_pct"],
             int(cfg.entry_cooldown_bars),
-            float(cfg.double_duplicate_overlap_pct),
-            float(cfg.double_duplicate_neckline_tolerance_pct),
+            float(cfg.duplicate_overlap_ratio),
         ),
         index=frame.index,
         dtype="bool",
@@ -1225,6 +1284,7 @@ def _head_shoulders_arrays(frame: DataFrame, cfg: PatternReversalConfig) -> dict
         out[f"{name}_right_price"] = np.full(rows, np.nan, dtype="float64")
         out[f"{name}_neckline_left"] = np.full(rows, np.nan, dtype="float64")
         out[f"{name}_neckline_right"] = np.full(rows, np.nan, dtype="float64")
+        out[f"{name}_duplicate_tolerance_pct"] = np.zeros(rows, dtype="float64")
         out[f"{name}_shoulder_score"] = np.zeros(rows, dtype="float64")
         out[f"{name}_head_score"] = np.zeros(rows, dtype="float64")
         out[f"{name}_time_balance_score"] = np.zeros(rows, dtype="float64")
@@ -1280,8 +1340,28 @@ def _head_shoulders_arrays(frame: DataFrame, cfg: PatternReversalConfig) -> dict
             if inv["quality"] >= float(cfg.min_head_shoulders_quality):
                 _store_head_shoulders(out, row, "inverse_head_shoulders", inv)
                 out["inverse_head_shoulders_structure_long"][row] = True
-    _activate_head_shoulders_setups(out, close, body_high, body_low, cfg, name="head_shoulders", inverse=False)
-    _activate_head_shoulders_setups(out, close, body_high, body_low, cfg, name="inverse_head_shoulders", inverse=True)
+    _activate_head_shoulders_setups(
+        out,
+        close,
+        body_high,
+        body_low,
+        body_pct,
+        atr_pct,
+        cfg,
+        name="head_shoulders",
+        inverse=False,
+    )
+    _activate_head_shoulders_setups(
+        out,
+        close,
+        body_high,
+        body_low,
+        body_pct,
+        atr_pct,
+        cfg,
+        name="inverse_head_shoulders",
+        inverse=True,
+    )
     return out
 
 
@@ -1318,31 +1398,47 @@ def _score_head_shoulders(
     body_ref = _threshold_body_pct(body_pct, row)
     atr_ref = _threshold_scale_pct(atr_pct, row, minimum=0.0005)
     prominence_ref = _threshold_scale_pct(prominence_pct, row)
-    shoulder_tolerance_pct = _dynamic_height_tolerance_pct(
-        float(cfg.shoulder_tolerance_pct),
+    shoulder_tolerance_pct = _dynamic_pattern_scale_pct(
         body_ref,
         atr_ref,
         prominence_ref,
-        float(cfg.peak_level_tolerance_body_mult),
-        float(cfg.peak_level_tolerance_atr_mult),
-        float(cfg.peak_level_tolerance_prominence_mult),
+        body_mult=cfg.peak_level_tolerance_body_mult,
+        atr_mult=cfg.peak_level_tolerance_atr_mult,
+        prominence_mult=cfg.peak_level_tolerance_prominence_mult,
     )
-    prominence_threshold = max(
-        float(cfg.min_head_prominence_pct),
-        body_ref * float(cfg.head_shoulders_prominence_body_mult),
-        atr_ref * float(cfg.head_shoulders_prominence_atr_mult),
+    prominence_threshold = _dynamic_pattern_scale_pct(
+        body_ref,
+        atr_ref,
+        prominence_ref,
+        body_mult=cfg.head_shoulders_prominence_body_mult,
+        atr_mult=cfg.head_shoulders_prominence_atr_mult,
+        prominence_mult=cfg.peak_level_tolerance_prominence_mult,
     )
-    depth_threshold = max(
-        float(cfg.min_head_shoulders_neckline_depth_pct),
-        body_ref * float(cfg.head_shoulders_neckline_depth_body_mult),
-        atr_ref * float(cfg.head_shoulders_neckline_depth_atr_mult),
+    depth_threshold = _dynamic_pattern_scale_pct(
+        body_ref,
+        atr_ref,
+        body_mult=cfg.head_shoulders_neckline_depth_body_mult,
+        atr_mult=cfg.head_shoulders_neckline_depth_atr_mult,
     )
-    prior_move_threshold = max(
-        float(cfg.min_head_shoulders_prior_move_pct),
-        float(cfg.min_head_shoulders_first_pivot_move_pct),
-        body_ref * float(cfg.head_shoulders_premove_body_mult),
+    prior_move_threshold = _dynamic_pattern_scale_pct(
+        body_ref,
+        atr_ref,
+        body_mult=cfg.head_shoulders_premove_body_mult,
+        atr_mult=cfg.head_shoulders_premove_atr_mult,
     )
     base_buffer_pct = body_ref * float(cfg.head_shoulders_base_return_buffer_body_mult)
+    duplicate_tolerance_pct = _dynamic_pattern_scale_pct(
+        body_ref,
+        atr_ref,
+        body_mult=cfg.duplicate_neckline_tolerance_body_mult,
+        atr_mult=cfg.duplicate_neckline_tolerance_atr_mult,
+    )
+    neckline_proximity_pct = _dynamic_pattern_scale_pct(
+        body_ref,
+        atr_ref,
+        body_mult=cfg.head_shoulders_neckline_proximity_body_mult,
+        atr_mult=cfg.head_shoulders_neckline_proximity_atr_mult,
+    )
     max_candidates = max(int(getattr(cfg, "head_shoulders_max_candidate_pivots", 18)), 3)
     candidate_start = max(0, len(recent) - max_candidates)
     for left_pos in range(candidate_start, len(recent) - 1):
@@ -1370,12 +1466,12 @@ def _score_head_shoulders(
             if shoulder_similarity < float(cfg.min_head_shoulders_shoulder_score):
                 continue
             if inverse:
-                prominence_pct = (min(left_y, right_y) - head_y) / max(abs(close[row]), 1e-9)
+                pattern_prominence_pct = (min(left_y, right_y) - head_y) / max(abs(close[row]), 1e-9)
                 prior_direction_required = -1
             else:
-                prominence_pct = (head_y - max(left_y, right_y)) / max(abs(close[row]), 1e-9)
+                pattern_prominence_pct = (head_y - max(left_y, right_y)) / max(abs(close[row]), 1e-9)
                 prior_direction_required = 1
-            if prominence_pct < prominence_threshold:
+            if pattern_prominence_pct < prominence_threshold:
                 continue
             if not _head_shoulders_p1_prior_atr_move(
                 body_high,
@@ -1449,7 +1545,8 @@ def _score_head_shoulders(
                 left_x,
                 right_x,
                 float(close[row]),
-                float(cfg.head_shoulders_max_neckline_slope_pct_per_bar),
+                atr_ref,
+                float(cfg.head_shoulders_max_neckline_slope_atr_per_bar),
             )
             if neckline_score < float(cfg.min_head_shoulders_neckline_score):
                 continue
@@ -1476,7 +1573,7 @@ def _score_head_shoulders(
                 neckline_left,
                 neckline_right,
                 float(close[row]),
-                float(cfg.head_shoulders_neckline_proximity_pct),
+                neckline_proximity_pct,
                 inverse=inverse,
             )
             if neckline_body_respect_ratio < float(cfg.min_head_shoulders_neckline_body_respect_ratio):
@@ -1537,7 +1634,7 @@ def _score_head_shoulders(
                 continue
             quality = _head_shoulders_quality(
                 shoulder_similarity,
-                prominence_pct,
+                pattern_prominence_pct,
                 prominence_threshold,
                 depth_pct,
                 depth_threshold,
@@ -1566,8 +1663,9 @@ def _score_head_shoulders(
                     "right_price": right_y,
                     "neckline_left": neckline_left,
                     "neckline_right": neckline_right,
+                    "duplicate_tolerance_pct": duplicate_tolerance_pct,
                     "shoulder_score": shoulder_similarity,
-                    "head_score": _clip_value(prominence_pct / max(float(cfg.min_head_prominence_pct) * 2.0, 1e-9)),
+                    "head_score": _clip_value(pattern_prominence_pct / max(prominence_threshold * 2.0, 1e-9)),
                     "time_balance_score": time_balance_score,
                     "head_position_score": head_position_score,
                     "neckline_score": neckline_score,
@@ -1595,14 +1693,15 @@ def _dedupe_head_shoulders_events(
     right_index: np.ndarray,
     neckline_left: np.ndarray,
     neckline_right: np.ndarray,
+    neckline_tolerance_pct: np.ndarray,
     cooldown_bars: int,
     overlap_pct: float,
-    neckline_tolerance_pct: float,
 ) -> np.ndarray:
     clean = np.asarray(mask, dtype=bool)
     selected = np.zeros(len(clean), dtype=bool)
     selected_rows: list[int] = []
     cooldown = max(int(cooldown_bars), 1)
+    tolerance = np.asarray(neckline_tolerance_pct, dtype="float64")
     for row in np.flatnonzero(clean):
         if not np.isfinite([left_index[row], head_index[row], right_index[row], neckline_left[row], neckline_right[row]]).all():
             continue
@@ -1623,7 +1722,7 @@ def _dedupe_head_shoulders_events(
                 neckline_left[prior],
                 neckline_right[prior],
                 overlap_pct,
-                neckline_tolerance_pct,
+                max(float(tolerance[row]), float(tolerance[prior]), 1e-9),
             ):
                 duplicate = True
                 break
@@ -1671,6 +1770,7 @@ def _empty_head_shoulders_candidate(right_x: float, right_y: float) -> dict[str,
         "right_price": right_y,
         "neckline_left": np.nan,
         "neckline_right": np.nan,
+        "duplicate_tolerance_pct": 0.0,
         "shoulder_score": 0.0,
         "head_score": 0.0,
         "time_balance_score": 0.0,
@@ -1694,6 +1794,7 @@ def _store_head_shoulders(out: dict[str, np.ndarray], row: int, name: str, candi
         "right_price",
         "neckline_left",
         "neckline_right",
+        "duplicate_tolerance_pct",
         "shoulder_score",
         "head_score",
         "time_balance_score",
@@ -1718,6 +1819,7 @@ def _copy_head_shoulders_candidate(out: dict[str, np.ndarray], source_row: int, 
         "right_price",
         "neckline_left",
         "neckline_right",
+        "duplicate_tolerance_pct",
         "shoulder_score",
         "head_score",
         "time_balance_score",
@@ -1736,6 +1838,8 @@ def _activate_head_shoulders_setups(
     close: np.ndarray,
     body_high: np.ndarray,
     body_low: np.ndarray,
+    body_pct: np.ndarray,
+    atr_pct: np.ndarray,
     cfg: PatternReversalConfig,
     *,
     name: str,
@@ -1754,7 +1858,6 @@ def _activate_head_shoulders_setups(
     structure_key = f"{name}_structure_long" if inverse else f"{name}_structure_short"
     setup_key = f"{name}_setup_long" if inverse else f"{name}_setup_short"
     monitor_bars = max(int(cfg.head_shoulders_setup_monitor_bars), 1)
-    proximity_pct = float(cfg.head_shoulders_neckline_proximity_pct)
     structure_rows = np.flatnonzero(out[structure_key])
     for structure_row in structure_rows:
         left_x = float(out[f"{name}_left_index"][structure_row])
@@ -1767,6 +1870,12 @@ def _activate_head_shoulders_setups(
         start = int(structure_row)
         stop = min(rows - 1, start + monitor_bars)
         if np.isfinite(close[start]) and close[start] != 0.0:
+            proximity_pct = _dynamic_pattern_scale_pct(
+                _threshold_body_pct(body_pct, start),
+                _threshold_scale_pct(atr_pct, start, minimum=0.0005),
+                body_mult=cfg.head_shoulders_neckline_proximity_body_mult,
+                atr_mult=cfg.head_shoulders_neckline_proximity_atr_mult,
+            )
             tolerance = abs(float(close[start])) * proximity_pct
             if inverse:
                 reaction_score = _clip_value((float(close[start]) - right_price) / max(tolerance, 1e-9))
@@ -1784,6 +1893,12 @@ def _activate_head_shoulders_setups(
             neckline_now = _line_value_at(float(row), left_x, neckline_left, right_x, neckline_right)
             if not np.isfinite(neckline_now) or not np.isfinite(close[row]) or close[row] == 0.0:
                 continue
+            proximity_pct = _dynamic_pattern_scale_pct(
+                _threshold_body_pct(body_pct, row),
+                _threshold_scale_pct(atr_pct, row, minimum=0.0005),
+                body_mult=cfg.head_shoulders_neckline_proximity_body_mult,
+                atr_mult=cfg.head_shoulders_neckline_proximity_atr_mult,
+            )
             tolerance = abs(float(close[row])) * proximity_pct
             if inverse:
                 approaching_neckline = float(body_high[row]) >= neckline_now - tolerance
@@ -2027,8 +2142,10 @@ def _head_shoulders_neckline_score(
     left_x: float,
     right_x: float,
     reference_price: float,
-    max_slope_pct_per_bar: float,
+    atr_ref_pct: float,
+    max_slope_atr_per_bar: float,
 ) -> float:
     span = max(float(right_x) - float(left_x), 1.0)
     slope_pct = abs(float(neckline_right) - float(neckline_left)) / max(abs(float(reference_price)), 1e-9) / span
-    return _clip_value(1.0 - slope_pct / max(float(max_slope_pct_per_bar), 1e-9))
+    max_slope_pct_per_bar = max(float(atr_ref_pct) * float(max_slope_atr_per_bar), 1e-9)
+    return _clip_value(1.0 - slope_pct / max_slope_pct_per_bar)

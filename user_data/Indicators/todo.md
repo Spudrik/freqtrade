@@ -59,11 +59,12 @@ items as they are resolved, retested, and either committed or explicitly parked.
 ## 2. Partial / Needs Retune
 
 1. `pattern_reversal.py`
-   - Bullish reversal patterns looked more useful than bearish equivalents.
-   - Double bottoms and inverse H&S looked better than double tops and normal
-     H&S in the broad review.
-   - Decide whether to retune bearish-side rules or keep output but mark as
-     lower confidence.
+   - Active fixed price-percent gates were replaced with rolling body/ATR/pivot
+     prominence scaling.
+   - Current moderate defaults had positive weighted forward-return edge for
+     double tops, double bottoms, and normal H&S in the cleanup window pack.
+   - Inverse H&S remains inconsistent in the cleanup window pack and should be
+     retuned or marked lower confidence before strategies rely on it.
 
 2. `pattern_wolfe_waves.py`
    - Sparse but interesting.
