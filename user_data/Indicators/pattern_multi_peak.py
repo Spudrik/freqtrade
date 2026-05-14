@@ -57,10 +57,12 @@ class PatternPeakConfig:
     peak_level_tolerance_prominence_mult: float = 0.20
     peak_reaction_body_mult: float = 3.0
     peak_base_return_buffer_body_mult: float = 0.8
+    peak_prior_impulse_min_bars: int = 2
+    peak_prior_impulse_min_efficiency: float = 0.45
     triple_pattern_window: int = 110
     min_triple_pattern_bars: int = 12
     max_triple_pattern_bars: int = 90
-    min_triple_spacing_bars: int = 4
+    min_triple_spacing_bars: int = 7
     triple_max_candidate_pivots: int = 8
     triple_peak_tolerance_pct: float = 0.040
     min_triple_neckline_depth_pct: float = 0.018
@@ -68,6 +70,14 @@ class PatternPeakConfig:
     min_triple_first_pivot_move_pct: float = 0.030
     triple_reaction_max_bars: int = 24
     min_triple_reaction_score: float = 0.12
+    min_triple_touch_similarity_score: float = 0.50
+    min_triple_touch_turn_score: float = 1.0
+    triple_touch_turn_max_bars: int = 8
+    # Strategy/hyperopt levers: tune these together. The tolerance controls how
+    # much body-level breach is allowed after reversal; pivot grace only forgives
+    # near-touch fuzz before the interval has armed on a real opposing reaction.
+    triple_level_breach_tolerance_mult: float = 0.45
+    triple_level_breach_pivot_grace_bars: int = 3
     min_triple_quality: float = 0.72
     include_pattern_diagnostics: bool = False
 
@@ -327,6 +337,7 @@ def _triple_reversal_arrays(frame: DataFrame, cfg: PatternPeakConfig) -> dict[st
                 row,
                 close,
                 body_low,
+                body_high,
                 high_pivot,
                 high_index,
                 low_pivot,
@@ -342,6 +353,11 @@ def _triple_reversal_arrays(frame: DataFrame, cfg: PatternPeakConfig) -> dict[st
                 float(cfg.min_triple_first_pivot_move_pct),
                 int(cfg.triple_reaction_max_bars),
                 float(cfg.min_triple_reaction_score),
+                float(cfg.min_triple_touch_similarity_score),
+                int(cfg.triple_touch_turn_max_bars),
+                float(cfg.min_triple_touch_turn_score),
+                float(cfg.triple_level_breach_tolerance_mult),
+                int(cfg.triple_level_breach_pivot_grace_bars),
                 body_pct,
                 atr_pct,
                 prominence_pct,
@@ -361,6 +377,7 @@ def _triple_reversal_arrays(frame: DataFrame, cfg: PatternPeakConfig) -> dict[st
                 row,
                 close,
                 body_high,
+                body_low,
                 high_pivot,
                 high_index,
                 low_pivot,
@@ -376,6 +393,11 @@ def _triple_reversal_arrays(frame: DataFrame, cfg: PatternPeakConfig) -> dict[st
                 float(cfg.min_triple_first_pivot_move_pct),
                 int(cfg.triple_reaction_max_bars),
                 float(cfg.min_triple_reaction_score),
+                float(cfg.min_triple_touch_similarity_score),
+                int(cfg.triple_touch_turn_max_bars),
+                float(cfg.min_triple_touch_turn_score),
+                float(cfg.triple_level_breach_tolerance_mult),
+                int(cfg.triple_level_breach_pivot_grace_bars),
                 body_pct,
                 atr_pct,
                 prominence_pct,
@@ -411,6 +433,7 @@ def _score_triple_top(
     row: int,
     close: np.ndarray,
     body_low: np.ndarray,
+    body_high: np.ndarray,
     high_pivot: np.ndarray,
     high_index: np.ndarray,
     low_pivot: np.ndarray,
@@ -426,6 +449,11 @@ def _score_triple_top(
     min_first_pivot_move: float,
     reaction_max_bars: int,
     min_reaction_score: float,
+    min_touch_similarity_score: float,
+    touch_turn_max_bars: int,
+    min_touch_turn_score: float,
+    level_breach_tolerance_mult: float,
+    level_breach_pivot_grace_bars: int,
     body_pct: np.ndarray,
     atr_pct: np.ndarray,
     prominence_pct: np.ndarray,
@@ -473,10 +501,23 @@ def _score_triple_top(
             prices = np.asarray([float(high_pivot[first_row]), float(high_pivot[second_row]), third_y], dtype="float64")
             level = float(np.nanmedian(prices))
             similarity = _same_level_score(prices, level, level_tolerance_pct)
-            if similarity <= 0.0:
+            if similarity < float(min_touch_similarity_score):
                 continue
             overshoot_score = _triple_top_overshoot_score(high_pivot, high_index, row, first_x, third_x, level, level_tolerance_pct)
             if overshoot_score <= 0.0:
+                continue
+            level_integrity_score = _triple_top_level_integrity_score(
+                body_high,
+                body_low,
+                first_x,
+                second_x,
+                third_x,
+                level,
+                level_tolerance_pct * float(level_breach_tolerance_mult),
+                reaction_threshold,
+                level_breach_pivot_grace_bars,
+            )
+            if level_integrity_score <= 0.0:
                 continue
             prior = _prior_opposite_pivot_context(
                 low_pivot,
@@ -532,6 +573,18 @@ def _score_triple_top(
             reaction_score = _clip_value(max(reaction_pct, depth_pct * 0.35) / max(reaction_threshold, 1e-9))
             if reaction_score < min_reaction_score:
                 continue
+            touch_turn_score = _triple_top_touch_turn_score(
+                body_low,
+                row,
+                first_x,
+                second_x,
+                third_x,
+                prices,
+                reaction_threshold,
+                touch_turn_max_bars,
+            )
+            if touch_turn_score < float(min_touch_turn_score):
+                continue
             quality = _peak_retest_quality(
                 similarity,
                 depth_pct,
@@ -540,7 +593,7 @@ def _score_triple_top(
                 move_threshold,
                 max(reaction_pct, depth_pct * 0.35),
                 dominance_score,
-                overshoot_score,
+                min(overshoot_score, touch_turn_score, level_integrity_score),
                 span,
                 min_bars,
                 max_bars,
@@ -566,6 +619,7 @@ def _score_triple_bottom(
     row: int,
     close: np.ndarray,
     body_high: np.ndarray,
+    body_low: np.ndarray,
     high_pivot: np.ndarray,
     high_index: np.ndarray,
     low_pivot: np.ndarray,
@@ -581,6 +635,11 @@ def _score_triple_bottom(
     min_first_pivot_move: float,
     reaction_max_bars: int,
     min_reaction_score: float,
+    min_touch_similarity_score: float,
+    touch_turn_max_bars: int,
+    min_touch_turn_score: float,
+    level_breach_tolerance_mult: float,
+    level_breach_pivot_grace_bars: int,
     body_pct: np.ndarray,
     atr_pct: np.ndarray,
     prominence_pct: np.ndarray,
@@ -628,10 +687,23 @@ def _score_triple_bottom(
             prices = np.asarray([float(low_pivot[first_row]), float(low_pivot[second_row]), third_y], dtype="float64")
             level = float(np.nanmedian(prices))
             similarity = _same_level_score(prices, level, level_tolerance_pct)
-            if similarity <= 0.0:
+            if similarity < float(min_touch_similarity_score):
                 continue
             undershoot_score = _triple_bottom_undershoot_score(low_pivot, low_index, row, first_x, third_x, level, level_tolerance_pct)
             if undershoot_score <= 0.0:
+                continue
+            level_integrity_score = _triple_bottom_level_integrity_score(
+                body_low,
+                body_high,
+                first_x,
+                second_x,
+                third_x,
+                level,
+                level_tolerance_pct * float(level_breach_tolerance_mult),
+                reaction_threshold,
+                level_breach_pivot_grace_bars,
+            )
+            if level_integrity_score <= 0.0:
                 continue
             prior = _prior_opposite_pivot_context(
                 high_pivot,
@@ -687,6 +759,18 @@ def _score_triple_bottom(
             reaction_score = _clip_value(max(reaction_pct, depth_pct * 0.35) / max(reaction_threshold, 1e-9))
             if reaction_score < min_reaction_score:
                 continue
+            touch_turn_score = _triple_bottom_touch_turn_score(
+                body_high,
+                row,
+                first_x,
+                second_x,
+                third_x,
+                prices,
+                reaction_threshold,
+                touch_turn_max_bars,
+            )
+            if touch_turn_score < float(min_touch_turn_score):
+                continue
             quality = _peak_retest_quality(
                 similarity,
                 depth_pct,
@@ -695,7 +779,7 @@ def _score_triple_bottom(
                 move_threshold,
                 max(reaction_pct, depth_pct * 0.35),
                 dominance_score,
-                undershoot_score,
+                min(undershoot_score, touch_turn_score, level_integrity_score),
                 span,
                 min_bars,
                 max_bars,
@@ -771,6 +855,190 @@ def _triple_bottom_undershoot_score(
         return 1.0
     undershoot = max(float(level) - float(np.nanmin(low_pivot[between])), 0.0)
     return _clip_value(1.0 - undershoot / max(abs(float(level)) * float(tolerance_pct), 1e-9))
+
+
+def _triple_top_level_integrity_score(
+    body_high: np.ndarray,
+    body_low: np.ndarray,
+    first_x: float,
+    second_x: float,
+    third_x: float,
+    level: float,
+    breach_tolerance_pct: float,
+    reversal_arm_pct: float,
+    pivot_grace_bars: int,
+) -> float:
+    return _level_integrity_score(
+        body_high,
+        body_low,
+        first_x,
+        second_x,
+        third_x,
+        level,
+        breach_tolerance_pct,
+        reversal_arm_pct,
+        pivot_grace_bars,
+        top=True,
+    )
+
+
+def _triple_bottom_level_integrity_score(
+    body_low: np.ndarray,
+    body_high: np.ndarray,
+    first_x: float,
+    second_x: float,
+    third_x: float,
+    level: float,
+    breach_tolerance_pct: float,
+    reversal_arm_pct: float,
+    pivot_grace_bars: int,
+) -> float:
+    return _level_integrity_score(
+        body_low,
+        body_high,
+        first_x,
+        second_x,
+        third_x,
+        level,
+        breach_tolerance_pct,
+        reversal_arm_pct,
+        pivot_grace_bars,
+        top=False,
+    )
+
+
+def _level_integrity_score(
+    breach_values: np.ndarray,
+    reaction_values: np.ndarray,
+    first_x: float,
+    second_x: float,
+    third_x: float,
+    level: float,
+    breach_tolerance_pct: float,
+    reversal_arm_pct: float,
+    pivot_grace_bars: int,
+    *,
+    top: bool,
+) -> float:
+    if not np.isfinite([first_x, second_x, third_x, level]).all() or level == 0.0:
+        return 0.0
+    tolerance = max(float(breach_tolerance_pct), 0.0005)
+    arm_threshold = max(float(reversal_arm_pct), tolerance, 0.0005)
+    grace = max(int(pivot_grace_bars), 0)
+    intervals = ((first_x, second_x), (second_x, third_x))
+    worst_breach = 0.0
+    for left, right in intervals:
+        start = int(max(np.floor(float(left)) + 1, 0))
+        stop = int(min(np.ceil(float(right)) - 1, len(breach_values) - 1))
+        if stop < start:
+            continue
+        armed = False
+        for index in range(start, stop + 1):
+            breach_value = float(breach_values[index]) if np.isfinite(breach_values[index]) else np.nan
+            reaction_value = float(reaction_values[index]) if np.isfinite(reaction_values[index]) else np.nan
+            if top:
+                breach = max((breach_value - float(level)) / max(abs(float(level)), 1e-9), 0.0)
+                reaction = max((float(level) - reaction_value) / max(abs(float(level)), 1e-9), 0.0)
+            else:
+                breach = max((float(level) - breach_value) / max(abs(float(level)), 1e-9), 0.0)
+                reaction = max((reaction_value - float(level)) / max(abs(float(level)), 1e-9), 0.0)
+
+            in_pivot_zone = index <= int(np.floor(float(left))) + grace or index >= int(np.ceil(float(right))) - grace
+            if breach > tolerance and (armed or not in_pivot_zone):
+                worst_breach = max(worst_breach, breach)
+            if reaction >= arm_threshold:
+                armed = True
+    return _clip_value(1.0 - worst_breach / max(tolerance, 1e-9))
+
+
+def _triple_top_touch_turn_score(
+    body_low: np.ndarray,
+    row: int,
+    first_x: float,
+    second_x: float,
+    third_x: float,
+    prices: np.ndarray,
+    min_depth: float,
+    max_bars: int,
+) -> float:
+    depths = [
+        _top_touch_depth(body_low, row, first_x, prices[0], first_x, second_x, max_bars, require_left=False),
+        _top_touch_depth(body_low, row, second_x, prices[1], first_x, third_x, max_bars, require_left=True),
+        _top_touch_depth(body_low, row, third_x, prices[2], second_x, third_x + float(max_bars), max_bars, require_left=True),
+    ]
+    return _clip_value(min(depths) / max(float(min_depth), 1e-9))
+
+
+def _triple_bottom_touch_turn_score(
+    body_high: np.ndarray,
+    row: int,
+    first_x: float,
+    second_x: float,
+    third_x: float,
+    prices: np.ndarray,
+    min_depth: float,
+    max_bars: int,
+) -> float:
+    depths = [
+        _bottom_touch_depth(body_high, row, first_x, prices[0], first_x, second_x, max_bars, require_left=False),
+        _bottom_touch_depth(body_high, row, second_x, prices[1], first_x, third_x, max_bars, require_left=True),
+        _bottom_touch_depth(body_high, row, third_x, prices[2], second_x, third_x + float(max_bars), max_bars, require_left=True),
+    ]
+    return _clip_value(min(depths) / max(float(min_depth), 1e-9))
+
+
+def _top_touch_depth(
+    body_low: np.ndarray,
+    row: int,
+    x: float,
+    price: float,
+    left_bound: float,
+    right_bound: float,
+    max_bars: int,
+    *,
+    require_left: bool,
+) -> float:
+    left = _local_top_reaction_depth(body_low, price, max(float(left_bound), float(x) - float(max_bars)), float(x), int(row))
+    right = _local_top_reaction_depth(body_low, price, float(x), min(float(right_bound), float(x) + float(max_bars)), int(row))
+    return min(left, right) if require_left else right
+
+
+def _bottom_touch_depth(
+    body_high: np.ndarray,
+    row: int,
+    x: float,
+    price: float,
+    left_bound: float,
+    right_bound: float,
+    max_bars: int,
+    *,
+    require_left: bool,
+) -> float:
+    left = _local_bottom_reaction_depth(body_high, price, max(float(left_bound), float(x) - float(max_bars)), float(x), int(row))
+    right = _local_bottom_reaction_depth(body_high, price, float(x), min(float(right_bound), float(x) + float(max_bars)), int(row))
+    return min(left, right) if require_left else right
+
+
+def _local_top_reaction_depth(body_low: np.ndarray, price: float, start_x: float, end_x: float, row: int) -> float:
+    start = int(max(np.floor(start_x), 0))
+    stop = int(min(np.ceil(end_x), int(row), len(body_low) - 1))
+    if stop < start or not np.isfinite(price) or price == 0.0:
+        return 0.0
+    sample = np.asarray(body_low[start : stop + 1], dtype="float64")
+    if not np.isfinite(sample).any():
+        return 0.0
+    return max((float(price) - float(np.nanmin(sample))) / max(abs(float(price)), 1e-9), 0.0)
+
+
+def _local_bottom_reaction_depth(body_high: np.ndarray, price: float, start_x: float, end_x: float, row: int) -> float:
+    start = int(max(np.floor(start_x), 0))
+    stop = int(min(np.ceil(end_x), int(row), len(body_high) - 1))
+    if stop < start or not np.isfinite(price) or price == 0.0:
+        return 0.0
+    sample = np.asarray(body_high[start : stop + 1], dtype="float64")
+    if not np.isfinite(sample).any():
+        return 0.0
+    return max((float(np.nanmax(sample)) - float(price)) / max(abs(float(price)), 1e-9), 0.0)
 
 
 def _triple_top_body_reaction(

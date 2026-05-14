@@ -39,7 +39,16 @@ Pattern Indicators:
 - Pattern outputs are split by family rather than aggregated through the old Pattern Structure layer.
 - Geometry V2 emits triangle, wedge, compression, rectangle, ascending channel, and descending channel evidence through `pg2_*` slot columns plus row-level compression/channel context.
 - Reversal, continuation, range, multi-peak, and Wolfe wave logic should be consumed from their own files.
+- Multi-peak triple top/bottom identity uses dynamic level breach checks. `triple_level_breach_tolerance_mult` and `triple_level_breach_pivot_grace_bars` are strategy/hyperopt levers: tolerance controls body-level invalidation after reversal, while grace only forgives near-pivot fuzz before the interval has armed on a real opposing reaction.
 - Strategies decide whether to trade, wait for breakout, use `1h` as trigger data, treat channel rails as avoid/context evidence, or ignore lower-timeframe patterns.
+
+Multi-Peak Strategy / Hyperopt Guidance:
+- Treat multi-peak output as pattern identity evidence only. A valid triple top/bottom is not a trade by itself; strategy logic still owns confirmation, direction, stop, target, timeframe weighting, and context filters.
+- First-pass hyperopt surface should stay small and identity-focused: `min_triple_spacing_bars`, `min_triple_touch_similarity_score`, `min_triple_touch_turn_score`, `triple_level_breach_tolerance_mult`, `triple_level_breach_pivot_grace_bars`, and `min_triple_quality`.
+- Second-pass surface may add pivot and impulse controls if plots show identity problems: `pivot_strength`, `pattern_pivot_strength`, `min_triple_neckline_depth_pct`, and `peak_prior_impulse_min_efficiency`.
+- Avoid broad hyperopt over every internal scale knob initially. The dynamic body/ATR/prominence multipliers can interact heavily and may overfit samples before the pattern identity surface is stable.
+- Sensible breach-grace search should keep `triple_level_breach_pivot_grace_bars` small, for example 0-4 bars. Larger values can forgive real breaks and turn failed structures back into accepted patterns.
+- `min_triple_touch_turn_score` is a clipped score, so useful values should stay at or below 1.0.
 
 ## Naming Migration Target
 
