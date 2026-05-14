@@ -11,8 +11,6 @@ from pattern_common import (
     _bottom_p1_dominance_score,
     _carry_values_while_state,
     _clip_value,
-    _dedupe_interval_level_events,
-    _dynamic_height_tolerance_pct,
     _num,
     _pattern_geometry_arrays,
     _peak_confirmation_state,
@@ -23,7 +21,6 @@ from pattern_common import (
     _rolling_atr_pct,
     _rolling_body_pct,
     _rolling_pivot_prominence_pct,
-    _threshold_body_pct,
     _threshold_scale_pct,
     _top_base_is_held,
     _top_p1_dominance_score,
@@ -39,22 +36,24 @@ class PatternPeakConfig:
     atr_period: int = 14
     pivot_strength: int = 2
     pivot_min_prominence_atr: float = 0.35
-    pivot_min_prominence_pct: float = 0.0
     pivot_min_spacing_bars: int = 1
     pivot_min_distance_atr: float = 0.0
-    pivot_min_distance_pct: float = 0.0
     pattern_pivot_strength: int = 1
     entry_cooldown_bars: int = 8
     pattern_lifecycle_mature_bars: int = 12
     pattern_lifecycle_stale_bars: int = 12
-    double_duplicate_overlap_pct: float = 0.70
-    double_duplicate_neckline_tolerance_pct: float = 0.012
+    duplicate_overlap_ratio: float = 0.70
+    duplicate_neckline_tolerance_body_mult: float = 2.0
+    duplicate_neckline_tolerance_atr_mult: float = 0.50
     peak_dynamic_body_window: int = 30
     peak_dynamic_scale_window: int = 30
     peak_premove_body_mult: float = 6.0
+    peak_premove_atr_mult: float = 2.0
     peak_level_tolerance_body_mult: float = 2.25
     peak_level_tolerance_atr_mult: float = 0.35
     peak_level_tolerance_prominence_mult: float = 0.20
+    peak_depth_body_mult: float = 4.0
+    peak_depth_atr_mult: float = 1.0
     peak_reaction_body_mult: float = 3.0
     peak_base_return_buffer_body_mult: float = 0.8
     peak_prior_impulse_min_bars: int = 2
@@ -64,10 +63,6 @@ class PatternPeakConfig:
     max_triple_pattern_bars: int = 90
     min_triple_spacing_bars: int = 7
     triple_max_candidate_pivots: int = 8
-    triple_peak_tolerance_pct: float = 0.040
-    min_triple_neckline_depth_pct: float = 0.018
-    min_triple_prior_move_pct: float = 0.040
-    min_triple_first_pivot_move_pct: float = 0.030
     triple_reaction_max_bars: int = 24
     min_triple_reaction_score: float = 0.12
     min_triple_touch_similarity_score: float = 0.50
@@ -96,10 +91,10 @@ def add_pattern_peaks(
         atr_period=int(cfg.atr_period),
         pivot_strength=int(cfg.pivot_strength),
         pivot_min_prominence_atr=float(cfg.pivot_min_prominence_atr),
-        pivot_min_prominence_pct=float(cfg.pivot_min_prominence_pct),
+        pivot_min_prominence_pct=0.0,
         pivot_min_spacing_bars=int(cfg.pivot_min_spacing_bars),
         pivot_min_distance_atr=float(cfg.pivot_min_distance_atr),
-        pivot_min_distance_pct=float(cfg.pivot_min_distance_pct),
+        pivot_min_distance_pct=0.0,
     )
     columns = _triple_reversal_columns(frame, cfg)
     existing = [
@@ -135,6 +130,26 @@ def _validate_ohlcv(dataframe: DataFrame) -> None:
         raise ValueError("Dataframe must not be empty")
 
 
+def _dynamic_pattern_scale_pct(
+    body_ref_pct: float,
+    atr_ref_pct: float,
+    prominence_ref_pct: float = 0.0,
+    *,
+    body_mult: float = 0.0,
+    atr_mult: float = 0.0,
+    prominence_mult: float = 0.0,
+    minimum: float = 1e-9,
+) -> float:
+    return float(
+        max(
+            float(body_ref_pct) * float(body_mult),
+            float(atr_ref_pct) * float(atr_mult),
+            float(prominence_ref_pct) * float(prominence_mult),
+            float(minimum),
+        )
+    )
+
+
 def _triple_reversal_columns(frame: DataFrame, cfg: PatternPeakConfig) -> dict[str, Series]:
     """Detect triple top / triple bottom attention at the third confirmed pivot.
 
@@ -150,29 +165,29 @@ def _triple_reversal_columns(frame: DataFrame, cfg: PatternPeakConfig) -> dict[s
     top_raw = pd.Series(arrays["triple_top_setup_short"], index=frame.index, dtype="bool").fillna(False)
     bottom_raw = pd.Series(arrays["triple_bottom_setup_long"], index=frame.index, dtype="bool").fillna(False)
     top = pd.Series(
-        _dedupe_interval_level_events(
+        _dedupe_triple_events(
             arrays["triple_top_setup_short"],
             arrays["triple_top_first_index"],
             arrays["triple_top_third_index"],
             arrays["triple_top_level"],
             arrays["triple_top_neckline"],
+            arrays["triple_top_duplicate_tolerance_pct"],
             int(cfg.entry_cooldown_bars),
-            float(cfg.double_duplicate_overlap_pct),
-            float(cfg.double_duplicate_neckline_tolerance_pct),
+            float(cfg.duplicate_overlap_ratio),
         ),
         index=frame.index,
         dtype="bool",
     ).fillna(False)
     bottom = pd.Series(
-        _dedupe_interval_level_events(
+        _dedupe_triple_events(
             arrays["triple_bottom_setup_long"],
             arrays["triple_bottom_first_index"],
             arrays["triple_bottom_third_index"],
             arrays["triple_bottom_level"],
             arrays["triple_bottom_neckline"],
+            arrays["triple_bottom_duplicate_tolerance_pct"],
             int(cfg.entry_cooldown_bars),
-            float(cfg.double_duplicate_overlap_pct),
-            float(cfg.double_duplicate_neckline_tolerance_pct),
+            float(cfg.duplicate_overlap_ratio),
         ),
         index=frame.index,
         dtype="bool",
@@ -347,10 +362,6 @@ def _triple_reversal_arrays(frame: DataFrame, cfg: PatternPeakConfig) -> dict[st
                 max_bars,
                 min_spacing,
                 max_candidates,
-                float(cfg.triple_peak_tolerance_pct),
-                float(cfg.min_triple_neckline_depth_pct),
-                float(cfg.min_triple_prior_move_pct),
-                float(cfg.min_triple_first_pivot_move_pct),
                 int(cfg.triple_reaction_max_bars),
                 float(cfg.min_triple_reaction_score),
                 float(cfg.min_triple_touch_similarity_score),
@@ -362,11 +373,16 @@ def _triple_reversal_arrays(frame: DataFrame, cfg: PatternPeakConfig) -> dict[st
                 atr_pct,
                 prominence_pct,
                 float(cfg.peak_premove_body_mult),
+                float(cfg.peak_premove_atr_mult),
                 float(cfg.peak_level_tolerance_body_mult),
                 float(cfg.peak_level_tolerance_atr_mult),
                 float(cfg.peak_level_tolerance_prominence_mult),
+                float(cfg.peak_depth_body_mult),
+                float(cfg.peak_depth_atr_mult),
                 float(cfg.peak_reaction_body_mult),
                 float(cfg.peak_base_return_buffer_body_mult),
+                float(cfg.duplicate_neckline_tolerance_body_mult),
+                float(cfg.duplicate_neckline_tolerance_atr_mult),
                 float(getattr(cfg, "peak_prior_impulse_min_efficiency", 0.0)),
                 int(getattr(cfg, "peak_prior_impulse_min_bars", 1)),
             )
@@ -387,10 +403,6 @@ def _triple_reversal_arrays(frame: DataFrame, cfg: PatternPeakConfig) -> dict[st
                 max_bars,
                 min_spacing,
                 max_candidates,
-                float(cfg.triple_peak_tolerance_pct),
-                float(cfg.min_triple_neckline_depth_pct),
-                float(cfg.min_triple_prior_move_pct),
-                float(cfg.min_triple_first_pivot_move_pct),
                 int(cfg.triple_reaction_max_bars),
                 float(cfg.min_triple_reaction_score),
                 float(cfg.min_triple_touch_similarity_score),
@@ -402,11 +414,16 @@ def _triple_reversal_arrays(frame: DataFrame, cfg: PatternPeakConfig) -> dict[st
                 atr_pct,
                 prominence_pct,
                 float(cfg.peak_premove_body_mult),
+                float(cfg.peak_premove_atr_mult),
                 float(cfg.peak_level_tolerance_body_mult),
                 float(cfg.peak_level_tolerance_atr_mult),
                 float(cfg.peak_level_tolerance_prominence_mult),
+                float(cfg.peak_depth_body_mult),
+                float(cfg.peak_depth_atr_mult),
                 float(cfg.peak_reaction_body_mult),
                 float(cfg.peak_base_return_buffer_body_mult),
+                float(cfg.duplicate_neckline_tolerance_body_mult),
+                float(cfg.duplicate_neckline_tolerance_atr_mult),
                 float(getattr(cfg, "peak_prior_impulse_min_efficiency", 0.0)),
                 int(getattr(cfg, "peak_prior_impulse_min_bars", 1)),
             )
@@ -425,6 +442,7 @@ def _empty_triple_output(rows: int) -> dict[str, np.ndarray]:
         out[f"{name}_neckline"] = np.full(rows, np.nan, dtype="float64")
         out[f"{name}_neckline_index"] = np.full(rows, np.nan, dtype="float64")
         out[f"{name}_level"] = np.full(rows, np.nan, dtype="float64")
+        out[f"{name}_duplicate_tolerance_pct"] = np.zeros(rows, dtype="float64")
         out[f"{name}_reaction_score"] = np.zeros(rows, dtype="float64")
     return out
 
@@ -443,10 +461,6 @@ def _score_triple_top(
     max_bars: int,
     min_spacing: int,
     max_candidates: int,
-    tolerance_pct: float,
-    min_depth: float,
-    min_prior_move: float,
-    min_first_pivot_move: float,
     reaction_max_bars: int,
     min_reaction_score: float,
     min_touch_similarity_score: float,
@@ -458,11 +472,16 @@ def _score_triple_top(
     atr_pct: np.ndarray,
     prominence_pct: np.ndarray,
     premove_body_mult: float,
+    premove_atr_mult: float,
     level_body_mult: float,
     level_atr_mult: float,
     level_prominence_mult: float,
+    depth_body_mult: float,
+    depth_atr_mult: float,
     reaction_body_mult: float,
     base_buffer_body_mult: float,
+    duplicate_tolerance_body_mult: float,
+    duplicate_tolerance_atr_mult: float,
     prior_impulse_min_efficiency: float,
     prior_impulse_min_bars: int,
 ) -> dict[str, float]:
@@ -473,21 +492,37 @@ def _score_triple_top(
     if prior_rows.size > max_candidates:
         prior_rows = prior_rows[-max_candidates:]
     best = _empty_triple_candidate(third_x, third_y)
-    body_ref = _threshold_body_pct(body_pct, row)
-    atr_ref = _threshold_scale_pct(atr_pct, row, minimum=0.0005)
+    body_ref = _threshold_scale_pct(body_pct, row, minimum=1e-9)
+    atr_ref = _threshold_scale_pct(atr_pct, row, minimum=1e-9)
     prominence_ref = _threshold_scale_pct(prominence_pct, row)
-    level_tolerance_pct = _dynamic_height_tolerance_pct(
-        float(tolerance_pct),
+    level_tolerance_pct = _dynamic_pattern_scale_pct(
         body_ref,
         atr_ref,
         prominence_ref,
-        float(level_body_mult),
-        float(level_atr_mult),
-        float(level_prominence_mult),
+        body_mult=level_body_mult,
+        atr_mult=level_atr_mult,
+        prominence_mult=level_prominence_mult,
     )
-    move_threshold = max(float(min_prior_move), float(min_first_pivot_move), body_ref * float(premove_body_mult))
-    reaction_threshold = max(float(min_depth) * 0.55, body_ref * float(reaction_body_mult))
+    move_threshold = _dynamic_pattern_scale_pct(
+        body_ref,
+        atr_ref,
+        body_mult=premove_body_mult,
+        atr_mult=premove_atr_mult,
+    )
+    depth_threshold = _dynamic_pattern_scale_pct(
+        body_ref,
+        atr_ref,
+        body_mult=depth_body_mult,
+        atr_mult=depth_atr_mult,
+    )
+    reaction_threshold = max(depth_threshold * 0.55, body_ref * float(reaction_body_mult))
     base_buffer_pct = body_ref * float(base_buffer_body_mult)
+    duplicate_tolerance_pct = _dynamic_pattern_scale_pct(
+        body_ref,
+        atr_ref,
+        body_mult=duplicate_tolerance_body_mult,
+        atr_mult=duplicate_tolerance_atr_mult,
+    )
     for second_row in prior_rows:
         second_x = float(high_index[second_row])
         if third_x - second_x < min_spacing:
@@ -588,7 +623,7 @@ def _score_triple_top(
             quality = _peak_retest_quality(
                 similarity,
                 depth_pct,
-                reaction_threshold,
+                depth_threshold,
                 first_move_pct,
                 move_threshold,
                 max(reaction_pct, depth_pct * 0.35),
@@ -610,6 +645,7 @@ def _score_triple_top(
                     "neckline": float(neckline["price"]),
                     "neckline_index": float(neckline["index"]),
                     "level": level,
+                    "duplicate_tolerance_pct": duplicate_tolerance_pct,
                     "reaction_score": reaction_score,
                 }
     return best
@@ -629,10 +665,6 @@ def _score_triple_bottom(
     max_bars: int,
     min_spacing: int,
     max_candidates: int,
-    tolerance_pct: float,
-    min_depth: float,
-    min_prior_move: float,
-    min_first_pivot_move: float,
     reaction_max_bars: int,
     min_reaction_score: float,
     min_touch_similarity_score: float,
@@ -644,11 +676,16 @@ def _score_triple_bottom(
     atr_pct: np.ndarray,
     prominence_pct: np.ndarray,
     premove_body_mult: float,
+    premove_atr_mult: float,
     level_body_mult: float,
     level_atr_mult: float,
     level_prominence_mult: float,
+    depth_body_mult: float,
+    depth_atr_mult: float,
     reaction_body_mult: float,
     base_buffer_body_mult: float,
+    duplicate_tolerance_body_mult: float,
+    duplicate_tolerance_atr_mult: float,
     prior_impulse_min_efficiency: float,
     prior_impulse_min_bars: int,
 ) -> dict[str, float]:
@@ -659,21 +696,37 @@ def _score_triple_bottom(
     if prior_rows.size > max_candidates:
         prior_rows = prior_rows[-max_candidates:]
     best = _empty_triple_candidate(third_x, third_y)
-    body_ref = _threshold_body_pct(body_pct, row)
-    atr_ref = _threshold_scale_pct(atr_pct, row, minimum=0.0005)
+    body_ref = _threshold_scale_pct(body_pct, row, minimum=1e-9)
+    atr_ref = _threshold_scale_pct(atr_pct, row, minimum=1e-9)
     prominence_ref = _threshold_scale_pct(prominence_pct, row)
-    level_tolerance_pct = _dynamic_height_tolerance_pct(
-        float(tolerance_pct),
+    level_tolerance_pct = _dynamic_pattern_scale_pct(
         body_ref,
         atr_ref,
         prominence_ref,
-        float(level_body_mult),
-        float(level_atr_mult),
-        float(level_prominence_mult),
+        body_mult=level_body_mult,
+        atr_mult=level_atr_mult,
+        prominence_mult=level_prominence_mult,
     )
-    move_threshold = max(float(min_prior_move), float(min_first_pivot_move), body_ref * float(premove_body_mult))
-    reaction_threshold = max(float(min_depth) * 0.55, body_ref * float(reaction_body_mult))
+    move_threshold = _dynamic_pattern_scale_pct(
+        body_ref,
+        atr_ref,
+        body_mult=premove_body_mult,
+        atr_mult=premove_atr_mult,
+    )
+    depth_threshold = _dynamic_pattern_scale_pct(
+        body_ref,
+        atr_ref,
+        body_mult=depth_body_mult,
+        atr_mult=depth_atr_mult,
+    )
+    reaction_threshold = max(depth_threshold * 0.55, body_ref * float(reaction_body_mult))
     base_buffer_pct = body_ref * float(base_buffer_body_mult)
+    duplicate_tolerance_pct = _dynamic_pattern_scale_pct(
+        body_ref,
+        atr_ref,
+        body_mult=duplicate_tolerance_body_mult,
+        atr_mult=duplicate_tolerance_atr_mult,
+    )
     for second_row in prior_rows:
         second_x = float(low_index[second_row])
         if third_x - second_x < min_spacing:
@@ -774,7 +827,7 @@ def _score_triple_bottom(
             quality = _peak_retest_quality(
                 similarity,
                 depth_pct,
-                reaction_threshold,
+                depth_threshold,
                 first_move_pct,
                 move_threshold,
                 max(reaction_pct, depth_pct * 0.35),
@@ -796,6 +849,7 @@ def _score_triple_bottom(
                     "neckline": float(neckline["price"]),
                     "neckline_index": float(neckline["index"]),
                     "level": level,
+                    "duplicate_tolerance_pct": duplicate_tolerance_pct,
                     "reaction_score": reaction_score,
                 }
     return best
@@ -813,6 +867,7 @@ def _empty_triple_candidate(third_x: float, third_y: float) -> dict[str, float]:
         "neckline": np.nan,
         "neckline_index": np.nan,
         "level": np.nan,
+        "duplicate_tolerance_pct": 0.0,
         "reaction_score": 0.0,
     }
 
@@ -821,6 +876,73 @@ def _same_level_score(prices: np.ndarray, level: float, tolerance_pct: float) ->
     reference = max(abs(float(level)), 1e-9)
     max_deviation = float(np.nanmax(np.abs(prices - float(level)))) / reference
     return _clip_value(1.0 - max_deviation / max(float(tolerance_pct), 1e-9))
+
+
+def _dedupe_triple_events(
+    mask: np.ndarray,
+    first_index: np.ndarray,
+    third_index: np.ndarray,
+    level: np.ndarray,
+    neckline: np.ndarray,
+    level_tolerance_pct: np.ndarray,
+    cooldown_bars: int,
+    overlap_ratio: float,
+) -> np.ndarray:
+    clean = np.asarray(mask, dtype=bool)
+    selected = np.zeros(len(clean), dtype=bool)
+    selected_rows: list[int] = []
+    tolerance = np.asarray(level_tolerance_pct, dtype="float64")
+    cooldown = max(int(cooldown_bars), 1)
+    for row in np.flatnonzero(clean):
+        if not np.isfinite([first_index[row], third_index[row], level[row], neckline[row], tolerance[row]]).all():
+            continue
+        duplicate = False
+        for prior in reversed(selected_rows):
+            if row - prior <= cooldown:
+                duplicate = True
+                break
+            if _same_triple_structure(
+                first_index[row],
+                third_index[row],
+                level[row],
+                neckline[row],
+                first_index[prior],
+                third_index[prior],
+                level[prior],
+                neckline[prior],
+                float(overlap_ratio),
+                max(float(tolerance[row]), float(tolerance[prior]), 1e-9),
+            ):
+                duplicate = True
+                break
+        if not duplicate:
+            selected[row] = True
+            selected_rows.append(int(row))
+    return selected
+
+
+def _same_triple_structure(
+    first_x: float,
+    third_x: float,
+    level: float,
+    neckline: float,
+    prior_first_x: float,
+    prior_third_x: float,
+    prior_level: float,
+    prior_neckline: float,
+    overlap_ratio: float,
+    tolerance_pct: float,
+) -> bool:
+    span = max(float(third_x) - float(first_x), 1.0)
+    prior_span = max(float(prior_third_x) - float(prior_first_x), 1.0)
+    overlap = min(float(third_x), float(prior_third_x)) - max(float(first_x), float(prior_first_x))
+    if overlap / max(min(span, prior_span), 1.0) < float(overlap_ratio):
+        return False
+    level_ref = max(abs(float(level)), abs(float(prior_level)), 1e-9)
+    if abs(float(level) - float(prior_level)) / level_ref > float(tolerance_pct):
+        return False
+    neckline_ref = max(abs(float(neckline)), abs(float(prior_neckline)), 1e-9)
+    return abs(float(neckline) - float(prior_neckline)) / neckline_ref <= float(tolerance_pct)
 
 
 def _triple_top_overshoot_score(
@@ -922,8 +1044,8 @@ def _level_integrity_score(
 ) -> float:
     if not np.isfinite([first_x, second_x, third_x, level]).all() or level == 0.0:
         return 0.0
-    tolerance = max(float(breach_tolerance_pct), 0.0005)
-    arm_threshold = max(float(reversal_arm_pct), tolerance, 0.0005)
+    tolerance = max(float(breach_tolerance_pct), 1e-9)
+    arm_threshold = max(float(reversal_arm_pct), tolerance, 1e-9)
     grace = max(int(pivot_grace_bars), 0)
     intervals = ((first_x, second_x), (second_x, third_x))
     worst_breach = 0.0
@@ -1124,6 +1246,7 @@ def _store_triple(out: dict[str, np.ndarray], row: int, name: str, candidate: di
     out[f"{name}_neckline"][row] = float(candidate["neckline"])
     out[f"{name}_neckline_index"][row] = float(candidate["neckline_index"])
     out[f"{name}_level"][row] = float(candidate["level"])
+    out[f"{name}_duplicate_tolerance_pct"][row] = float(candidate["duplicate_tolerance_pct"])
     out[f"{name}_reaction_score"][row] = float(candidate["reaction_score"])
 
 

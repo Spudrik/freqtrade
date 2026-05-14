@@ -77,7 +77,10 @@ items as they are resolved, retested, and either committed or explicitly parked.
 3. `pattern_multi_peak.py`
    - Weak current usefulness.
    - Triple tops/bottoms overlap with reversal logic but performed worse.
-   - Decide whether to retune, merge conceptually with reversal, or archive.
+   - Fixed price-percent gates were removed from the active triple-top/bottom
+     path and replaced with rolling body/ATR/pivot-prominence scales.
+   - Current dynamic defaults are intentionally sparse. Keep as experimental
+     unless strategy/hyperopt finds clear value beyond `pattern_reversal.py`.
 
 4. `pattern_continuation.py`
    - Weakest technical indicator in the review.
