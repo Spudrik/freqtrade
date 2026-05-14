@@ -56,12 +56,6 @@ items as they are resolved, retested, and either committed or explicitly parked.
    - Retest strategy imports and any old `pa_*` references separately because
      this intentionally breaks the old broad market-structure API.
 
-5. `complex_trendline_projection_v2.py`
-   - Keep as a foundation indicator and direct support/resistance line source.
-   - Useful mainly because geometry consumes it.
-   - Direct strategy use should focus on ranked rails and line metadata.
-   - Check p90 runtime and whether all exported line diagnostics are needed.
-
 ## 2. Partial / Needs Retune
 
 1. `pattern_reversal.py`

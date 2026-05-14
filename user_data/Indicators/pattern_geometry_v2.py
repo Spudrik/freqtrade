@@ -104,14 +104,11 @@ _SLOT_FIELDS = (
     "lower_pivots",
 )
 _ROW_FIELDS = (
-    "best_width_atr",
-    "compression_flag",
     "best_position",
     "avoid_long",
     "avoid_short",
 )
 _ROW_BOOL_FIELDS = {
-    "compression_flag",
     "avoid_long",
     "avoid_short",
 }
@@ -310,7 +307,7 @@ class PatternGeometryV2Config:
     local_narrowing_min_ratio: float = 0.10
     min_containment: float = 0.88
     min_line_score: float = 0.50
-    compression_flag_atr_threshold: float = 2.0
+    squeeze_active_width_atr: float = 2.0
     include_channel_patterns: bool = True
     channel_min_pattern_bars: int = 18
     channel_max_pattern_bars: int = 96
@@ -386,11 +383,12 @@ def add_pattern_geometry_v2(
     ``add_pattern_geometry_v2(df, timeframe="4h")``
 
     The returned frame keeps the original OHLCV columns and appends ``pg2_*``
-    columns. Per-slot columns describe concrete patterns. Row-level columns
-    summarize the best active compression/channel state for simple strategy
-    use. Existing ``pg2_*`` columns are removed first so repeated indicator
-    calls do not leave stale outputs. Use the family-specific wrappers when
-    only one geometry family should be evaluated.
+    columns. Per-slot columns describe concrete patterns. Family-level columns
+    summarize the best active instance of each pattern type, including its
+    width and squeeze state. Row-level helper columns are reserved for channel
+    guard context. Existing ``pg2_*`` columns are removed first so repeated
+    indicator calls do not leave stale outputs. Use the family-specific
+    wrappers when only one geometry family should be evaluated.
     """
     cfg = _resolve_config(config, overrides)
     _validate_config(cfg)
@@ -416,7 +414,7 @@ def add_pattern_geometry_v2(
             columns[key] = pd.Series(value, index=dataframe.index, dtype="bool").fillna(False)
         else:
             columns[key] = pd.Series(value, index=dataframe.index, dtype="float64")
-    columns.update(_family_strategy_columns(dataframe.index, p, arrays, int(cfg.output_slots)))
+    columns.update(_family_strategy_columns(dataframe.index, p, arrays, int(cfg.output_slots), cfg))
 
     source = dataframe.copy()
     existing = [col for col in source.columns if str(col).startswith(f"{p}_")]
@@ -429,14 +427,16 @@ def _family_strategy_columns(
     prefix: str,
     arrays: dict[str, np.ndarray],
     slot_count: int,
+    cfg: PatternGeometryV2Config,
 ) -> dict[str, Series]:
     """Expose one compact strategy-facing row per geometry family.
 
     Slots remain available for detailed plotting and overlap analysis. These
     family columns give strategies a stable contract that matches the other
-    pattern indicators: presence, score, direction, and current rails. When
-    several slots contain the same family on one row, the highest line score
-    wins and the losing overlaps stay available in the slot columns.
+    pattern indicators: presence, score, direction, current rails, width, and
+    per-family squeeze state. When several slots contain the same family on one
+    row, the highest line score wins and the losing overlaps stay available in
+    the slot columns.
     """
 
     rows = len(index)
@@ -447,6 +447,8 @@ def _family_strategy_columns(
         score = np.zeros(rows, dtype="float64")
         upper = np.full(rows, np.nan, dtype="float64")
         lower = np.full(rows, np.nan, dtype="float64")
+        width_atr = np.full(rows, np.nan, dtype="float64")
+        squeeze_active = np.zeros(rows, dtype=bool)
         best_rank = np.full(rows, -np.inf, dtype="float64")
         for slot in range(1, slot_count + 1):
             active = np.asarray(arrays[f"slot_{slot}_active"], dtype=bool)
@@ -463,11 +465,16 @@ def _family_strategy_columns(
             score[update] = np.nan_to_num(slot_score[update], nan=0.0)
             upper[update] = np.asarray(arrays[f"slot_{slot}_upper"], dtype="float64")[update]
             lower[update] = np.asarray(arrays[f"slot_{slot}_lower"], dtype="float64")[update]
+            slot_width = np.asarray(arrays[f"slot_{slot}_width_atr"], dtype="float64")
+            width_atr[update] = slot_width[update]
+            squeeze_active[update] = slot_width[update] <= float(cfg.squeeze_active_width_atr)
         columns[f"{prefix}_{family}_pattern_present"] = pd.Series(present, index=index, dtype="bool")
         columns[f"{prefix}_{family}_indicator_score"] = pd.Series(score, index=index, dtype="float64")
         columns[f"{prefix}_{family}_direction"] = pd.Series(direction, index=index, dtype="int8")
         columns[f"{prefix}_{family}_upper"] = pd.Series(upper, index=index, dtype="float64")
         columns[f"{prefix}_{family}_lower"] = pd.Series(lower, index=index, dtype="float64")
+        columns[f"{prefix}_{family}_width_atr"] = pd.Series(width_atr, index=index, dtype="float64")
+        columns[f"{prefix}_{family}_squeeze_active"] = pd.Series(squeeze_active, index=index, dtype="bool")
     return columns
 
 
@@ -583,8 +590,6 @@ def _any_family_enabled(cfg: PatternGeometryV2Config) -> bool:
 def _geometry_v2_arrays(frame: DataFrame, cfg: PatternGeometryV2Config) -> dict[str, np.ndarray]:
     rows = len(frame)
     out = _empty_slot_arrays(rows, int(cfg.output_slots))
-    out["best_width_atr"] = np.full(rows, np.nan, dtype="float64")
-    out["compression_flag"] = np.zeros(rows, dtype=bool)
     out["best_position"] = np.full(rows, np.nan, dtype="float64")
     for field in ("avoid_long", "avoid_short"):
         out[field] = np.zeros(rows, dtype=bool)
@@ -604,6 +609,7 @@ def _geometry_v2_arrays(frame: DataFrame, cfg: PatternGeometryV2Config) -> dict[
         {
             "timeframe": str(cfg.timeframe),
             "pivot_strength": int(cfg.pivot_strength),
+            "min_candidate_line_score": float(cfg.min_line_score),
         },
     )
     base = _base_inputs(frame.copy(), tl_cfg)
@@ -850,8 +856,6 @@ def _pair_lines_as_pattern(
     )
 
     line_score = min(float(upper.score), float(lower_line.score))
-    if line_score < float(cfg.min_line_score):
-        return None
     upper_pivots = float(max(getattr(upper, "absorbed_pivot_count", getattr(upper, "pivot_count", 2.0)), 2.0))
     lower_pivots = float(max(getattr(lower_line, "absorbed_pivot_count", getattr(lower_line, "pivot_count", 2.0)), 2.0))
     if upper_pivots + lower_pivots < float(cfg.min_total_pivots):
@@ -2010,8 +2014,6 @@ def _update_row_outputs(
     Slot columns are the authoritative geometry data. Row-level fields are a
     convenience layer for strategy research:
 
-    - ``best_width_atr`` and ``compression_flag`` summarize the tightest active
-      compressive pattern.
     - ``best_position`` maps current close inside the best channel: 0 is at
       the lower rail, 1 is at the upper rail, below 0 means breakdown, and
       above 1 means breakout.
@@ -2020,9 +2022,7 @@ def _update_row_outputs(
       exported because strategies can derive those from ``*_upper`` and
       ``*_lower`` with their own tolerance policy.
     """
-    threshold = float(cfg.compression_flag_atr_threshold)
     for row in range(len(atr)):
-        compression_widths: list[float] = []
         best_channel: dict[str, float] | None = None
         scale = max(float(atr[row]), 1e-9)
         for slot in range(1, slot_count + 1):
@@ -2036,24 +2036,19 @@ def _update_row_outputs(
             width = upper - lower
             width_atr = width / scale
             if family_code in _COMPRESSIVE_FAMILY_CODES:
-                compression_widths.append(width_atr)
-            else:
-                line_score = float(out[f"slot_{slot}_line_score"][row])
-                containment = float(out[f"slot_{slot}_containment"][row])
-                candidate = {
-                    "upper": upper,
-                    "lower": lower,
-                    "width": width,
-                    "width_atr": width_atr,
-                    "line_score": line_score,
-                    "containment": containment,
-                }
-                if best_channel is None or _row_channel_rank_key(candidate) > _row_channel_rank_key(best_channel):
-                    best_channel = candidate
-        if compression_widths:
-            best = float(np.nanmin(np.asarray(compression_widths, dtype="float64")))
-            out["best_width_atr"][row] = best
-            out["compression_flag"][row] = bool(best <= threshold)
+                continue
+            line_score = float(out[f"slot_{slot}_line_score"][row])
+            containment = float(out[f"slot_{slot}_containment"][row])
+            candidate = {
+                "upper": upper,
+                "lower": lower,
+                "width": width,
+                "width_atr": width_atr,
+                "line_score": line_score,
+                "containment": containment,
+            }
+            if best_channel is None or _row_channel_rank_key(candidate) > _row_channel_rank_key(best_channel):
+                best_channel = candidate
         if best_channel is None or not np.isfinite(close[row]) or best_channel["width"] <= 0.0:
             continue
         position = (float(close[row]) - float(best_channel["lower"])) / max(float(best_channel["width"]), 1e-9)
@@ -2143,8 +2138,8 @@ def _validate_config(cfg: PatternGeometryV2Config) -> None:
         raise ValueError("min_containment must be between 0 and 1")
     if not 0.0 <= float(cfg.min_line_score) <= 1.0:
         raise ValueError("min_line_score must be between 0 and 1")
-    if float(cfg.compression_flag_atr_threshold) <= 0.0:
-        raise ValueError("compression_flag_atr_threshold must be positive")
+    if float(cfg.squeeze_active_width_atr) <= 0.0:
+        raise ValueError("squeeze_active_width_atr must be positive")
     if int(cfg.channel_min_pattern_bars) < 4:
         raise ValueError("channel_min_pattern_bars must be at least 4")
     if int(cfg.channel_max_pattern_bars) <= int(cfg.channel_min_pattern_bars):
