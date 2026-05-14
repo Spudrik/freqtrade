@@ -35,6 +35,23 @@ Global Context And News/Web Sentiment:
 - Ready for guarded research tests.
 - Do not treat them as standalone entry signals until forward-return and drawdown buckets prove stable usefulness.
 
+Orderbook Context Strategy / Hyperopt Guidance:
+- Treat Orderbook Context as real liquidity/order-flow context, not as an OHLCV pattern replacement. The recent review had low ready-row coverage, high risk-block activity, and roughly 2.2-2.45 second runtime for about 100 rows, so it is not ready for broad production-style strategy use.
+- First-pass strategy logic should hard-gate on `obctx_ready == 1` and `obctx_risk_block == 0` before trusting `obctx_score_long`, `obctx_score_short`, `obctx_state`, `obctx_book_bias_score`, `obctx_pressure_score`, `obctx_wall_score`, or wall/liquidity-zone levels.
+- First-pass hyperopt should focus on data quality and headline sensitivity: `min_coverage_ratio`, `pressure_threshold`, `wall_near_threshold_bps`, `microprice_scale_bps`, `spread_penalty_bps`, `short_window`, `medium_window`, and `persistence_window`.
+- Keep `include_diagnostics=False` and `include_market_context=False` in normal strategy tests. Turn diagnostics on only for root-cause plots of spread, imbalance, wall, comparison, and missing-coverage behavior.
+- Do not optimize market lists, comparison pairs, source timeframe, readiness, wall thresholds, and strategy entries in one pass. First prove that ready rows are frequent enough and that risk blocks behave sensibly.
+- `allow_missing=True` is useful for resilient research runs, but it should not silently convert missing order-book history into a valid neutral signal. Missing rows should remain blocked by readiness/risk gates.
+- Before treating this as a serious hyperopt surface, fix or account for the known query/runtime issue around `orderbook_metric_bars` scans and decide the compact strategy-facing output profile.
+
+Global Context Strategy / Hyperopt Guidance:
+- Treat Global Context as a broad regime/risk-appetite filter. The recent sample was fast but mostly neutral, so it should not be used as a standalone entry signal.
+- First-pass strategy logic should consume `gctx_score_latest`, `gctx_score_roll_medium`, `gctx_score_roll_long`, `gctx_score_delta_short`, `gctx_score_delta_medium`, `gctx_greed_persistence`, `gctx_fear_persistence`, `gctx_score_long`, `gctx_score_short`, `gctx_score_abs`, and `gctx_state`.
+- First-pass hyperopt should tune only regime timing and persistence: `availability_lag_candles`, `max_age_periods`, `short_window`, `medium_window`, `long_window`, `persistence_window`, `fear_threshold`, `greed_threshold`, and `persistence_min`.
+- Source-group selection is a second-pass research lever. Use `source_groups` only after checking which groups actually have data across the backtest window.
+- Use Global Context as a guard, stake modifier, or risk-off overlay first. Entry strategies should already work without it, then test whether global context improves drawdown, exposure, or tail-risk buckets.
+- Keep `allow_missing=False` for validation unless the strategy explicitly handles missing external context as unavailable rather than neutral.
+
 Pattern Indicators:
 - Pattern outputs are split by family rather than aggregated through the old Pattern Structure layer.
 - Geometry V2 emits triangle, wedge, compression, rectangle, ascending channel, and descending channel evidence through `pg2_*` slot columns plus row-level compression/channel context.
@@ -96,6 +113,15 @@ Reversal Pattern Strategy / Hyperopt Guidance:
 - First-pass head-and-shoulders hyperopt should focus on shape validity: `min_head_shoulders_quality`, `min_head_shoulders_shoulder_score`, `min_head_shoulders_time_balance_score`, `min_head_shoulders_neckline_score`, `min_head_shoulders_neckline_body_respect_ratio`, and `head_shoulders_max_neckline_slope_atr_per_bar`.
 - Shared pivot/scale controls such as `pivot_strength`, `pattern_pivot_strength`, `pivot_min_prominence_atr`, `peak_prior_impulse_min_efficiency`, and the dynamic body/ATR multipliers should be second-pass levers after plots show identity errors.
 - Keep `include_pattern_diagnostics=False` in normal runs. Enable diagnostics only when plotting proof lines, neckline scores, reaction scores, and pivot choices.
+
+Continuation Pattern Strategy / Hyperopt Guidance:
+- Treat Continuation output as flag/pennant identity and confirmation evidence only. The broad review showed useful pockets but weak asymmetry: flag shorts and pennant longs were better than flag longs and pennant shorts, and runtime was the highest among technical indicators.
+- First-pass strategy logic should consume `pat_flag_setup_present`, `pat_flag_pattern_present`, `pat_flag_pattern_confirmed`, `pat_flag_direction`, `pat_flag_indicator_score`, `pat_flag_confirmation_level`, `pat_flag_setup_invalidated`, plus the equivalent `pat_pennant_*` columns.
+- Confirmation is a boundary break, not a trade command. Strategy logic still owns trend context, entry timing, stops, target, volume confirmation, and higher-timeframe agreement.
+- First-pass hyperopt should focus on pattern identity and confirmation: `min_impulse_efficiency`, `min_impulse_dominance_score`, `min_pattern_bars`, `min_setup_retrace_ratio`, `max_setup_retrace_ratio`, `min_continuation_pole_score`, `min_continuation_containment_score`, `min_continuation_boundary_touch_score`, `min_continuation_boundary_span_score`, `min_flag_quality`, and `min_pennant_quality`.
+- Use the shape gates deliberately: `min_flag_shape_score`, `min_pennant_shape_score`, `min_pennant_boundary_span_score`, and `max_pennant_boundary_start_gap_ratio` are the main levers for rejecting noisy shapes that technically fit the rails.
+- Keep impulse scale multipliers and pivot controls as second-pass levers unless plots show missing obvious impulses or accepting weak impulses. These include `min_impulse_body_mult`, `min_impulse_atr_mult`, `min_impulse_volume_ratio`, `pivot_strength`, and `pattern_pivot_strength`.
+- Because runtime is expensive, test one side/family/timeframe at a time before broadening. Use diagnostics only for plotting proof lines and then turn `include_pattern_diagnostics` back off.
 
 Multi-Peak Strategy / Hyperopt Guidance:
 - Treat multi-peak output as pattern identity evidence only. A valid triple top/bottom is not a trade by itself; strategy logic still owns confirmation, direction, stop, target, timeframe weighting, and context filters.
