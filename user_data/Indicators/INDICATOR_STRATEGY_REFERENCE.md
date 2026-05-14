@@ -10,6 +10,10 @@ Volume Profile:
 - Strategies may use profile levels, value migration, HVN/LVN behaviour, entry triggers, hold evidence, and exit evidence as inputs.
 - The indicator must not own final trade, stop, target, stake, or risk decisions.
 
+Relative Strength:
+- Provides benchmark-relative pair strength, regime-aware long/short advice, hold/exit evidence, and caution context.
+- Strategies should treat it as pair selection, regime filtering, and position-management evidence rather than a complete setup.
+
 Pivot Foundation:
 - Canonical cleaned body pivots.
 - Shared pivot behaviour belongs here first.
@@ -17,7 +21,8 @@ Pivot Foundation:
 
 BOS/CHoCH Market Structure:
 - Consumes Pivot Foundation.
-- Provides strategy-facing pivot, structural-zone, market-structure, and context evidence.
+- Provides compact BOS/CHoCH event flags and structure state.
+- It does not emit structural zones, range position, invalidation levels, active swing levels, or raw pivot-score outputs in normal mode.
 - It does not detect channels.
 
 Trendline V2:
@@ -72,6 +77,10 @@ Pattern Indicators:
 - Multi-peak triple top/bottom identity uses dynamic level breach checks. `triple_level_breach_tolerance_mult` and `triple_level_breach_pivot_grace_bars` are strategy/hyperopt levers: tolerance controls body-level invalidation after reversal, while grace only forgives near-pivot fuzz before the interval has armed on a real opposing reaction.
 - Wolfe wave identity now requires meaningful internal reactions between P1-P2 and P3-P4. The `min_internal_reaction_*` levers are intended to reject shallow trend-drift structures that happen to form five alternating pivots.
 - Strategies decide whether to trade, wait for breakout, use `1h` as trigger data, treat channel rails as avoid/context evidence, or ignore lower-timeframe patterns.
+
+Coverage Scope:
+- Dedicated strategy/hyperopt sections cover the active strategy-facing indicators: Orderbook Context, Global Context, News/Web Sentiment, BOS/CHoCH, Trendline V2, Geometry V2, Volume Profile, Relative Strength, Reversal, Continuation, Multi-Peak, and Wolfe Wave.
+- `pivot_foundation.py`, `pattern_common.py`, and `__init__.py` are helper/foundation files. They should not get separate strategy hyperopt surfaces unless they start emitting standalone strategy columns.
 
 BOS/CHoCH Strategy / Hyperopt Guidance:
 - Treat BOS/CHoCH as market-structure event context, not as a complete setup. It says that a confirmed swing level broke; strategy logic must still decide whether that break is continuation, reversal, liquidity sweep, or late exhaustion.
