@@ -5,15 +5,18 @@ used as dataframe feature builders, not as standalone trading systems.
 
 ## Shared Score Contract
 
-Every base indicator should expose the same strategy-facing score contract:
+Most base indicators should expose the same strategy-facing score contract:
 
 - `*_score_long`: normalized `0..1` evidence favoring long setups.
 - `*_score_short`: normalized `0..1` evidence favoring short setups.
 - `*_score_abs`: normalized `0..1` evidence strength, direction ignored.
 - `*_state`: directional lean, usually `-1`, `0`, or `1`; this is not a score.
 
+Event-only indicators may deliberately omit scores when a score would be a
+blended guess rather than useful evidence. BOS/CHoCH is one such case.
+
 The scores are comparable in shape, not in proven predictive power. A high
-`vp_score_long` and a high `pa_score_long` both mean "this module sees long-side
+`vp_score_long` and a high `rs_score_long` both mean "this module sees long-side
 evidence," but real-data validation must decide which score is actually useful.
 
 ## Hyperopt Usage
@@ -27,12 +30,14 @@ scores have useful forward-return behavior before combining them.
 
 ## Module Meanings
 
-`pivot_based_market_structure.py`
+`pattern_bos_choch.py`
 
-Confirmed no-lookahead pivots, HH/HL/LH/LL, BOS/CHoCH, swing state, and channel
-targets. Long scores rise with constructive higher-high/higher-low structure,
-bullish breaks, upward channel bias, and available upside target space. Short
-scores mirror this for bearish structure.
+Confirmed no-lookahead pivots converted into BOS/CHoCH event context. It emits
+event flags, structure event code, directional structure state, and optional
+HH/HL/LH/LL sequence diagnostics. Swing levels, break levels, and invalidation
+levels are diagnostics-only because the event already proves the break occurred.
+It does not emit scores because BOS/CHoCH events need strategy context rather
+than a blended quality formula.
 
 `complex_trendline_projection.py`
 
@@ -79,7 +84,16 @@ close location suggest a stretched move.
 Pair performance relative to a supplied benchmark such as BTC, ETH, or a market
 proxy. Long scores rise when the pair is outperforming the benchmark across
 multiple windows and the relative-strength line is high in its rolling range.
-Short scores rise when it underperforms.
+Short scores rise when it underperforms, but that is treated as relative
+weakness rather than a standalone short-entry recommendation. The strategy-facing
+advice separates regime-aware actions:
+
+- `rs_go_long = 1` when relative strength is good and the benchmark/target
+  trend regime is not falling.
+- `rs_go_short = 1` when the benchmark is falling, the target is falling, and
+  the target is weak relative to the benchmark.
+- `rs_long_caution = 1` when relative strength is good but the benchmark is
+  falling. Treat this as caution, not a hard veto.
 
 `external_global_context_features.py`
 

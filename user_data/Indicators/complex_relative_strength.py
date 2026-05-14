@@ -21,9 +21,16 @@ class RelativeStrengthConfig:
       short/medium/long windows and the relative-strength line is high in its
       own rolling range.
     - ``*_score_short`` rises when the pair is underperforming the benchmark.
+      It is relative weakness, not a standalone short-entry recommendation.
     - ``*_score_abs`` is max(long, short). It measures benchmark-relative edge
       strength.
     - ``*_state`` is -1/0/1 directional lean and is not normalized.
+    - ``*_go_long`` is ``1`` only when relative strength supports new long
+      exposure and the benchmark/target regime is not falling.
+    - ``*_go_short`` is ``1`` only when the benchmark is falling, the target is
+      falling, and the target is weak relative to the benchmark.
+    - ``*_long_caution`` is ``1`` when relative strength is good but the
+      benchmark is falling. This is a warning, not a hard entry or exit.
 
     Typical benchmarks are BTC, ETH, or a market-index/informative pair. This is
     not confluence by itself; it is a base indicator for validating whether a
@@ -43,6 +50,12 @@ class RelativeStrengthConfig:
     context_full_margin: float = 0.12
     context_soft_min: float = 0.35
     context_soft_margin: float = 0.06
+    long_reference_min_z: float = 0.0
+    long_target_min_z: float = 0.0
+    short_reference_max_z: float = -0.35
+    short_target_max_z: float = 0.0
+    short_relative_max_z: float = -0.25
+    caution_reference_max_z: float = -0.35
     benchmark_close: str = "close"
     prefix: str = "rs"
 
@@ -65,6 +78,12 @@ def add_relative_strength(
     context_full_margin: float | None = None,
     context_soft_min: float | None = None,
     context_soft_margin: float | None = None,
+    long_reference_min_z: float | None = None,
+    long_target_min_z: float | None = None,
+    short_reference_max_z: float | None = None,
+    short_target_max_z: float | None = None,
+    short_relative_max_z: float | None = None,
+    caution_reference_max_z: float | None = None,
     benchmark_close: str | None = None,
     prefix: str | None = None,
 ) -> DataFrame:
@@ -85,6 +104,12 @@ def add_relative_strength(
         context_full_margin=context_full_margin,
         context_soft_min=context_soft_min,
         context_soft_margin=context_soft_margin,
+        long_reference_min_z=long_reference_min_z,
+        long_target_min_z=long_target_min_z,
+        short_reference_max_z=short_reference_max_z,
+        short_target_max_z=short_target_max_z,
+        short_relative_max_z=short_relative_max_z,
+        caution_reference_max_z=caution_reference_max_z,
         benchmark_close=benchmark_close,
         prefix=prefix,
     )
@@ -96,19 +121,22 @@ def add_relative_strength(
     close = _num(frame, "close").replace(0.0, np.nan)
     bench_close = _benchmark_close(benchmark, cfg, frame.index).replace(0.0, np.nan)
 
-    pair_ret_short = close.pct_change(cfg.short_window)
-    bench_ret_short = bench_close.pct_change(cfg.short_window)
-    pair_ret_medium = close.pct_change(cfg.medium_window)
-    bench_ret_medium = bench_close.pct_change(cfg.medium_window)
-    pair_ret_long = close.pct_change(cfg.long_window)
-    bench_ret_long = bench_close.pct_change(cfg.long_window)
+    pair_ret_short = close.pct_change(cfg.short_window, fill_method=None)
+    bench_ret_short = bench_close.pct_change(cfg.short_window, fill_method=None)
+    pair_ret_medium = close.pct_change(cfg.medium_window, fill_method=None)
+    bench_ret_medium = bench_close.pct_change(cfg.medium_window, fill_method=None)
+    pair_ret_long = close.pct_change(cfg.long_window, fill_method=None)
+    bench_ret_long = bench_close.pct_change(cfg.long_window, fill_method=None)
 
     rel_short = pair_ret_short - bench_ret_short
     rel_medium = pair_ret_medium - bench_ret_medium
     rel_long = pair_ret_long - bench_ret_long
     rs_line = close / bench_close
-    rs_slope = rs_line.pct_change(cfg.medium_window)
+    rs_slope = rs_line.pct_change(cfg.medium_window, fill_method=None)
     rs_percentile = _rolling_rank(rs_line, cfg.percentile_window)
+    target_trend_z = _trend_z(close, cfg.medium_window)
+    reference_trend_z = _trend_z(bench_close, cfg.medium_window)
+    relative_spread_z = _relative_spread_z(close, bench_close, cfg.medium_window)
 
     outperforming = rel_medium > cfg.min_outperformance
     underperforming = rel_medium < -cfg.min_outperformance
@@ -166,11 +194,11 @@ def add_relative_strength(
         & score_margin.ge(0.05),
         cfg.entry_cooldown_bars,
     )
-    entry_rotation_short = _dedupe_events(
+    weakness_rotation = _dedupe_events(
         cross_underperforming & short_score.ge(cfg.entry_score_min * 0.75) & weakening_slope,
         cfg.entry_cooldown_bars,
     )
-    entry_persistent_weakness_short = _dedupe_events(
+    persistent_weakness = _dedupe_events(
         rel_short.lt(-cfg.min_outperformance)
         & rel_medium.lt(-cfg.min_outperformance)
         & low_relative_range
@@ -178,10 +206,45 @@ def add_relative_strength(
         & score_margin.le(-0.05),
         cfg.entry_cooldown_bars,
     )
-    suggested_entry_long = entry_rotation_long | entry_persistent_strength_long
-    suggested_entry_short = entry_rotation_short | entry_persistent_weakness_short
-    hold_long = market_context.gt(0.0) & rs_slope.ge(0.0) & ~cross_underperforming
-    hold_short = market_context.lt(0.0) & rs_slope.le(0.0) & ~cross_outperforming
+    base_long_signal = entry_rotation_long | entry_persistent_strength_long
+    base_weakness_signal = weakness_rotation | persistent_weakness
+    reference_ok_for_long = reference_trend_z.ge(cfg.long_reference_min_z)
+    target_ok_for_long = target_trend_z.ge(cfg.long_target_min_z)
+    reference_falling_for_short = reference_trend_z.le(cfg.short_reference_max_z)
+    target_falling_for_short = target_trend_z.le(cfg.short_target_max_z)
+    relative_weak_for_short = relative_spread_z.le(cfg.short_relative_max_z)
+    go_long_signal = base_long_signal & reference_ok_for_long & target_ok_for_long
+    go_short_signal = (
+        base_weakness_signal
+        & reference_falling_for_short
+        & target_falling_for_short
+        & relative_weak_for_short
+    )
+    long_caution_signal = base_long_signal & reference_trend_z.le(cfg.caution_reference_max_z)
+    go_long = pd.Series(
+        np.where(go_long_signal, 1.0, 0.0),
+        index=frame.index,
+        dtype="float64",
+    )
+    go_short = pd.Series(
+        np.where(go_short_signal, 1.0, 0.0),
+        index=frame.index,
+        dtype="float64",
+    )
+    long_caution = pd.Series(
+        np.where(long_caution_signal, 1.0, 0.0),
+        index=frame.index,
+        dtype="float64",
+    )
+    hold_long = market_context.gt(0.0) & rs_slope.ge(0.0) & ~cross_underperforming & reference_ok_for_long & target_ok_for_long
+    hold_short = (
+        market_context.lt(0.0)
+        & rs_slope.le(0.0)
+        & ~cross_outperforming
+        & reference_falling_for_short
+        & target_falling_for_short
+        & relative_weak_for_short
+    )
     exit_long = _dedupe_events(
         cross_underperforming | (short_score.gt(long_score + 0.10) & weakening_slope),
         cfg.entry_cooldown_bars,
@@ -199,15 +262,19 @@ def add_relative_strength(
         f"{p}_ret_medium": rel_medium,
         f"{p}_ret_long": rel_long,
         f"{p}_percentile": rs_percentile,
+        f"{p}_target_trend_z": target_trend_z,
+        f"{p}_reference_trend_z": reference_trend_z,
+        f"{p}_relative_spread_z": relative_spread_z,
         f"{p}_outperforming": outperforming,
         f"{p}_underperforming": underperforming,
         f"{p}_market_context": market_context,
         f"{p}_entry_rotation_long": entry_rotation_long,
         f"{p}_entry_persistent_strength_long": entry_persistent_strength_long,
-        f"{p}_entry_rotation_short": entry_rotation_short,
-        f"{p}_entry_persistent_weakness_short": entry_persistent_weakness_short,
-        f"{p}_suggested_entry_long": suggested_entry_long,
-        f"{p}_suggested_entry_short": suggested_entry_short,
+        f"{p}_weakness_rotation": weakness_rotation,
+        f"{p}_persistent_weakness": persistent_weakness,
+        f"{p}_go_long": go_long,
+        f"{p}_go_short": go_short,
+        f"{p}_long_caution": long_caution,
         f"{p}_hold_long": hold_long,
         f"{p}_hold_short": hold_short,
         f"{p}_exit_long": exit_long,
@@ -237,6 +304,20 @@ def _rolling_rank(series: Series, window: int) -> Series:
     rolling_min = series.rolling(window, min_periods=2).min()
     rolling_max = series.rolling(window, min_periods=2).max()
     return _clip01((current - rolling_min) / (rolling_max - rolling_min).replace(0.0, np.nan))
+
+
+def _trend_z(close: Series, window: int) -> Series:
+    returns = close.pct_change(fill_method=None)
+    window_return = close.pct_change(window, fill_method=None)
+    volatility = returns.rolling(window, min_periods=max(3, window // 3)).std() * np.sqrt(float(window))
+    return window_return / volatility.replace(0.0, np.nan)
+
+
+def _relative_spread_z(close: Series, benchmark_close: Series, window: int) -> Series:
+    spread_return = close.pct_change(fill_method=None) - benchmark_close.pct_change(fill_method=None)
+    window_spread = close.pct_change(window, fill_method=None) - benchmark_close.pct_change(window, fill_method=None)
+    spread_volatility = spread_return.rolling(window, min_periods=max(3, window // 3)).std() * np.sqrt(float(window))
+    return window_spread / spread_volatility.replace(0.0, np.nan)
 
 
 def _resolve_config(config: RelativeStrengthConfig | None, **overrides: object) -> RelativeStrengthConfig:

@@ -26,7 +26,7 @@ Core rules:
 - Prefer raw evidence plus exposed tunable gates over opaque quality formulas.
 
 Priority indicator families:
-- Confirmed pivot structure and market-structure state.
+- Confirmed pivot structure and BOS/CHoCH market-structure events.
 - Trendline projection from pivots.
 - Volume profile, HVN/LVN, VAH/VAL, and POC migration.
 - Real order-book and liquidity behaviour.
@@ -36,7 +36,7 @@ Priority indicator families:
 
 Current foundation order:
 - `pivot_foundation.py` is the canonical cleaned-pivot source. Shared pivot behaviour belongs here first.
-- `pivot_based_market_structure.py` consumes the foundation for strategy-facing pivot, structural-zone, market-structure, and context evidence. It does not detect channels.
+- `pattern_bos_choch.py` consumes the foundation for focused break-of-structure and change-of-character event evidence. It does not score setups, draw channels, or create structural zones.
 - `complex_trendline_projection_v2.py` consumes the foundation and is the canonical ranked trendline generator.
 - All indicators may use `pivot_foundation.py` as input. They should not define their own pivots.
 - Active indicators should expose a public `add_*` entrypoint callable from strategy code with an OHLCV dataframe, timeframe, optional config, and overrides, returning the input dataframe plus output columns.
@@ -44,7 +44,7 @@ Current foundation order:
 - Trendlines are explicitly lines only. Shapes and patterns are defined exclusively in pattern-focused indicators.
 
 Current disposition:
-- Done/ready for strategy tests: Volume Profile, Pivot Foundation, Pivot-Based Market Structure, Trendline V2, and Orderbook Context.
+- Done/ready for strategy tests: Volume Profile, Pivot Foundation, BOS/CHoCH Structure, Trendline V2, and Orderbook Context.
 - Pattern detectors are split by family. Geometry v2 covers triangle, wedge, compression, and channel/rectangle context. Reversal, continuation, range, multi-peak, and Wolfe wave logic live in their own modules.
 - Work in progress: broad pattern regression review for hypertesting, plus any individual pattern files the user explicitly reopens.
 - Strategy-facing first-pass external context: Global Context and News/Web Sentiment. These are context/filter inputs only until forward-return and drawdown buckets prove stable usefulness.
