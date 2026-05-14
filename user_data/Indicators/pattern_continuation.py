@@ -16,7 +16,12 @@ from pattern_common import (
     _line_value_at,
     _nanmax_pair,
     _num,
+    _rolling_atr_pct,
+    _rolling_body_pct,
+    _rolling_pivot_prominence_pct,
     _slope_from_points,
+    _threshold_body_pct,
+    _threshold_scale_pct,
     _with_foundation_pivots,
 )
 
@@ -35,35 +40,54 @@ class PatternContinuationConfig:
     pivot_min_distance_pct: float = 0.0
     entry_cooldown_bars: int = 8
     impulse_window: int = 36
+    scale_window: int = 48
     min_impulse_bars: int = 3
-    min_impulse_pct: float = 0.055
+    min_impulse_body_mult: float = 5.0
+    min_impulse_atr_mult: float = 2.2
+    min_impulse_prominence_mult: float = 1.0
+    min_impulse_prior_range_mult: float = 1.25
     min_impulse_efficiency: float = 0.34
     min_impulse_volume_ratio: float = 1.05
-    impulse_extreme_tolerance_pct: float = 0.004
+    impulse_extreme_tolerance_body_mult: float = 0.35
+    impulse_extreme_tolerance_atr_mult: float = 0.18
     impulse_dominance_mult: float = 1.08
     min_impulse_dominance_score: float = 0.55
     min_impulse_break_score: float = 0.15
-    max_consolidation_drift_pct_per_bar: float = 0.00075
     max_impulse_extreme_age_bars: int = 32
     pattern_pivot_strength: int = 1
     min_pattern_bars: int = 4
-    min_setup_retrace_pct: float = 0.04
-    max_setup_retrace_pct: float = 0.65
-    max_setup_range_pct: float = 0.30
+    min_setup_retrace_ratio: float = 0.04
+    max_setup_retrace_ratio: float = 0.65
+    max_setup_range_body_mult: float = 10.0
+    max_setup_range_atr_mult: float = 6.0
+    max_setup_range_prominence_mult: float = 2.5
     max_setup_to_impulse_range_mult: float = 1.05
-    max_pattern_breakout_pct: float = 0.018
-    max_pattern_boundary_excursion_pct: float = 0.006
+    max_pattern_breakout_body_mult: float = 2.0
+    max_pattern_breakout_atr_mult: float = 0.85
+    max_pattern_breakout_prominence_mult: float = 0.35
+    max_pattern_boundary_excursion_body_mult: float = 0.85
+    max_pattern_boundary_excursion_atr_mult: float = 0.35
+    max_pattern_boundary_excursion_prominence_mult: float = 0.15
     pattern_side_dominance_mult: float = 1.03
     min_pattern_side_pivots: int = 2
-    min_boundary_slope_pct_per_bar: float = 0.00018
-    max_flag_counter_slope_pct_per_bar: float = 0.0008
-    parallel_slope_tolerance_pct_per_bar: float = 0.0008
+    min_boundary_slope_scale_mult: float = 0.15
+    max_flag_counter_slope_scale_mult: float = 0.75
+    max_consolidation_drift_scale_mult: float = 0.65
+    parallel_slope_tolerance_scale_mult: float = 0.70
+    confirmation_break_body_mult: float = 0.45
+    confirmation_break_atr_mult: float = 0.20
+    confirmation_break_prominence_mult: float = 0.10
+    min_confirmation_break_score: float = 1.0
     min_continuation_pole_score: float = 0.50
     min_continuation_retrace_score: float = 0.18
     min_continuation_containment_score: float = 0.62
     min_continuation_terminal_score: float = 0.12
     min_continuation_boundary_touch_score: float = 0.58
     min_continuation_boundary_span_score: float = 0.35
+    min_flag_shape_score: float = 0.0
+    min_pennant_shape_score: float = 0.0
+    min_pennant_boundary_span_score: float = 0.42
+    max_pennant_boundary_start_gap_ratio: float = 0.45
     min_flag_quality: float = 0.72
     min_pennant_quality: float = 0.72
     include_pattern_diagnostics: bool = False
@@ -118,9 +142,22 @@ def _resolve_config(
     unknown = sorted(set(clean).difference(valid))
     if unknown:
         raise TypeError(f"Unknown continuation config override(s): {', '.join(unknown)}")
+    timeframe_defaults = {} if config is not None else _timeframe_continuation_defaults(timeframe)
     if "timeframe" not in clean:
         clean["timeframe"] = str(timeframe)
-    return replace(cfg, **clean) if clean else cfg
+    resolved = {**timeframe_defaults, **clean}
+    return replace(cfg, **resolved) if resolved else cfg
+
+
+def _timeframe_continuation_defaults(timeframe: str) -> dict[str, object]:
+    tf = str(timeframe).lower()
+    if tf in {"1h", "60m"}:
+        return {
+            "min_pattern_bars": 7,
+            "min_flag_shape_score": 0.35,
+            "min_pennant_shape_score": 0.35,
+        }
+    return {}
 
 
 def _validate_ohlcv(dataframe: DataFrame) -> None:
@@ -178,6 +215,34 @@ def _flag_pennant_columns(
         flag_quality_short,
         pennant_quality_short,
     )
+    flag_confirmed_long = _dedupe_continuation_events(
+        pd.Series(anchored["flag_confirmed_long"], index=frame.index, dtype="bool"),
+        int(cfg.entry_cooldown_bars),
+    )
+    flag_confirmed_short = _dedupe_continuation_events(
+        pd.Series(anchored["flag_confirmed_short"], index=frame.index, dtype="bool"),
+        int(cfg.entry_cooldown_bars),
+    )
+    pennant_confirmed_long = _dedupe_continuation_events(
+        pd.Series(anchored["pennant_confirmed_long"], index=frame.index, dtype="bool"),
+        int(cfg.entry_cooldown_bars),
+    )
+    pennant_confirmed_short = _dedupe_continuation_events(
+        pd.Series(anchored["pennant_confirmed_short"], index=frame.index, dtype="bool"),
+        int(cfg.entry_cooldown_bars),
+    )
+    flag_confirmed_long, pennant_confirmed_long = _resolve_continuation_name_conflicts(
+        flag_confirmed_long,
+        pennant_confirmed_long,
+        flag_quality_long,
+        pennant_quality_long,
+    )
+    flag_confirmed_short, pennant_confirmed_short = _resolve_continuation_name_conflicts(
+        flag_confirmed_short,
+        pennant_confirmed_short,
+        flag_quality_short,
+        pennant_quality_short,
+    )
 
     columns = {
         f"{p}_impulse_up_pct": impulse_up_pct,
@@ -190,6 +255,8 @@ def _flag_pennant_columns(
         f"{p}_impulse_end_index_short": pd.Series(anchored["impulse_end_index_short"], index=frame.index, dtype="float64"),
         f"{p}_impulse_efficiency_long": pd.Series(anchored["impulse_efficiency_long"], index=frame.index, dtype="float64"),
         f"{p}_impulse_efficiency_short": pd.Series(anchored["impulse_efficiency_short"], index=frame.index, dtype="float64"),
+        f"{p}_impulse_prior_range_score_long": pd.Series(anchored["impulse_prior_range_score_long"], index=frame.index, dtype="float64"),
+        f"{p}_impulse_prior_range_score_short": pd.Series(anchored["impulse_prior_range_score_short"], index=frame.index, dtype="float64"),
         f"{p}_impulse_dominance_long": pd.Series(anchored["impulse_dominance_long"], index=frame.index, dtype="float64"),
         f"{p}_impulse_dominance_short": pd.Series(anchored["impulse_dominance_short"], index=frame.index, dtype="float64"),
         f"{p}_impulse_break_score_long": pd.Series(anchored["impulse_break_score_long"], index=frame.index, dtype="float64"),
@@ -204,10 +271,14 @@ def _flag_pennant_columns(
         f"{p}_continuation_containment_score_short": pd.Series(anchored["continuation_containment_score_short"], index=frame.index, dtype="float64"),
         f"{p}_continuation_terminal_score_long": pd.Series(anchored["continuation_terminal_score_long"], index=frame.index, dtype="float64"),
         f"{p}_continuation_terminal_score_short": pd.Series(anchored["continuation_terminal_score_short"], index=frame.index, dtype="float64"),
+        f"{p}_continuation_breakout_score_long": pd.Series(anchored["continuation_breakout_score_long"], index=frame.index, dtype="float64"),
+        f"{p}_continuation_breakout_score_short": pd.Series(anchored["continuation_breakout_score_short"], index=frame.index, dtype="float64"),
         f"{p}_continuation_boundary_touch_score_long": pd.Series(anchored["continuation_boundary_touch_score_long"], index=frame.index, dtype="float64"),
         f"{p}_continuation_boundary_touch_score_short": pd.Series(anchored["continuation_boundary_touch_score_short"], index=frame.index, dtype="float64"),
         f"{p}_continuation_boundary_span_score_long": pd.Series(anchored["continuation_boundary_span_score_long"], index=frame.index, dtype="float64"),
         f"{p}_continuation_boundary_span_score_short": pd.Series(anchored["continuation_boundary_span_score_short"], index=frame.index, dtype="float64"),
+        f"{p}_continuation_boundary_start_gap_ratio_long": pd.Series(anchored["continuation_boundary_start_gap_ratio_long"], index=frame.index, dtype="float64"),
+        f"{p}_continuation_boundary_start_gap_ratio_short": pd.Series(anchored["continuation_boundary_start_gap_ratio_short"], index=frame.index, dtype="float64"),
         f"{p}_flag_shape_score_long": pd.Series(anchored["flag_shape_score_long"], index=frame.index, dtype="float64"),
         f"{p}_flag_shape_score_short": pd.Series(anchored["flag_shape_score_short"], index=frame.index, dtype="float64"),
         f"{p}_pennant_shape_score_long": pd.Series(anchored["pennant_shape_score_long"], index=frame.index, dtype="float64"),
@@ -234,6 +305,8 @@ def _flag_pennant_columns(
             flag_setup_short,
             flag_quality_long,
             flag_quality_short,
+            flag_confirmed_long,
+            flag_confirmed_short,
             anchored,
         ),
         **_continuation_strategy_columns(
@@ -244,16 +317,22 @@ def _flag_pennant_columns(
             pennant_setup_short,
             pennant_quality_long,
             pennant_quality_short,
+            pennant_confirmed_long,
+            pennant_confirmed_short,
             anchored,
         ),
     }
     if bool(getattr(cfg, "include_pattern_diagnostics", False)):
+        flag_review_long = (flag_setup_long | flag_confirmed_long).fillna(False)
+        flag_review_short = (flag_setup_short | flag_confirmed_short).fillna(False)
+        pennant_review_long = (pennant_setup_long | pennant_confirmed_long).fillna(False)
+        pennant_review_short = (pennant_setup_short | pennant_confirmed_short).fillna(False)
         columns.update(
             {
-                **_continuation_proof_columns(frame.index, f"{p}_flag_long", flag_setup_long, anchored, "long"),
-                **_continuation_proof_columns(frame.index, f"{p}_flag_short", flag_setup_short, anchored, "short"),
-                **_continuation_proof_columns(frame.index, f"{p}_pennant_long", pennant_setup_long, anchored, "long"),
-                **_continuation_proof_columns(frame.index, f"{p}_pennant_short", pennant_setup_short, anchored, "short"),
+                **_continuation_proof_columns(frame.index, f"{p}_flag_long", flag_review_long, anchored, "long"),
+                **_continuation_proof_columns(frame.index, f"{p}_flag_short", flag_review_short, anchored, "short"),
+                **_continuation_proof_columns(frame.index, f"{p}_pennant_long", pennant_review_long, anchored, "long"),
+                **_continuation_proof_columns(frame.index, f"{p}_pennant_short", pennant_review_short, anchored, "short"),
             }
         )
     return columns
@@ -267,22 +346,35 @@ def _continuation_strategy_columns(
     short_mask: Series,
     long_quality: Series,
     short_quality: Series,
+    long_confirmed: Series,
+    short_confirmed: Series,
     anchored: dict[str, np.ndarray],
 ) -> dict[str, Series]:
     """Return the compact strategy-facing continuation contract.
 
     Long and short internals are still scored separately because the geometry
     is asymmetric after an impulse. The strategy-facing output compresses that
-    into one pattern flag, one direction, one score, and the active upper/lower
-    consolidation rails. ``direction`` is shape direction, not a trade command:
-    +1 means bullish-continuation structure, -1 means bearish-continuation
-    structure, and 0 means no active pattern on that row.
+    into one setup flag, one direction, one score, and the active upper/lower
+    consolidation rails. The legacy ``pattern_present`` column remains as an
+    alias for setup presence. Confirmation is a separate boundary break, not a
+    trade command.
     """
 
-    long_active = pd.Series(long_mask, index=index).fillna(False).astype("bool")
-    short_active = pd.Series(short_mask, index=index).fillna(False).astype("bool")
+    long_setup = pd.Series(long_mask, index=index).fillna(False).astype("bool")
+    short_setup = pd.Series(short_mask, index=index).fillna(False).astype("bool")
+    long_breakout = pd.Series(long_confirmed, index=index).fillna(False).astype("bool")
+    short_breakdown = pd.Series(short_confirmed, index=index).fillna(False).astype("bool")
+    confirmed = long_breakout | short_breakdown
+    long_active = long_setup | long_breakout
+    short_active = short_setup | short_breakdown
     present = long_active | short_active
+    setup_present = long_setup | short_setup
     direction = pd.Series(np.select([long_active, short_active], [1, -1], default=0), index=index, dtype="int8")
+    confirmed_direction = pd.Series(
+        np.select([long_breakout, short_breakdown], [1, -1], default=0),
+        index=index,
+        dtype="int8",
+    )
     score = pd.Series(
         np.where(long_active, long_quality, np.where(short_active, short_quality, 0.0)),
         index=index,
@@ -292,12 +384,30 @@ def _continuation_strategy_columns(
     upper_short = pd.Series(anchored["proof_line2_y2_short"], index=index, dtype="float64").where(short_active)
     lower_long = pd.Series(anchored["proof_line3_y2_long"], index=index, dtype="float64").where(long_active)
     lower_short = pd.Series(anchored["proof_line3_y2_short"], index=index, dtype="float64").where(short_active)
+    confirmation_level_long = pd.Series(anchored["proof_line2_y2_long"], index=index, dtype="float64").where(long_breakout)
+    confirmation_level_short = pd.Series(anchored["proof_line3_y2_short"], index=index, dtype="float64").where(short_breakdown)
+    close = pd.Series(anchored["close"], index=index, dtype="float64")
+    breakout_above_upper = present & close.gt(upper_long.combine_first(upper_short))
+    breakdown_below_lower = present & close.lt(lower_long.combine_first(lower_short))
+    invalidated = (long_setup & breakdown_below_lower) | (short_setup & breakout_above_upper)
+    invalidation_level = lower_long.where(long_setup & breakdown_below_lower).combine_first(
+        upper_short.where(short_setup & breakout_above_upper)
+    )
     return {
+        f"{prefix}_{name}_setup_present": setup_present,
         f"{prefix}_{name}_pattern_present": present,
+        f"{prefix}_{name}_pattern_confirmed": confirmed,
         f"{prefix}_{name}_direction": direction,
         f"{prefix}_{name}_indicator_score": score.where(present, 0.0),
         f"{prefix}_{name}_upper": upper_long.combine_first(upper_short),
         f"{prefix}_{name}_lower": lower_long.combine_first(lower_short),
+        f"{prefix}_{name}_breakout_above_upper": breakout_above_upper,
+        f"{prefix}_{name}_breakdown_below_lower": breakdown_below_lower,
+        f"{prefix}_{name}_breakout_confirmed": confirmed,
+        f"{prefix}_{name}_confirmed_direction": confirmed_direction,
+        f"{prefix}_{name}_confirmation_level": confirmation_level_long.combine_first(confirmation_level_short),
+        f"{prefix}_{name}_setup_invalidated": invalidated,
+        f"{prefix}_{name}_invalidation_level": invalidation_level,
     }
 
 
@@ -336,6 +446,9 @@ def _anchored_flag_pennant_arrays(frame: DataFrame, cfg: PatternContinuationConf
     low_pivot = _combine_sparse_pivots(low_pivot, low_index, pattern_low_pivot)
     high_index = _combine_sparse_indexes(high_pivot, high_index, pattern_high_index)
     low_index = _combine_sparse_indexes(low_pivot, low_index, pattern_low_index)
+    body_pct = _rolling_body_pct(frame, int(cfg.scale_window))
+    atr_pct = _rolling_atr_pct(frame, int(cfg.scale_window))
+    prominence_pct = _rolling_pivot_prominence_pct(frame, pp, int(cfg.scale_window))
 
     out = _empty_pattern_arrays(rows)
     for row in range(rows):
@@ -350,6 +463,9 @@ def _anchored_flag_pennant_arrays(frame: DataFrame, cfg: PatternContinuationConf
             low_pivot,
             high_index,
             low_index,
+            body_pct,
+            atr_pct,
+            prominence_pct,
             cfg,
         )
         short_metrics = _best_anchored_pattern_for_side(
@@ -363,6 +479,9 @@ def _anchored_flag_pennant_arrays(frame: DataFrame, cfg: PatternContinuationConf
             low_pivot,
             high_index,
             low_index,
+            body_pct,
+            atr_pct,
+            prominence_pct,
             cfg,
         )
         _write_side_metrics(out, row, long_metrics, "long")
@@ -375,11 +494,15 @@ def _anchored_flag_pennant_arrays(frame: DataFrame, cfg: PatternContinuationConf
             if long_best >= short_best * dominance:
                 out["flag_setup_short"][row] = False
                 out["pennant_setup_short"][row] = False
+                out["flag_confirmed_short"][row] = False
+                out["pennant_confirmed_short"][row] = False
                 out["flag_quality_short"][row] = 0.0
                 out["pennant_quality_short"][row] = 0.0
             elif short_best >= long_best * dominance:
                 out["flag_setup_long"][row] = False
                 out["pennant_setup_long"][row] = False
+                out["flag_confirmed_long"][row] = False
+                out["pennant_confirmed_long"][row] = False
                 out["flag_quality_long"][row] = 0.0
                 out["pennant_quality_long"][row] = 0.0
             else:
@@ -387,6 +510,10 @@ def _anchored_flag_pennant_arrays(frame: DataFrame, cfg: PatternContinuationConf
                 out["pennant_setup_long"][row] = False
                 out["flag_setup_short"][row] = False
                 out["pennant_setup_short"][row] = False
+                out["flag_confirmed_long"][row] = False
+                out["pennant_confirmed_long"][row] = False
+                out["flag_confirmed_short"][row] = False
+                out["pennant_confirmed_short"][row] = False
                 out["flag_quality_long"][row] = 0.0
                 out["pennant_quality_long"][row] = 0.0
                 out["flag_quality_short"][row] = 0.0
@@ -418,6 +545,7 @@ def _resolve_continuation_name_conflicts(
 
 def _empty_pattern_arrays(rows: int) -> dict[str, np.ndarray]:
     floats = {
+        "close",
         "impulse_up_pct",
         "impulse_down_pct",
         "impulse_age_long",
@@ -428,6 +556,8 @@ def _empty_pattern_arrays(rows: int) -> dict[str, np.ndarray]:
         "impulse_end_index_short",
         "impulse_efficiency_long",
         "impulse_efficiency_short",
+        "impulse_prior_range_score_long",
+        "impulse_prior_range_score_short",
         "impulse_dominance_long",
         "impulse_dominance_short",
         "impulse_break_score_long",
@@ -456,10 +586,14 @@ def _empty_pattern_arrays(rows: int) -> dict[str, np.ndarray]:
         "continuation_containment_score_short",
         "continuation_terminal_score_long",
         "continuation_terminal_score_short",
+        "continuation_breakout_score_long",
+        "continuation_breakout_score_short",
         "continuation_boundary_touch_score_long",
         "continuation_boundary_touch_score_short",
         "continuation_boundary_span_score_long",
         "continuation_boundary_span_score_short",
+        "continuation_boundary_start_gap_ratio_long",
+        "continuation_boundary_start_gap_ratio_short",
         "flag_shape_score_long",
         "flag_shape_score_short",
         "pennant_shape_score_long",
@@ -474,12 +608,17 @@ def _empty_pattern_arrays(rows: int) -> dict[str, np.ndarray]:
             for field in ("x1", "y1", "x2", "y2"):
                 floats.add(f"proof_line{line_number}_{field}_{side}")
     out = {name: np.full(rows, np.nan, dtype="float64") for name in floats}
+    out["close"] = np.full(rows, np.nan, dtype="float64")
     out.update(
         {
             "flag_setup_long": np.zeros(rows, dtype=bool),
             "flag_setup_short": np.zeros(rows, dtype=bool),
             "pennant_setup_long": np.zeros(rows, dtype=bool),
             "pennant_setup_short": np.zeros(rows, dtype=bool),
+            "flag_confirmed_long": np.zeros(rows, dtype=bool),
+            "flag_confirmed_short": np.zeros(rows, dtype=bool),
+            "pennant_confirmed_long": np.zeros(rows, dtype=bool),
+            "pennant_confirmed_short": np.zeros(rows, dtype=bool),
         }
     )
     return out
@@ -488,10 +627,12 @@ def _empty_pattern_arrays(rows: int) -> dict[str, np.ndarray]:
 def _empty_side_metrics() -> dict[str, float | bool]:
     metrics: dict[str, float | bool] = {
         "impulse_pct": 0.0,
+        "current_close": np.nan,
         "age": np.nan,
         "impulse_start": np.nan,
         "impulse_end": np.nan,
         "impulse_efficiency": 0.0,
+        "impulse_prior_range_score": 0.0,
         "impulse_dominance": 0.0,
         "impulse_break_score": 0.0,
         "volume_score": 0.0,
@@ -509,17 +650,56 @@ def _empty_side_metrics() -> dict[str, float | bool]:
         "terminal_score": 0.0,
         "boundary_touch_score": 0.0,
         "boundary_span_score": 0.0,
+        "boundary_start_gap_ratio": 1.0,
         "flag_shape_score": 0.0,
         "pennant_shape_score": 0.0,
         "flag_quality": 0.0,
         "pennant_quality": 0.0,
         "flag_setup": False,
         "pennant_setup": False,
+        "breakout_score": 0.0,
+        "confirmed": False,
     }
     for line_number in (1, 2, 3):
         for field in ("x1", "y1", "x2", "y2"):
             metrics[f"proof_line{line_number}_{field}"] = np.nan
     return metrics
+
+
+def _opposite_impulse_by_end(
+    search_start: int,
+    latest_end: int,
+    direction: int,
+    body_high: np.ndarray,
+    body_low: np.ndarray,
+) -> np.ndarray:
+    start = max(int(search_start), 0)
+    stop = min(int(latest_end), len(body_high) - 1)
+    if stop < start:
+        return np.zeros(0, dtype="float64")
+    out = np.zeros(stop - start + 1, dtype="float64")
+    best = 0.0
+    if direction > 0:
+        peak = -np.inf
+        for offset, row in enumerate(range(start, stop + 1)):
+            high_value = body_high[row]
+            low_value = body_low[row]
+            if np.isfinite(high_value):
+                peak = max(peak, float(high_value))
+            if np.isfinite(low_value) and np.isfinite(peak) and peak > 0.0:
+                best = max(best, (peak - float(low_value)) / max(abs(peak), 1e-9))
+            out[offset] = best
+        return out
+    trough = np.inf
+    for offset, row in enumerate(range(start, stop + 1)):
+        high_value = body_high[row]
+        low_value = body_low[row]
+        if np.isfinite(low_value):
+            trough = min(trough, float(low_value))
+        if np.isfinite(high_value) and np.isfinite(trough) and trough > 0.0:
+            best = max(best, (float(high_value) - trough) / max(abs(trough), 1e-9))
+        out[offset] = best
+    return out
 
 
 def _best_anchored_pattern_for_side(
@@ -533,6 +713,9 @@ def _best_anchored_pattern_for_side(
     low_pivot: np.ndarray,
     high_index: np.ndarray,
     low_index: np.ndarray,
+    body_pct: np.ndarray,
+    atr_pct: np.ndarray,
+    prominence_pct: np.ndarray,
     cfg: PatternContinuationConfig,
 ) -> dict[str, float | bool]:
     best = _empty_side_metrics()
@@ -543,61 +726,92 @@ def _best_anchored_pattern_for_side(
     search_start = max(0, row - int(cfg.impulse_window) + 1)
     max_age = int(cfg.max_impulse_extreme_age_bars)
     earliest_end = max(search_start + 1, row - max_age)
-    for impulse_end in range(earliest_end, latest_end + 1):
-        if direction > 0:
-            start_slice = body_low[search_start : impulse_end + 1]
-            if not np.isfinite(start_slice).any() or not np.isfinite(body_high[impulse_end]):
+    body_ref, atr_ref, prominence_ref = _continuation_scale_refs(body_pct, atr_pct, prominence_pct, row)
+    impulse_threshold = _continuation_dynamic_threshold(
+        body_ref,
+        atr_ref,
+        prominence_ref,
+        float(cfg.min_impulse_body_mult),
+        float(cfg.min_impulse_atr_mult),
+        float(cfg.min_impulse_prominence_mult),
+    )
+    extreme_tolerance = _continuation_dynamic_threshold(
+        body_ref,
+        atr_ref,
+        prominence_ref,
+        float(cfg.impulse_extreme_tolerance_body_mult),
+        float(cfg.impulse_extreme_tolerance_atr_mult),
+        0.0,
+    )
+    opposite_by_end = _opposite_impulse_by_end(search_start, latest_end, direction, body_high, body_low)
+    if direction > 0:
+        impulse_start = -1
+        start_price = np.inf
+        for impulse_end in range(search_start, latest_end + 1):
+            candidate_start = body_low[impulse_end]
+            if np.isfinite(candidate_start) and candidate_start < start_price:
+                start_price = float(candidate_start)
+                impulse_start = int(impulse_end)
+            if impulse_end < earliest_end or impulse_start < 0 or not np.isfinite(body_high[impulse_end]):
                 continue
-            impulse_start = search_start + int(np.nanargmin(start_slice))
-            start_price = float(body_low[impulse_start])
             end_price = float(body_high[impulse_end])
             if impulse_start >= impulse_end or start_price <= 0.0 or end_price <= start_price:
                 continue
             leg_extreme = float(np.nanmax(body_high[impulse_start : impulse_end + 1]))
-            if end_price < leg_extreme * (1.0 - float(cfg.impulse_extreme_tolerance_pct)):
+            if end_price < leg_extreme - abs(leg_extreme) * extreme_tolerance:
                 continue
-        else:
-            start_slice = body_high[search_start : impulse_end + 1]
-            if not np.isfinite(start_slice).any() or not np.isfinite(body_low[impulse_end]):
-                continue
-            impulse_start = search_start + int(np.nanargmax(start_slice))
-            start_price = float(body_high[impulse_start])
-            end_price = float(body_low[impulse_end])
-            if impulse_start >= impulse_end or end_price <= 0.0 or start_price <= end_price:
-                continue
-            leg_extreme = float(np.nanmin(body_low[impulse_start : impulse_end + 1]))
-            if end_price > leg_extreme * (1.0 + float(cfg.impulse_extreme_tolerance_pct)):
-                continue
+            opposite_impulse_pct = float(opposite_by_end[impulse_end - search_start])
+            metrics = _score_impulse_candidate(
+                row,
+                direction,
+                impulse_start,
+                impulse_end,
+                start_price,
+                end_price,
+                opposite_impulse_pct,
+                impulse_threshold,
+                body_high,
+                body_low,
+                close,
+                volume,
+                high_pivot,
+                low_pivot,
+                high_index,
+                low_index,
+                body_pct,
+                atr_pct,
+                prominence_pct,
+                cfg,
+            )
+            if max(metrics["flag_quality"], metrics["pennant_quality"]) > max(best["flag_quality"], best["pennant_quality"]):
+                best = metrics
+        return best
 
-        if impulse_end - impulse_start < int(cfg.min_impulse_bars):
+    impulse_start = -1
+    start_price = -np.inf
+    for impulse_end in range(search_start, latest_end + 1):
+        candidate_start = body_high[impulse_end]
+        if np.isfinite(candidate_start) and candidate_start > start_price:
+            start_price = float(candidate_start)
+            impulse_start = int(impulse_end)
+        if impulse_end < earliest_end or impulse_start < 0 or not np.isfinite(body_low[impulse_end]):
             continue
-        impulse_range = abs(end_price - start_price)
-        impulse_pct = impulse_range / max(abs(start_price), 1e-9)
-        if impulse_pct < float(cfg.min_impulse_pct):
+        end_price = float(body_low[impulse_end])
+        if impulse_start >= impulse_end or end_price <= 0.0 or start_price <= end_price:
             continue
-        impulse_efficiency = _impulse_efficiency(close, impulse_start, impulse_end, impulse_range)
-        if impulse_efficiency < float(cfg.min_impulse_efficiency):
+        leg_extreme = float(np.nanmin(body_low[impulse_start : impulse_end + 1]))
+        if end_price > leg_extreme + abs(leg_extreme) * extreme_tolerance:
             continue
-        opposite_impulse_pct = _opposite_impulse_pct(search_start, impulse_end, direction, body_high, body_low)
-        dominance_score = _impulse_dominance_score(impulse_pct, opposite_impulse_pct, float(cfg.impulse_dominance_mult))
-        if dominance_score < float(cfg.min_impulse_dominance_score):
-            continue
-        break_score = _impulse_break_score(search_start, impulse_start, direction, end_price, body_high, body_low, impulse_range)
-        if break_score < float(cfg.min_impulse_break_score):
-            continue
-
-        metrics = _score_anchored_pattern(
+        opposite_impulse_pct = float(opposite_by_end[impulse_end - search_start])
+        metrics = _score_impulse_candidate(
             row,
             direction,
             impulse_start,
             impulse_end,
             start_price,
             end_price,
-            impulse_range,
-            impulse_pct,
-            impulse_efficiency,
-            dominance_score,
-            break_score,
+            opposite_impulse_pct,
+            impulse_threshold,
             body_high,
             body_low,
             close,
@@ -606,12 +820,91 @@ def _best_anchored_pattern_for_side(
             low_pivot,
             high_index,
             low_index,
+            body_pct,
+            atr_pct,
+            prominence_pct,
             cfg,
         )
         if max(metrics["flag_quality"], metrics["pennant_quality"]) > max(best["flag_quality"], best["pennant_quality"]):
             best = metrics
 
     return best
+
+
+def _score_impulse_candidate(
+    row: int,
+    direction: int,
+    impulse_start: int,
+    impulse_end: int,
+    start_price: float,
+    end_price: float,
+    opposite_impulse_pct: float,
+    impulse_threshold: float,
+    body_high: np.ndarray,
+    body_low: np.ndarray,
+    close: np.ndarray,
+    volume: np.ndarray,
+    high_pivot: np.ndarray,
+    low_pivot: np.ndarray,
+    high_index: np.ndarray,
+    low_index: np.ndarray,
+    body_pct: np.ndarray,
+    atr_pct: np.ndarray,
+    prominence_pct: np.ndarray,
+    cfg: PatternContinuationConfig,
+) -> dict[str, float | bool]:
+    if impulse_end - impulse_start < int(cfg.min_impulse_bars):
+        return _empty_side_metrics()
+    impulse_range = abs(end_price - start_price)
+    impulse_pct = impulse_range / max(abs(start_price), 1e-9)
+    if impulse_pct < impulse_threshold:
+        return _empty_side_metrics()
+    prior_range_score = _impulse_prior_range_score(
+        int(impulse_start),
+        float(impulse_range),
+        body_high,
+        body_low,
+        int(cfg.scale_window),
+        float(cfg.min_impulse_prior_range_mult),
+    )
+    if prior_range_score < 1.0:
+        return _empty_side_metrics()
+    impulse_efficiency = _impulse_efficiency(close, impulse_start, impulse_end, impulse_range)
+    if impulse_efficiency < float(cfg.min_impulse_efficiency):
+        return _empty_side_metrics()
+    dominance_score = _impulse_dominance_score(impulse_pct, opposite_impulse_pct, float(cfg.impulse_dominance_mult))
+    if dominance_score < float(cfg.min_impulse_dominance_score):
+        return _empty_side_metrics()
+    break_score = _impulse_break_score(search_start=max(0, row - int(cfg.impulse_window) + 1), impulse_start=impulse_start, direction=direction, end_price=end_price, body_high=body_high, body_low=body_low, impulse_range=impulse_range)
+    if break_score < float(cfg.min_impulse_break_score):
+        return _empty_side_metrics()
+    return _score_anchored_pattern(
+        row,
+        direction,
+        impulse_start,
+        impulse_end,
+        start_price,
+        end_price,
+        impulse_range,
+        impulse_pct,
+        impulse_efficiency,
+        prior_range_score,
+        dominance_score,
+        break_score,
+        body_high,
+        body_low,
+        close,
+        volume,
+        high_pivot,
+        low_pivot,
+        high_index,
+        low_index,
+        body_pct,
+        atr_pct,
+        prominence_pct,
+        impulse_threshold,
+        cfg,
+    )
 
 
 def _score_anchored_pattern(
@@ -624,6 +917,7 @@ def _score_anchored_pattern(
     impulse_range: float,
     impulse_pct: float,
     impulse_efficiency: float,
+    impulse_prior_range_score: float,
     impulse_dominance: float,
     impulse_break_score: float,
     body_high: np.ndarray,
@@ -634,6 +928,10 @@ def _score_anchored_pattern(
     low_pivot: np.ndarray,
     high_index: np.ndarray,
     low_index: np.ndarray,
+    body_pct: np.ndarray,
+    atr_pct: np.ndarray,
+    prominence_pct: np.ndarray,
+    impulse_threshold: float,
     cfg: PatternContinuationConfig,
 ) -> dict[str, float | bool]:
     metrics = _empty_side_metrics()
@@ -646,26 +944,52 @@ def _score_anchored_pattern(
     seg_low = body_low[seg_start : row + 1]
     if len(seg_high) == 0 or not np.isfinite(seg_high).any() or not np.isfinite(seg_low).any():
         return metrics
+    body_ref, atr_ref, prominence_ref = _continuation_scale_refs(body_pct, atr_pct, prominence_pct, row)
+    setup_range_threshold = _continuation_dynamic_threshold(
+        body_ref,
+        atr_ref,
+        prominence_ref,
+        float(cfg.max_setup_range_body_mult),
+        float(cfg.max_setup_range_atr_mult),
+        float(cfg.max_setup_range_prominence_mult),
+    )
+    breakout_tolerance = _continuation_dynamic_threshold(
+        body_ref,
+        atr_ref,
+        prominence_ref,
+        float(cfg.max_pattern_breakout_body_mult),
+        float(cfg.max_pattern_breakout_atr_mult),
+        float(cfg.max_pattern_breakout_prominence_mult),
+    )
+    boundary_tolerance_pct = _continuation_dynamic_threshold(
+        body_ref,
+        atr_ref,
+        prominence_ref,
+        float(cfg.max_pattern_boundary_excursion_body_mult),
+        float(cfg.max_pattern_boundary_excursion_atr_mult),
+        float(cfg.max_pattern_boundary_excursion_prominence_mult),
+    )
+    slope_scale = max(body_ref, atr_ref, prominence_ref, 1e-9)
 
     setup_high = float(np.nanmax(seg_high))
     setup_low = float(np.nanmin(seg_low))
     setup_range = max(setup_high - setup_low, 0.0)
     setup_range_pct = setup_range / max(abs(float(close[row])), 1e-9)
     setup_to_impulse = setup_range / max(impulse_range, 1e-9)
-    if setup_range_pct > float(cfg.max_setup_range_pct) or setup_to_impulse > float(cfg.max_setup_to_impulse_range_mult):
+    if setup_range_pct > setup_range_threshold or setup_to_impulse > float(cfg.max_setup_to_impulse_range_mult):
         return metrics
     pattern_contraction = _pattern_contraction_score(seg_high, seg_low)
     volume_score = _volume_pattern_score(volume, int(impulse_start), int(impulse_end), int(row), cfg)
 
     if direction > 0:
-        if setup_high > end_price * (1.0 + float(cfg.max_pattern_breakout_pct)):
+        if setup_high > end_price + abs(end_price) * breakout_tolerance:
             return metrics
         retrace = (end_price - setup_low) / max(impulse_range, 1e-9)
     else:
-        if setup_low < end_price * (1.0 - float(cfg.max_pattern_breakout_pct)):
+        if setup_low < end_price - abs(end_price) * breakout_tolerance:
             return metrics
         retrace = (setup_high - end_price) / max(impulse_range, 1e-9)
-    if retrace < float(cfg.min_setup_retrace_pct) or retrace > float(cfg.max_setup_retrace_pct):
+    if retrace < float(cfg.min_setup_retrace_ratio) or retrace > float(cfg.max_setup_retrace_ratio):
         return metrics
 
     high_x, high_y, low_x, low_y = _pattern_pivot_points(row, impulse_end, high_pivot, low_pivot, high_index, low_index)
@@ -681,7 +1005,7 @@ def _score_anchored_pattern(
     upper_now = _line_value_at(float(row), upper_x1, upper_y1, upper_x2, upper_y2)
     lower_now = _line_value_at(float(row), lower_x1, lower_y1, lower_x2, lower_y2)
     if np.isfinite(upper_now) and np.isfinite(lower_now) and upper_now > lower_now:
-        boundary_tolerance = abs(float(close[row])) * float(cfg.max_pattern_boundary_excursion_pct)
+        boundary_tolerance = abs(float(close[row])) * boundary_tolerance_pct
         if direction > 0 and float(body_low[row]) < lower_now - boundary_tolerance:
             return metrics
         if direction < 0 and float(body_high[row]) > upper_now + boundary_tolerance:
@@ -700,7 +1024,7 @@ def _score_anchored_pattern(
         lower_y1,
         lower_x2,
         lower_y2,
-        float(cfg.max_pattern_boundary_excursion_pct),
+        boundary_tolerance_pct,
     )
     terminal_score = _continuation_terminal_score(
         int(row),
@@ -714,11 +1038,12 @@ def _score_anchored_pattern(
     high_slope_pct = high_slope / max(abs(float(close[row])), 1e-9)
     low_slope_pct = low_slope / max(abs(float(close[row])), 1e-9)
     slope_diff = abs(high_slope_pct - low_slope_pct)
-    parallel_score = _clip_value(1.0 - slope_diff / max(float(cfg.parallel_slope_tolerance_pct_per_bar), 1e-9))
-    min_slope = float(cfg.min_boundary_slope_pct_per_bar)
+    parallel_tolerance = slope_scale * float(cfg.parallel_slope_tolerance_scale_mult)
+    parallel_score = _clip_value(1.0 - slope_diff / max(parallel_tolerance, 1e-9))
+    min_slope = slope_scale * float(cfg.min_boundary_slope_scale_mult)
     convergence_score = _clip_value((low_slope_pct - high_slope_pct) / max(min_slope * 6.0, 1e-9))
-    max_counter = float(cfg.max_flag_counter_slope_pct_per_bar)
-    drift_tolerance = float(cfg.max_consolidation_drift_pct_per_bar)
+    max_counter = slope_scale * float(cfg.max_flag_counter_slope_scale_mult)
+    drift_tolerance = slope_scale * float(cfg.max_consolidation_drift_scale_mult)
     mean_boundary_slope = (high_slope_pct + low_slope_pct) / 2.0
     if direction > 0:
         counter_drift_score = _clip_value((drift_tolerance - mean_boundary_slope) / max(drift_tolerance * 2.0, 1e-9))
@@ -737,20 +1062,28 @@ def _score_anchored_pattern(
         )
         pennant_shape_score = convergence_score if high_slope_pct <= -min_slope and low_slope_pct >= min_slope else 0.0
 
-    impulse_score = _clip_value(impulse_pct / max(float(cfg.min_impulse_pct) * 2.0, 1e-9))
-    pole_score = _clip_value(0.45 * impulse_score + 0.25 * float(impulse_efficiency) + 0.18 * float(impulse_dominance) + 0.12 * float(impulse_break_score))
+    impulse_score = _clip_value(impulse_pct / max(impulse_threshold * 2.0, 1e-9))
+    pole_score = _clip_value(
+        0.38 * impulse_score
+        + 0.22 * float(impulse_efficiency)
+        + 0.16 * float(impulse_prior_range_score)
+        + 0.14 * float(impulse_dominance)
+        + 0.10 * float(impulse_break_score)
+    )
     compact_score = _clip_value(1.0 - setup_to_impulse / max(float(cfg.max_setup_to_impulse_range_mult), 1e-9))
     boundary_touch_score = _clip_value(min(high_count, low_count) / max(float(cfg.min_pattern_side_pivots) + 1.0, 1.0))
     boundary_span_score = _continuation_boundary_span_score(high_x, low_x, float(impulse_end), float(row))
-    retrace_mid = (float(cfg.min_setup_retrace_pct) + float(cfg.max_setup_retrace_pct)) / 2.0
-    retrace_half = max((float(cfg.max_setup_retrace_pct) - float(cfg.min_setup_retrace_pct)) / 2.0, 1e-9)
+    boundary_start_gap_ratio = _continuation_boundary_start_gap_ratio(high_x, low_x, float(impulse_end), float(row))
+    retrace_mid = (float(cfg.min_setup_retrace_ratio) + float(cfg.max_setup_retrace_ratio)) / 2.0
+    retrace_half = max((float(cfg.max_setup_retrace_ratio) - float(cfg.min_setup_retrace_ratio)) / 2.0, 1e-9)
     retrace_score = _clip_value(1.0 - abs(retrace - retrace_mid) / retrace_half)
     age_score = _clip_value(1.0 - age / max(float(cfg.max_impulse_extreme_age_bars) * 1.25, 1.0))
     flag_quality = _clip_value(
         0.13 * impulse_score
-        + 0.08 * float(impulse_efficiency)
-        + 0.09 * float(impulse_dominance)
-        + 0.10 * float(impulse_break_score)
+        + 0.07 * float(impulse_efficiency)
+        + 0.06 * float(impulse_prior_range_score)
+        + 0.08 * float(impulse_dominance)
+        + 0.08 * float(impulse_break_score)
         + 0.12 * compact_score
         + 0.18 * flag_shape_score
         + 0.05 * boundary_touch_score
@@ -763,9 +1096,10 @@ def _score_anchored_pattern(
     )
     pennant_quality = _clip_value(
         0.13 * impulse_score
-        + 0.08 * float(impulse_efficiency)
-        + 0.09 * float(impulse_dominance)
-        + 0.10 * float(impulse_break_score)
+        + 0.07 * float(impulse_efficiency)
+        + 0.06 * float(impulse_prior_range_score)
+        + 0.08 * float(impulse_dominance)
+        + 0.08 * float(impulse_break_score)
         + 0.12 * compact_score
         + 0.18 * pennant_shape_score
         + 0.05 * boundary_touch_score
@@ -784,14 +1118,34 @@ def _score_anchored_pattern(
         and boundary_touch_score >= float(cfg.min_continuation_boundary_touch_score)
         and boundary_span_score >= float(cfg.min_continuation_boundary_span_score)
     )
+    breakout_score = _continuation_breakout_score(
+        int(row),
+        int(direction),
+        body_high,
+        body_low,
+        close,
+        upper_now,
+        lower_now,
+        _continuation_dynamic_threshold(
+            body_ref,
+            atr_ref,
+            prominence_ref,
+            float(cfg.confirmation_break_body_mult),
+            float(cfg.confirmation_break_atr_mult),
+            float(cfg.confirmation_break_prominence_mult),
+        ),
+    )
+    confirmed = bool(component_gate and breakout_score >= float(cfg.min_confirmation_break_score))
 
     metrics.update(
         {
             "impulse_pct": float(impulse_pct),
+            "current_close": float(close[row]),
             "age": float(age),
             "impulse_start": float(impulse_start),
             "impulse_end": float(impulse_end),
             "impulse_efficiency": float(impulse_efficiency),
+            "impulse_prior_range_score": float(impulse_prior_range_score),
             "impulse_dominance": float(impulse_dominance),
             "impulse_break_score": float(impulse_break_score),
             "volume_score": float(volume_score),
@@ -809,12 +1163,27 @@ def _score_anchored_pattern(
             "terminal_score": float(terminal_score),
             "boundary_touch_score": float(boundary_touch_score),
             "boundary_span_score": float(boundary_span_score),
+            "boundary_start_gap_ratio": float(boundary_start_gap_ratio),
             "flag_shape_score": float(flag_shape_score),
             "pennant_shape_score": float(pennant_shape_score),
             "flag_quality": flag_quality,
             "pennant_quality": pennant_quality,
-            "flag_setup": bool(component_gate and flag_shape_score > 0.0 and flag_quality >= float(cfg.min_flag_quality)),
-            "pennant_setup": bool(component_gate and pennant_shape_score > 0.0 and pennant_quality >= float(cfg.min_pennant_quality)),
+            "breakout_score": float(breakout_score),
+            "confirmed": confirmed,
+            "flag_setup": bool(
+                component_gate
+                and flag_shape_score > 0.0
+                and flag_shape_score >= float(cfg.min_flag_shape_score)
+                and flag_quality >= float(cfg.min_flag_quality)
+            ),
+            "pennant_setup": bool(
+                component_gate
+                and pennant_shape_score > 0.0
+                and pennant_shape_score >= float(cfg.min_pennant_shape_score)
+                and boundary_span_score >= float(cfg.min_pennant_boundary_span_score)
+                and boundary_start_gap_ratio <= float(cfg.max_pennant_boundary_start_gap_ratio)
+                and pennant_quality >= float(cfg.min_pennant_quality)
+            ),
             "proof_line1_x1": float(impulse_start),
             "proof_line1_y1": float(start_price),
             "proof_line1_x2": float(impulse_end),
@@ -832,6 +1201,60 @@ def _score_anchored_pattern(
     return metrics
 
 
+def _continuation_scale_refs(
+    body_pct: np.ndarray,
+    atr_pct: np.ndarray,
+    prominence_pct: np.ndarray,
+    row: int,
+) -> tuple[float, float, float]:
+    body_ref = _threshold_body_pct(body_pct, int(row))
+    atr_ref = _threshold_scale_pct(atr_pct, int(row), minimum=0.0005)
+    prominence_ref = _threshold_scale_pct(prominence_pct, int(row), minimum=0.0)
+    return float(body_ref), float(atr_ref), float(prominence_ref)
+
+
+def _continuation_dynamic_threshold(
+    body_ref: float,
+    atr_ref: float,
+    prominence_ref: float,
+    body_mult: float,
+    atr_mult: float,
+    prominence_mult: float,
+) -> float:
+    return max(
+        float(body_ref) * max(float(body_mult), 0.0),
+        float(atr_ref) * max(float(atr_mult), 0.0),
+        float(prominence_ref) * max(float(prominence_mult), 0.0),
+        1e-9,
+    )
+
+
+def _continuation_breakout_score(
+    row: int,
+    direction: int,
+    body_high: np.ndarray,
+    body_low: np.ndarray,
+    close: np.ndarray,
+    upper_now: float,
+    lower_now: float,
+    break_tolerance_pct: float,
+) -> float:
+    if not np.isfinite([upper_now, lower_now]).all() or upper_now <= lower_now:
+        return 0.0
+    if row < 0 or row >= len(close) or not np.isfinite(close[row]) or close[row] == 0.0:
+        return 0.0
+    tolerance = abs(float(close[row])) * max(float(break_tolerance_pct), 1e-9)
+    if direction > 0:
+        _ = body_high
+        if not np.isfinite(close[row]):
+            return 0.0
+        return _clip_value((float(close[row]) - float(upper_now)) / tolerance)
+    _ = body_low
+    if not np.isfinite(close[row]):
+        return 0.0
+    return _clip_value((float(lower_now) - float(close[row])) / tolerance)
+
+
 def _continuation_boundary_span_score(high_x: np.ndarray, low_x: np.ndarray, impulse_end: float, row: float) -> float:
     """Require both consolidation rails to span a meaningful part of the setup.
 
@@ -844,6 +1267,19 @@ def _continuation_boundary_span_score(high_x: np.ndarray, low_x: np.ndarray, imp
     high_span = float(np.nanmax(high_x) - np.nanmin(high_x)) if len(high_x) else 0.0
     low_span = float(np.nanmax(low_x) - np.nanmin(low_x)) if len(low_x) else 0.0
     return _clip_value(min(high_span, low_span) / setup_span)
+
+
+def _continuation_boundary_start_gap_ratio(high_x: np.ndarray, low_x: np.ndarray, impulse_end: float, row: float) -> float:
+    setup_span = max(float(row) - float(impulse_end), 1.0)
+    if not len(high_x) or not len(low_x):
+        return 1.0
+    high_start = float(np.nanmin(high_x))
+    low_start = float(np.nanmin(low_x))
+    if not np.isfinite([high_start, low_start]).all():
+        return 1.0
+    high_gap = max(high_start - float(impulse_end), 0.0)
+    low_gap = max(low_start - float(impulse_end), 0.0)
+    return _clip_value(max(high_gap, low_gap) / setup_span)
 
 
 def _continuation_containment_score(
@@ -871,8 +1307,10 @@ def _continuation_containment_score(
     if end_i < start_i:
         return 0.0
     rows = np.arange(start_i, end_i + 1, dtype="float64")
-    upper = np.array([_line_value_at(float(x), upper_x1, upper_y1, upper_x2, upper_y2) for x in rows], dtype="float64")
-    lower = np.array([_line_value_at(float(x), lower_x1, lower_y1, lower_x2, lower_y2) for x in rows], dtype="float64")
+    upper_slope = (float(upper_y2) - float(upper_y1)) / (float(upper_x2) - float(upper_x1))
+    lower_slope = (float(lower_y2) - float(lower_y1)) / (float(lower_x2) - float(lower_x1))
+    upper = float(upper_y1) + upper_slope * (rows - float(upper_x1))
+    lower = float(lower_y1) + lower_slope * (rows - float(lower_x1))
     highs = body_high[start_i : end_i + 1]
     lows = body_low[start_i : end_i + 1]
     closes = close[start_i : end_i + 1]
@@ -920,35 +1358,29 @@ def _impulse_efficiency(close: np.ndarray, impulse_start: int, impulse_end: int,
     return _clip_value(float(impulse_range) / travelled)
 
 
-def _opposite_impulse_pct(
-    search_start: int,
-    impulse_end: int,
-    direction: int,
+def _impulse_prior_range_score(
+    impulse_start: int,
+    impulse_range: float,
     body_high: np.ndarray,
     body_low: np.ndarray,
+    lookback_bars: int,
+    required_mult: float,
 ) -> float:
-    start = max(int(search_start), 0)
-    stop = max(int(impulse_end) + 1, start + 1)
+    if impulse_start <= 0 or not np.isfinite(impulse_range) or impulse_range <= 0.0:
+        return 0.0
+    start = max(0, int(impulse_start) - max(int(lookback_bars), 3))
+    stop = int(impulse_start) + 1
     highs = body_high[start:stop]
     lows = body_low[start:stop]
-    if len(highs) < 2 or not np.isfinite(highs).any() or not np.isfinite(lows).any():
-        return 0.0
-    best = 0.0
-    if direction > 0:
-        peak = -np.inf
-        for high_value, low_value in zip(highs, lows):
-            if np.isfinite(high_value):
-                peak = max(peak, float(high_value))
-            if np.isfinite(low_value) and np.isfinite(peak) and peak > 0.0:
-                best = max(best, (peak - float(low_value)) / max(abs(peak), 1e-9))
-    else:
-        trough = np.inf
-        for high_value, low_value in zip(highs, lows):
-            if np.isfinite(low_value):
-                trough = min(trough, float(low_value))
-            if np.isfinite(high_value) and np.isfinite(trough) and trough > 0.0:
-                best = max(best, (float(high_value) - trough) / max(abs(trough), 1e-9))
-    return float(max(best, 0.0))
+    if highs.size < 3 or not np.isfinite(highs).any() or not np.isfinite(lows).any():
+        return 1.0
+    prior_range = float(np.nanmax(highs) - np.nanmin(lows))
+    if prior_range <= 0.0:
+        return 1.0
+    required = prior_range * max(float(required_mult), 0.0)
+    if required <= 0.0:
+        return 1.0
+    return _clip_value(float(impulse_range) / max(required, 1e-9))
 
 
 def _impulse_dominance_score(impulse_pct: float, opposite_impulse_pct: float, dominance_mult: float) -> float:
@@ -1047,6 +1479,7 @@ def _pattern_pivot_points(
 
 
 def _write_side_metrics(out: dict[str, np.ndarray], row: int, metrics: dict[str, float | bool], label: str) -> None:
+    out["close"][row] = _nanmax_pair(out["close"][row], float(metrics["current_close"]))
     impulse_key = "impulse_up_pct" if label == "long" else "impulse_down_pct"
     retrace_key = "setup_retrace_long" if label == "long" else "setup_retrace_short"
     out[impulse_key][row] = float(metrics["impulse_pct"])
@@ -1058,6 +1491,7 @@ def _write_side_metrics(out: dict[str, np.ndarray], row: int, metrics: dict[str,
         float(metrics["impulse_end"]) if np.isfinite(float(metrics["impulse_end"])) else np.nan
     )
     out[f"impulse_efficiency_{label}"][row] = float(metrics["impulse_efficiency"])
+    out[f"impulse_prior_range_score_{label}"][row] = float(metrics["impulse_prior_range_score"])
     out[f"impulse_dominance_{label}"][row] = float(metrics["impulse_dominance"])
     out[f"impulse_break_score_{label}"][row] = float(metrics["impulse_break_score"])
     out[f"pattern_volume_score_{label}"][row] = float(metrics["volume_score"])
@@ -1073,14 +1507,18 @@ def _write_side_metrics(out: dict[str, np.ndarray], row: int, metrics: dict[str,
     out[f"continuation_retrace_score_{label}"][row] = float(metrics["retrace_score"])
     out[f"continuation_containment_score_{label}"][row] = float(metrics["containment_score"])
     out[f"continuation_terminal_score_{label}"][row] = float(metrics["terminal_score"])
+    out[f"continuation_breakout_score_{label}"][row] = float(metrics["breakout_score"])
     out[f"continuation_boundary_touch_score_{label}"][row] = float(metrics["boundary_touch_score"])
     out[f"continuation_boundary_span_score_{label}"][row] = float(metrics["boundary_span_score"])
+    out[f"continuation_boundary_start_gap_ratio_{label}"][row] = float(metrics["boundary_start_gap_ratio"])
     out[f"flag_shape_score_{label}"][row] = float(metrics["flag_shape_score"])
     out[f"pennant_shape_score_{label}"][row] = float(metrics["pennant_shape_score"])
     out[f"flag_quality_{label}"][row] = float(metrics["flag_quality"])
     out[f"pennant_quality_{label}"][row] = float(metrics["pennant_quality"])
     out[f"flag_setup_{label}"][row] = bool(metrics["flag_setup"])
     out[f"pennant_setup_{label}"][row] = bool(metrics["pennant_setup"])
+    out[f"flag_confirmed_{label}"][row] = bool(metrics["flag_setup"] and metrics["confirmed"])
+    out[f"pennant_confirmed_{label}"][row] = bool(metrics["pennant_setup"] and metrics["confirmed"])
     for line_number in (1, 2, 3):
         for field in ("x1", "y1", "x2", "y2"):
             value = float(metrics[f"proof_line{line_number}_{field}"])
