@@ -15,7 +15,7 @@ Pivot Foundation:
 - Shared pivot behaviour belongs here first.
 - Other indicators should consume this source instead of defining private pivots.
 
-Pivot-Based Market Structure:
+BOS/CHoCH Market Structure:
 - Consumes Pivot Foundation.
 - Provides strategy-facing pivot, structural-zone, market-structure, and context evidence.
 - It does not detect channels.
@@ -30,10 +30,15 @@ Orderbook Context:
 - Prefer this over OHLCV proxy orderflow when both are available.
 - Treat orderbook columns as context, filter, risk, and timing evidence until strategy tests prove otherwise.
 
-Global Context And News/Web Sentiment:
-- First-pass external context/filter inputs.
-- Ready for guarded research tests.
-- Do not treat them as standalone entry signals until forward-return and drawdown buckets prove stable usefulness.
+Global Context:
+- First-pass external risk-appetite/regime context.
+- Not production-ready; the recent sample was fast but mostly neutral.
+- Do not treat it as a standalone entry signal until forward-return and drawdown buckets prove stable usefulness.
+
+News/Web Sentiment:
+- First-pass article/event sentiment context from launcher News/Web SQLite data.
+- Not production-ready; recent data coverage and signal checks were weak.
+- Treat missing or sparse event history as unavailable context, not as neutral conviction.
 
 Orderbook Context Strategy / Hyperopt Guidance:
 - Treat Orderbook Context as real liquidity/order-flow context, not as an OHLCV pattern replacement. The recent review had low ready-row coverage, high risk-block activity, and roughly 2.2-2.45 second runtime for about 100 rows, so it is not ready for broad production-style strategy use.
@@ -52,10 +57,18 @@ Global Context Strategy / Hyperopt Guidance:
 - Use Global Context as a guard, stake modifier, or risk-off overlay first. Entry strategies should already work without it, then test whether global context improves drawdown, exposure, or tail-risk buckets.
 - Keep `allow_missing=False` for validation unless the strategy explicitly handles missing external context as unavailable rather than neutral.
 
+News/Web Sentiment Strategy / Hyperopt Guidance:
+- Treat News/Web Sentiment as event context and risk/regime evidence, not as a trade-pattern indicator. The current implementation is rule-weighted keyword/source scoring over collected articles, so it needs data coverage and forward-return validation before strategy reliance.
+- First-pass strategy logic should consume `nwctx_article_count_roll_medium`, `nwctx_weighted_count_roll_medium`, `nwctx_source_breadth_roll_medium`, `nwctx_positive_score_roll_medium`, `nwctx_negative_score_roll_medium`, `nwctx_net_score_roll_medium`, `nwctx_severity_score_roll_medium`, `nwctx_attention_score`, `nwctx_positive_persistence`, `nwctx_negative_persistence`, `nwctx_severity_persistence`, `nwctx_score_long`, `nwctx_score_short`, `nwctx_score_abs`, and `nwctx_state`.
+- First-pass hyperopt should focus on event timing and persistence: `availability_lag_candles`, `short_window`, `medium_window`, `long_window`, `persistence_window`, `positive_threshold`, `negative_threshold`, `severity_threshold`, `persistence_min`, and `activity_scale`.
+- Dataset choice and weighting dictionaries are second-pass research levers. Tune `datasets`, relevance weights, source-group weights, source-type weights, and topic weights only after checking that the selected sources have enough history across the backtest window.
+- Use this first as a guard, exposure modifier, or risk-off/risk-on overlay. Entry logic should already work without it, then test whether sentiment improves drawdown, tail losses, or event-window selectivity.
+- Keep `allow_missing=False` for validation unless the strategy explicitly treats missing News/Web rows as unavailable. Do not let missing article history become a valid neutral score.
+
 Pattern Indicators:
 - Pattern outputs are split by family rather than aggregated through the old Pattern Structure layer.
 - Geometry V2 emits triangle, wedge, compression, rectangle, ascending channel, and descending channel evidence through `pg2_*` slot columns plus row-level compression/channel context.
-- Reversal, continuation, range, multi-peak, and Wolfe wave logic should be consumed from their own files.
+- Reversal, continuation, multi-peak, and Wolfe wave logic should be consumed from their own files.
 - Multi-peak triple top/bottom identity uses dynamic level breach checks. `triple_level_breach_tolerance_mult` and `triple_level_breach_pivot_grace_bars` are strategy/hyperopt levers: tolerance controls body-level invalidation after reversal, while grace only forgives near-pivot fuzz before the interval has armed on a real opposing reaction.
 - Wolfe wave identity now requires meaningful internal reactions between P1-P2 and P3-P4. The `min_internal_reaction_*` levers are intended to reject shallow trend-drift structures that happen to form five alternating pivots.
 - Strategies decide whether to trade, wait for breakout, use `1h` as trigger data, treat channel rails as avoid/context evidence, or ignore lower-timeframe patterns.
@@ -106,9 +119,10 @@ Relative Strength Strategy / Hyperopt Guidance:
 - Avoid optimizing score, regime, benchmark, and cooldown surfaces all at once. A clean sequence is benchmark selection, long entry quality, long caution/hold/exit behavior, then short-side research if the strategy actually trades shorts.
 
 Reversal Pattern Strategy / Hyperopt Guidance:
-- Treat Reversal output as pattern identity plus neckline confirmation. The review favored long-side reversal evidence: double bottoms and inverse head-and-shoulders were stronger than double tops and normal head-and-shoulders.
-- First-pass long strategy logic should prioritize `pat_double_bottom_pattern_present`, `pat_double_bottom_pattern_confirmed`, `pat_double_bottom_indicator_score`, `pat_double_bottom_confirmation_level`, `pat_double_bottom_target_level`, plus the equivalent `pat_inverse_head_shoulders_*` columns.
-- Short-side reversal logic should stay in research mode until plots and forward-return buckets improve. If used, require additional trend/regime confirmation rather than trading `pat_double_top_*` or `pat_head_shoulders_*` alone.
+- Treat Reversal output as pattern identity plus neckline confirmation. Current cleanup-window evidence was positive for double tops, double bottoms, and normal head-and-shoulders; inverse head-and-shoulders was inconsistent and should be lower confidence until retuned.
+- First-pass strategy logic should keep the four families separate: `pat_double_top_*`, `pat_double_bottom_*`, `pat_head_shoulders_*`, and `pat_inverse_head_shoulders_*`. Do not let a good family hide a weak one in aggregate backtests.
+- Long-side logic should prioritize `pat_double_bottom_pattern_present`, `pat_double_bottom_pattern_confirmed`, `pat_double_bottom_indicator_score`, `pat_double_bottom_confirmation_level`, and `pat_double_bottom_target_level`. Treat inverse head-and-shoulders as research-only or lower weight until plots and forward returns improve.
+- Short-side logic can research `pat_double_top_*` and `pat_head_shoulders_*`, but should still require trend/regime confirmation rather than trading pattern-present alone.
 - First-pass double-pattern hyperopt should focus on identity and confirmation: `min_double_pattern_bars`, `max_double_pattern_bars`, `double_reaction_max_bars`, `min_double_quality`, `min_double_reaction_score`, and `min_double_between_cleanliness_score`.
 - First-pass head-and-shoulders hyperopt should focus on shape validity: `min_head_shoulders_quality`, `min_head_shoulders_shoulder_score`, `min_head_shoulders_time_balance_score`, `min_head_shoulders_neckline_score`, `min_head_shoulders_neckline_body_respect_ratio`, and `head_shoulders_max_neckline_slope_atr_per_bar`.
 - Shared pivot/scale controls such as `pivot_strength`, `pattern_pivot_strength`, `pivot_min_prominence_atr`, `peak_prior_impulse_min_efficiency`, and the dynamic body/ATR multipliers should be second-pass levers after plots show identity errors.
