@@ -40,6 +40,7 @@ Pattern Indicators:
 - Geometry V2 emits triangle, wedge, compression, rectangle, ascending channel, and descending channel evidence through `pg2_*` slot columns plus row-level compression/channel context.
 - Reversal, continuation, range, multi-peak, and Wolfe wave logic should be consumed from their own files.
 - Multi-peak triple top/bottom identity uses dynamic level breach checks. `triple_level_breach_tolerance_mult` and `triple_level_breach_pivot_grace_bars` are strategy/hyperopt levers: tolerance controls body-level invalidation after reversal, while grace only forgives near-pivot fuzz before the interval has armed on a real opposing reaction.
+- Wolfe wave identity now requires meaningful internal reactions between P1-P2 and P3-P4. The `min_internal_reaction_*` levers are intended to reject shallow trend-drift structures that happen to form five alternating pivots.
 - Strategies decide whether to trade, wait for breakout, use `1h` as trigger data, treat channel rails as avoid/context evidence, or ignore lower-timeframe patterns.
 
 Multi-Peak Strategy / Hyperopt Guidance:
@@ -49,6 +50,12 @@ Multi-Peak Strategy / Hyperopt Guidance:
 - Avoid broad hyperopt over every internal scale knob initially. The dynamic body/ATR/prominence multipliers can interact heavily and may overfit samples before the pattern identity surface is stable.
 - Sensible breach-grace search should keep `triple_level_breach_pivot_grace_bars` small, for example 0-4 bars. Larger values can forgive real breaks and turn failed structures back into accepted patterns.
 - `min_triple_touch_turn_score` is a clipped score, so useful values should stay at or below 1.0.
+
+Wolfe Wave Strategy / Hyperopt Guidance:
+- Treat Wolfe output as experimental until the plotted identity set is larger. The broad review showed useful forward-return pockets, but the event count is still small.
+- First-pass hyperopt should prefer existing identity levers before broad tuning: `min_pattern_bars`, `min_leg_spacing_bars`, `min_internal_reaction_pct`, `min_internal_reaction_body_mult`, `min_internal_reaction_atr_mult`, and `min_wave_quality`.
+- `min_internal_reaction_*` is the specific lever family for shallow five-pivot drift failures. Raising it should remove weak internal pullbacks; lowering it allows smaller Wolfe channels to pass.
+- Avoid using Wolfe present/confirmed as an isolated entry trigger. Strategy logic should still own trend context, confirmation timing, target/risk, and higher-timeframe agreement.
 
 ## Naming Migration Target
 

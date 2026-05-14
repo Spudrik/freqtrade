@@ -67,6 +67,10 @@ class PatternWolfeWaveConfig:
     min_boundary_slope_pct_per_bar: float = 0.00015
     max_boundary_fit_error_pct: float = 0.020
     max_width_expansion_ratio: float = 1.15
+    min_internal_reaction_pct: float = 0.015
+    min_internal_reaction_body_mult: float = 1.25
+    min_internal_reaction_atr_mult: float = 0.30
+    min_internal_reaction_prominence_mult: float = 0.0
     p5_line_tolerance_pct: float = 0.040
     p5_line_tolerance_body_mult: float = 2.25
     p5_line_tolerance_atr_mult: float = 0.35
@@ -269,6 +273,14 @@ def _validate_config(cfg: PatternWolfeWaveConfig) -> None:
         raise ValueError("max_boundary_fit_error_pct must be positive")
     if float(cfg.max_width_expansion_ratio) < 1.0:
         raise ValueError("max_width_expansion_ratio must be at least 1")
+    if float(cfg.min_internal_reaction_pct) < 0.0:
+        raise ValueError("min_internal_reaction_pct must be non-negative")
+    if float(cfg.min_internal_reaction_body_mult) < 0.0:
+        raise ValueError("min_internal_reaction_body_mult must be non-negative")
+    if float(cfg.min_internal_reaction_atr_mult) < 0.0:
+        raise ValueError("min_internal_reaction_atr_mult must be non-negative")
+    if float(cfg.min_internal_reaction_prominence_mult) < 0.0:
+        raise ValueError("min_internal_reaction_prominence_mult must be non-negative")
     if float(cfg.p5_line_tolerance_pct) <= 0.0:
         raise ValueError("p5_line_tolerance_pct must be positive")
     if float(cfg.p5_line_tolerance_body_mult) < 0.0:
@@ -601,6 +613,16 @@ def _evaluate_side(
     )
     reference = max(abs(float(close[setup_row])), 1e-9)
     level_tol = reference * level_tol_pct
+    min_internal_reaction_pct = _dynamic_height_tolerance_pct(
+        float(cfg.min_internal_reaction_pct),
+        body_ref,
+        atr_ref,
+        prominence_ref,
+        float(cfg.min_internal_reaction_body_mult),
+        float(cfg.min_internal_reaction_atr_mult),
+        float(cfg.min_internal_reaction_prominence_mult),
+    )
+    min_internal_reaction = reference * min_internal_reaction_pct
 
     top = side == "bearish"
     prior = _prior_opposite_pivot_context(
@@ -641,6 +663,11 @@ def _evaluate_side(
     upper_slope_pct = upper_slope / slope_scale
     lower_slope_pct = lower_slope / slope_scale
     if top:
+        if (
+            (p1_price - p2_price) < min_internal_reaction
+            or (p3_price - p4_price) < min_internal_reaction
+        ):
+            return None
         if upper_slope_pct < float(cfg.min_boundary_slope_pct_per_bar):
             return None
         if lower_slope_pct < float(cfg.min_boundary_slope_pct_per_bar):
@@ -656,6 +683,11 @@ def _evaluate_side(
         width_mid = p3_price - _line_value_at(p3_x, p2_x, p2_price, p4_x, p4_price)
         width_end = p5_price - confirm_at_p5
     else:
+        if (
+            (p2_price - p1_price) < min_internal_reaction
+            or (p4_price - p3_price) < min_internal_reaction
+        ):
+            return None
         if upper_slope_pct > -float(cfg.min_boundary_slope_pct_per_bar):
             return None
         if lower_slope_pct > -float(cfg.min_boundary_slope_pct_per_bar):
