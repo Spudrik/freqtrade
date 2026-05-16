@@ -22,7 +22,7 @@ from .tabs.pairs_tab import PairsTab
 from .tabs.mode_options_tab import ModeOptionsTab
 from .tabs.data_management_tab import DataManagementTab
 from .tabs.explorer_tab import ExplorerTab
-from .tabs.explorer_summary_tab import ExplorerSummaryTab
+from .tabs.entry_sieve_tab import EntrySieveTab
 from .tabs.review_tab import ReviewTab
 from .tabs.file_converter_tab import FileConverterTab
 
@@ -48,7 +48,7 @@ class LauncherV2(tk.Tk):
         ModeOptionsTab,
         DataManagementTab,
         ExplorerTab,
-        ExplorerSummaryTab,
+        EntrySieveTab,
         ReviewTab,
         FileConverterTab,
     ]
@@ -134,6 +134,7 @@ class LauncherV2(tk.Tk):
             self.context.registry[tab.tab_key] = tab
             if hasattr(tab, "child_tabs"):
                 self.tabs.update(tab.child_tabs)
+                self.context.registry.update(tab.child_tabs)
             self.notebook.add(tab, text=tab.tab_title)
 
     def collect_state(self) -> dict[str, Any]:
@@ -275,26 +276,42 @@ class LauncherV2(tk.Tk):
                 "backtest_python_exes": preset.get("explorer_backtest_python_exes"),
                 "backtest_worker_count": preset.get("explorer_backtest_worker_count"),
                 "pipeline_handoff_dir": preset.get("explorer_pipeline_handoff_dir"),
-                "sieve_strategy_batch": preset.get("explorer_sieve_strategy_batch"),
-                "sieve_batch_queue": preset.get("explorer_sieve_batch_queue"),
-                "sieve_strategy_filter": preset.get("explorer_sieve_strategy_filter"),
-                "sieve_speed_run": preset.get("explorer_sieve_speed_run"),
-                "sieve_speed_pair_count": preset.get("explorer_sieve_speed_pair_count"),
-                "sieve_take_profit_pct": preset.get("explorer_sieve_take_profit_pct"),
-                "sieve_stoploss_pct": preset.get("explorer_sieve_stoploss_pct"),
-                "sieve_auto_windows": preset.get("explorer_sieve_auto_windows"),
-                "sieve_auto_window_count": preset.get("explorer_sieve_auto_window_count"),
-                "sieve_target_sweep": preset.get("explorer_sieve_target_sweep"),
-                "sieve_target_pairs": preset.get("explorer_sieve_target_pairs"),
-                "sieve_result_batch": preset.get("explorer_sieve_result_batch"),
-                "sieve_result_filter": preset.get("explorer_sieve_result_filter"),
-                "sieve_filter_winrate_min": preset.get("explorer_sieve_filter_winrate_min"),
-                "sieve_filter_profit_min": preset.get("explorer_sieve_filter_profit_min"),
-                "sieve_filter_drawdown_max": preset.get("explorer_sieve_filter_drawdown_max"),
-                "sieve_filter_trades_min": preset.get("explorer_sieve_filter_trades_min"),
-                "sieve_filter_tp_eq": preset.get("explorer_sieve_filter_tp_eq"),
-                "sieve_filter_sl_eq": preset.get("explorer_sieve_filter_sl_eq"),
-                "sieve_column_order": preset.get("explorer_sieve_column_order"),
+            },
+            "entry_sieve": {
+                "training_windows": preset.get("entry_sieve_training_windows", preset.get("explorer_training_windows")),
+                "validation_windows": preset.get("entry_sieve_validation_windows", preset.get("explorer_validation_windows")),
+                "epochs": preset.get("entry_sieve_epochs", preset.get("explorer_epochs")),
+                "auto_epochs": preset.get("entry_sieve_auto_epochs", preset.get("explorer_auto_epochs")),
+                "auto_epochs_cap": preset.get("entry_sieve_auto_epochs_cap", preset.get("explorer_auto_epochs_cap")),
+                "random_state": preset.get("entry_sieve_random_state", preset.get("explorer_random_state")),
+                "sampling_seed": preset.get("entry_sieve_sampling_seed", preset.get("explorer_sampling_seed")),
+                "split_venv_pipeline": preset.get("entry_sieve_split_venv_pipeline", preset.get("explorer_split_venv_pipeline")),
+                "backtest_python_exe": preset.get("entry_sieve_backtest_python_exe", preset.get("explorer_backtest_python_exe")),
+                "backtest_python_exes": preset.get("entry_sieve_backtest_python_exes", preset.get("explorer_backtest_python_exes")),
+                "backtest_worker_count": preset.get("entry_sieve_backtest_worker_count", preset.get("explorer_backtest_worker_count")),
+                "pipeline_handoff_dir": preset.get("entry_sieve_pipeline_handoff_dir", preset.get("explorer_pipeline_handoff_dir")),
+                "sieve_strategy_batch": preset.get("entry_sieve_strategy_batch", preset.get("explorer_sieve_strategy_batch")),
+                "sieve_batch_queue": preset.get("entry_sieve_batch_queue", preset.get("explorer_sieve_batch_queue")),
+                "sieve_batch_priority": preset.get("entry_sieve_batch_priority", preset.get("explorer_sieve_batch_priority")),
+                "sieve_strategy_filter": preset.get("entry_sieve_strategy_filter", preset.get("explorer_sieve_strategy_filter")),
+                "sieve_speed_run": preset.get("entry_sieve_speed_run", preset.get("explorer_sieve_speed_run")),
+                "sieve_speed_pair_count": preset.get("entry_sieve_speed_pair_count", preset.get("explorer_sieve_speed_pair_count")),
+                "sieve_take_profit_pct": preset.get("entry_sieve_take_profit_pct", preset.get("explorer_sieve_take_profit_pct")),
+                "sieve_stoploss_pct": preset.get("entry_sieve_stoploss_pct", preset.get("explorer_sieve_stoploss_pct")),
+                "sieve_auto_windows": preset.get("entry_sieve_auto_windows", preset.get("explorer_sieve_auto_windows")),
+                "sieve_auto_window_count": preset.get("entry_sieve_auto_window_count", preset.get("explorer_sieve_auto_window_count")),
+                "sieve_target_sweep": preset.get("entry_sieve_target_sweep", preset.get("explorer_sieve_target_sweep")),
+                "sieve_target_pairs": preset.get("entry_sieve_target_pairs", preset.get("explorer_sieve_target_pairs")),
+                "sieve_result_batch": preset.get("entry_sieve_result_batch", preset.get("explorer_sieve_result_batch")),
+                "sieve_result_batch_filter": preset.get("entry_sieve_result_batch_filter", preset.get("explorer_sieve_result_batch_filter")),
+                "sieve_result_filter": preset.get("entry_sieve_result_filter", preset.get("explorer_sieve_result_filter")),
+                "sieve_filter_winrate_min": preset.get("entry_sieve_filter_winrate_min", preset.get("explorer_sieve_filter_winrate_min")),
+                "sieve_filter_profit_min": preset.get("entry_sieve_filter_profit_min", preset.get("explorer_sieve_filter_profit_min")),
+                "sieve_filter_drawdown_max": preset.get("entry_sieve_filter_drawdown_max", preset.get("explorer_sieve_filter_drawdown_max")),
+                "sieve_filter_trades_min": preset.get("entry_sieve_filter_trades_min", preset.get("explorer_sieve_filter_trades_min")),
+                "sieve_filter_tp_eq": preset.get("entry_sieve_filter_tp_eq", preset.get("explorer_sieve_filter_tp_eq")),
+                "sieve_filter_sl_eq": preset.get("entry_sieve_filter_sl_eq", preset.get("explorer_sieve_filter_sl_eq")),
+                "sieve_column_order": preset.get("entry_sieve_column_order", preset.get("explorer_sieve_column_order")),
             },
             "news": {
                 "config_path": preset.get("news_config_path"),
@@ -379,6 +396,7 @@ class LauncherV2(tk.Tk):
         download = tabs.get("download", {})
         review = tabs.get("review", {})
         explorer = tabs.get("explorer", {})
+        entry_sieve = tabs.get("entry_sieve", {})
         news = tabs.get("news", {})
         web = tabs.get("web", {})
         global_context = tabs.get("global_context", {})
@@ -475,26 +493,40 @@ class LauncherV2(tk.Tk):
             "explorer_backtest_python_exes": list(explorer.get("backtest_python_exes") or []),
             "explorer_backtest_worker_count": explorer.get("backtest_worker_count", "2"),
             "explorer_pipeline_handoff_dir": explorer.get("pipeline_handoff_dir", ""),
-            "explorer_sieve_strategy_batch": explorer.get("sieve_strategy_batch", "all"),
-            "explorer_sieve_batch_queue": explorer.get("sieve_batch_queue", ""),
-            "explorer_sieve_strategy_filter": explorer.get("sieve_strategy_filter", "sieve1_*.py"),
-            "explorer_sieve_speed_run": bool(explorer.get("sieve_speed_run", False)),
-            "explorer_sieve_speed_pair_count": explorer.get("sieve_speed_pair_count", "5"),
-            "explorer_sieve_take_profit_pct": explorer.get("sieve_take_profit_pct", "2"),
-            "explorer_sieve_stoploss_pct": explorer.get("sieve_stoploss_pct", "2"),
-            "explorer_sieve_auto_windows": bool(explorer.get("sieve_auto_windows", True)),
-            "explorer_sieve_auto_window_count": explorer.get("sieve_auto_window_count", "2"),
-            "explorer_sieve_target_sweep": bool(explorer.get("sieve_target_sweep", False)),
-            "explorer_sieve_target_pairs": explorer.get("sieve_target_pairs", ""),
-            "explorer_sieve_result_batch": explorer.get("sieve_result_batch", ""),
-            "explorer_sieve_result_filter": explorer.get("sieve_result_filter", ""),
-            "explorer_sieve_filter_winrate_min": explorer.get("sieve_filter_winrate_min", ""),
-            "explorer_sieve_filter_profit_min": explorer.get("sieve_filter_profit_min", ""),
-            "explorer_sieve_filter_drawdown_max": explorer.get("sieve_filter_drawdown_max", ""),
-            "explorer_sieve_filter_trades_min": explorer.get("sieve_filter_trades_min", ""),
-            "explorer_sieve_filter_tp_eq": explorer.get("sieve_filter_tp_eq", ""),
-            "explorer_sieve_filter_sl_eq": explorer.get("sieve_filter_sl_eq", ""),
-            "explorer_sieve_column_order": list(explorer.get("sieve_column_order") or []),
+            "entry_sieve_training_windows": list(entry_sieve.get("training_windows") or []),
+            "entry_sieve_validation_windows": list(entry_sieve.get("validation_windows") or []),
+            "entry_sieve_epochs": entry_sieve.get("epochs", "200"),
+            "entry_sieve_auto_epochs": bool(entry_sieve.get("auto_epochs", False)),
+            "entry_sieve_auto_epochs_cap": entry_sieve.get("auto_epochs_cap", ""),
+            "entry_sieve_random_state": entry_sieve.get("random_state", ""),
+            "entry_sieve_sampling_seed": entry_sieve.get("sampling_seed", ""),
+            "entry_sieve_split_venv_pipeline": bool(entry_sieve.get("split_venv_pipeline", False)),
+            "entry_sieve_backtest_python_exe": entry_sieve.get("backtest_python_exe", ""),
+            "entry_sieve_backtest_python_exes": list(entry_sieve.get("backtest_python_exes") or []),
+            "entry_sieve_backtest_worker_count": entry_sieve.get("backtest_worker_count", "2"),
+            "entry_sieve_pipeline_handoff_dir": entry_sieve.get("pipeline_handoff_dir", ""),
+            "entry_sieve_strategy_batch": entry_sieve.get("sieve_strategy_batch", "all"),
+            "entry_sieve_batch_queue": entry_sieve.get("sieve_batch_queue", ""),
+            "entry_sieve_batch_priority": entry_sieve.get("sieve_batch_priority", "least_run_first"),
+            "entry_sieve_strategy_filter": entry_sieve.get("sieve_strategy_filter", "sieve1_*.py"),
+            "entry_sieve_speed_run": bool(entry_sieve.get("sieve_speed_run", False)),
+            "entry_sieve_speed_pair_count": entry_sieve.get("sieve_speed_pair_count", "5"),
+            "entry_sieve_take_profit_pct": entry_sieve.get("sieve_take_profit_pct", "2"),
+            "entry_sieve_stoploss_pct": entry_sieve.get("sieve_stoploss_pct", "2"),
+            "entry_sieve_auto_windows": bool(entry_sieve.get("sieve_auto_windows", True)),
+            "entry_sieve_auto_window_count": entry_sieve.get("sieve_auto_window_count", "2"),
+            "entry_sieve_target_sweep": bool(entry_sieve.get("sieve_target_sweep", False)),
+            "entry_sieve_target_pairs": entry_sieve.get("sieve_target_pairs", ""),
+            "entry_sieve_result_batch": entry_sieve.get("sieve_result_batch", ""),
+            "entry_sieve_result_batch_filter": entry_sieve.get("sieve_result_batch_filter", ""),
+            "entry_sieve_result_filter": entry_sieve.get("sieve_result_filter", ""),
+            "entry_sieve_filter_winrate_min": entry_sieve.get("sieve_filter_winrate_min", ""),
+            "entry_sieve_filter_profit_min": entry_sieve.get("sieve_filter_profit_min", ""),
+            "entry_sieve_filter_drawdown_max": entry_sieve.get("sieve_filter_drawdown_max", ""),
+            "entry_sieve_filter_trades_min": entry_sieve.get("sieve_filter_trades_min", ""),
+            "entry_sieve_filter_tp_eq": entry_sieve.get("sieve_filter_tp_eq", ""),
+            "entry_sieve_filter_sl_eq": entry_sieve.get("sieve_filter_sl_eq", ""),
+            "entry_sieve_column_order": list(entry_sieve.get("sieve_column_order") or []),
             "news_config_path": news.get("config_path", ""),
             "news_data_dir": news.get("data_dir", ""),
             "news_db_path": news.get("db_path", ""),
@@ -623,7 +655,7 @@ class LauncherV2(tk.Tk):
         target_keys: list[str] = []
         if owner and owner in self.tabs:
             target_keys.append(owner)
-        if owner == "explorer" and "run" in self.tabs:
+        if owner in {"explorer", "entry_sieve"} and "run" in self.tabs:
             target_keys.append("run")
         if owner == "explorer" and "explorer_summary" in self.tabs:
             target_keys.append("explorer_summary")
@@ -647,7 +679,7 @@ class LauncherV2(tk.Tk):
                     {
                         "stream": "entry_sieve_log",
                         "text": log_text,
-                        "owner": "explorer",
+                        "owner": "entry_sieve",
                         "log_file": "",
                     }
                 )
@@ -659,7 +691,7 @@ class LauncherV2(tk.Tk):
                     {
                         "stream": "entry_sieve_status",
                         "text": line,
-                        "owner": "explorer",
+                        "owner": "entry_sieve",
                         "log_file": "",
                     }
                 )

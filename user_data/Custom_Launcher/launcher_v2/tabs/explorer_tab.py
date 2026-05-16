@@ -12,6 +12,7 @@ from ..services.collector_service import open_path
 from ..services.entry_sieve_service import EntrySieveService, EntrySieveSettings
 from ..services.explorer_service import ExplorerRunSettings, ExplorerService
 from ..ui_helpers import labeled_entry, set_tree_rows
+from .explorer_summary_tab import ExplorerSummaryTab
 
 
 def _split_list(value: Any) -> list[str]:
@@ -297,7 +298,9 @@ class ExplorerTab(BaseTab):
         open_scroll_x.grid(row=1, column=0, sticky="ew", pady=(4, 0))
         self.open_support_params_tree.configure(yscrollcommand=open_scroll_y.set, xscrollcommand=open_scroll_x.set)
 
-        self._build_entry_sieve_tab(notebook)
+        summary_tab = ExplorerSummaryTab(notebook, self.context)
+        self.child_tabs = {summary_tab.tab_key: summary_tab}
+        notebook.add(summary_tab, text="Summary")
 
     def _build_entry_sieve_tab(self, notebook: ttk.Notebook) -> None:
         sieve_tab = ttk.Frame(notebook, style="App.TFrame", padding=4)

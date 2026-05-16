@@ -92,6 +92,9 @@ Scope:
   - Backtest champion and challenger on validation windows.
   - Accept only if scoring/guards improve.
   - Persist accepted params to the strategy param file.
+- Explorer summary:
+  - Lives inside the top-level Explorer tab as the `Summary` sub-tab.
+  - Reads compact summary and audit metadata from Explorer reports.
 
 ## 6. Explorer Acceptance
 
@@ -130,7 +133,8 @@ Scope:
   - Runs one configured batch from `sieve_strategy_batches.json`.
   - Use this for focused family runs.
 - Batch queue:
-  - Comma-separated batch ids.
+  - Top-level Entry Sieve tab shows a selectable batch list populated from `sieve_strategy_batches.json`.
+  - Select one or more batch ids; the hidden queue value is saved from that selection.
   - Runs batches sequentially.
   - Good for overnight or unattended sweeps.
 - Batch priority:
@@ -368,11 +372,11 @@ Scope:
   - from `user_data/Custom_Launcher`
   - `python -B -m launcher_v2.app`
 - Run one Entry Sieve batch:
-  - Explorer tab -> Entry Sieve -> choose batch -> Run Entry Sieve.
+  - Entry Sieve tab -> Config -> choose Strategy batch -> Run Entry Sieve.
 - Run queued batches:
-  - Enter comma-separated batch ids.
+  - Entry Sieve tab -> Config -> select batch ids in Batch Queue.
   - Pick priority.
-  - Run batch queue.
+  - Run selected batch queue.
 - Monitor active run:
   - inspect `runtime/entry_sieve/active.json`
   - inspect matching `status/<job_id>.json`
