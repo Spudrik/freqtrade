@@ -10,6 +10,7 @@ from .global_context_tab import GlobalContextTab
 from .news_tab import NewsTab
 from .web_tab import WebTab
 from .orderbook_tab import OrderBookTab
+from .data_watchdog_tab import DataWatchdogTab
 
 
 class DataManagementTab(BaseTab):
@@ -22,6 +23,7 @@ class DataManagementTab(BaseTab):
         WebTab,
         GlobalContextTab,
         OrderBookTab,
+        DataWatchdogTab,
     ]
 
     def __init__(self, master: tk.Misc, context: Any) -> None:

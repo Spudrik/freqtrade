@@ -3,6 +3,9 @@
 - Strategy files intended for HyperOpt must be standalone strategy modules, including Sieve1 and future sieve files.
 - Do not use parent strategies, mixin strategy bases, or external strategy helper files for hyperopted strategy files. Freqtrade multi-process HyperOpt pickling can break when strategy logic depends on helper files or inherited strategy classes.
 - Indicator modules under `user_data/Indicators/` are allowed dependencies when the task explicitly uses indicator outputs; do not edit indicators unless the user asks.
+- Strategy agents cannot tweak, retune, or reshape indicators. Indicator contracts take priority; adapt strategy files to the current strategy-facing indicator outputs.
+- Strategy agents may suggest indicator improvements or ask for additional strategy-facing levers, but they must not implement those changes inside indicator files.
+- Strategy-agent work is limited to strategy files and explicitly requested strategy infrastructure. The objective is to find statistically qualitative entries through Sieve diagnostics, not to make indicators fit a strategy idea.
 - Sieve1 results have no pass/fail or acceptance criteria. Treat results as informative diagnostics for refining useful entry signals.
 - Sieve1 is the entry-quality sieve. Future Sieve2/Sieve3/Sieve4 passes may test exits, adds, global guards, or other ideas, but do not implement those without explicit user request.
 - Use the `sieve1_` file prefix and `Sieve1` class prefix for current entry-sieve strategy files so future sieve generations can be filtered cleanly.

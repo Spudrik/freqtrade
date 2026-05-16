@@ -99,7 +99,7 @@ class Sieve1SupplyZoneRejectShort(IStrategy):
     INTERFACE_VERSION = 3
 
     timeframe = "1h"
-    startup_candle_count = 1200
+    startup_candle_count = 336
     process_only_new_candles = True
     can_short = True
 
@@ -112,60 +112,60 @@ class Sieve1SupplyZoneRejectShort(IStrategy):
     trailing_stop = False
     ignore_roi_if_entry_signal = False
 
-    breakout_buffer_pct = tagged_parameter(DecimalParameter(0.000, 0.030, decimals=3, default=0.004, space="buy", optimize=True, load=True))
-    reclaim_buffer_pct = tagged_parameter(DecimalParameter(0.000, 0.035, decimals=3, default=0.006, space="buy", optimize=True, load=True))
-    sweep_buffer_pct = tagged_parameter(DecimalParameter(0.000, 0.040, decimals=3, default=0.006, space="buy", optimize=True, load=True))
-    zone_near_pct = tagged_parameter(DecimalParameter(0.000, 0.035, decimals=3, default=0.010, space="buy", optimize=True, load=True))
-    rolling_level_lookback = tagged_parameter(IntParameter(12, 240, default=72, space="buy", optimize=True, load=True))
-    equal_level_lookback = tagged_parameter(IntParameter(12, 240, default=72, space="buy", optimize=True, load=True))
-    equal_level_tolerance_pct = tagged_parameter(DecimalParameter(0.001, 0.025, decimals=3, default=0.006, space="buy", optimize=True, load=True))
-    equal_level_min_touches = tagged_parameter(IntParameter(2, 6, default=2, space="buy", optimize=True, load=True))
+    breakout_buffer_pct = tagged_parameter(CategoricalParameter([0.0, 0.003, 0.004, 0.006, 0.012], default=0.004, space="buy", optimize=False, load=True))
+    reclaim_buffer_pct = tagged_parameter(CategoricalParameter([0.0, 0.006, 0.012, 0.02], default=0.006, space="buy", optimize=True, load=True))
+    sweep_buffer_pct = tagged_parameter(CategoricalParameter([0.0, 0.006, 0.012, 0.02], default=0.006, space="buy", optimize=False, load=True))
+    zone_near_pct = tagged_parameter(CategoricalParameter([0.005, 0.01, 0.02], default=0.01, space="buy", optimize=True, load=True))
+    rolling_level_lookback = tagged_parameter(CategoricalParameter([48, 72, 120, 168], default=72, space="buy", optimize=False, load=True))
+    equal_level_lookback = tagged_parameter(CategoricalParameter([48, 72, 120], default=72, space="buy", optimize=False, load=True))
+    equal_level_tolerance_pct = tagged_parameter(CategoricalParameter([0.003, 0.006, 0.012], default=0.006, space="buy", optimize=False, load=True))
+    equal_level_min_touches = tagged_parameter(CategoricalParameter([2, 3, 4], default=2, space="buy", optimize=False, load=True))
     confluence_period = tagged_parameter(CategoricalParameter(PERIOD_CHOICES, default="day", space="buy", optimize=False, load=True))
 
-    avwap_anchor_lookback = tagged_parameter(IntParameter(24, 336, default=120, space="buy", optimize=True, load=True))
-    avwap_band_mult = tagged_parameter(DecimalParameter(0.25, 3.00, decimals=2, default=1.25, space="buy", optimize=True, load=True))
+    avwap_anchor_lookback = tagged_parameter(CategoricalParameter([72, 120, 240], default=120, space="buy", optimize=False, load=True))
+    avwap_band_mult = tagged_parameter(CategoricalParameter([0.75, 1.25, 2.0], default=1.25, space="buy", optimize=False, load=True))
 
-    zone_impulse_window = tagged_parameter(IntParameter(12, 96, default=36, space="buy", optimize=True, load=True))
-    zone_impulse_atr_min = tagged_parameter(DecimalParameter(0.20, 3.00, decimals=2, default=0.80, space="buy", optimize=True, load=True))
-    zone_body_fraction_min = tagged_parameter(DecimalParameter(0.30, 0.90, decimals=2, default=0.55, space="buy", optimize=True, load=True))
-    zone_volume_ratio_min = tagged_parameter(DecimalParameter(0.00, 3.00, decimals=2, default=1.10, space="buy", optimize=True, load=True))
-    zone_max_age_bars = tagged_parameter(IntParameter(6, 240, default=72, space="buy", optimize=True, load=True))
+    zone_impulse_window = tagged_parameter(IntParameter(12, 96, default=36, space="buy", optimize=False, load=True))
+    zone_impulse_atr_min = tagged_parameter(DecimalParameter(0.20, 3.00, decimals=2, default=0.80, space="buy", optimize=False, load=True))
+    zone_body_fraction_min = tagged_parameter(DecimalParameter(0.30, 0.90, decimals=2, default=0.55, space="buy", optimize=False, load=True))
+    zone_volume_ratio_min = tagged_parameter(DecimalParameter(0.00, 3.00, decimals=2, default=1.10, space="buy", optimize=False, load=True))
+    zone_max_age_bars = tagged_parameter(CategoricalParameter([24, 72, 168], default=72, space="buy", optimize=True, load=True))
 
     use_volume_guard = tagged_parameter(BooleanParameter(default=False, space="buy", optimize=True, load=True))
-    volume_window = tagged_parameter(IntParameter(6, 96, default=24, space="buy", optimize=True, load=True))
-    volume_ratio_min = tagged_parameter(DecimalParameter(0.00, 5.00, decimals=2, default=0.80, space="buy", optimize=True, load=True))
-    pressure_min = tagged_parameter(DecimalParameter(0.00, 1.00, decimals=2, default=0.05, space="buy", optimize=True, load=True))
+    volume_window = tagged_parameter(CategoricalParameter([12, 24, 48], default=24, space="buy", optimize=True, load=True))
+    volume_ratio_min = tagged_parameter(CategoricalParameter([0.8, 1.0, 1.3, 1.6], default=0.8, space="buy", optimize=True, load=True))
+    pressure_min = tagged_parameter(CategoricalParameter([0.05, 0.1, 0.2, 0.35], default=0.05, space="buy", optimize=True, load=True))
 
-    use_trend_guard = tagged_parameter(BooleanParameter(default=False, space="buy", optimize=True, load=True))
-    trend_fast_period = tagged_parameter(IntParameter(3, 72, default=21, space="buy", optimize=True, load=True))
-    trend_slow_period = tagged_parameter(IntParameter(24, 240, default=96, space="buy", optimize=True, load=True))
+    use_trend_guard = tagged_parameter(BooleanParameter(default=False, space="buy", optimize=False, load=True))
+    trend_fast_period = tagged_parameter(IntParameter(3, 72, default=21, space="buy", optimize=False, load=True))
+    trend_slow_period = tagged_parameter(IntParameter(24, 240, default=96, space="buy", optimize=False, load=True))
 
-    vp_window = tagged_parameter(IntParameter(24, 168, default=96, space="buy", optimize=True, load=True))
-    vp_bins = tagged_parameter(IntParameter(24, 72, default=48, space="buy", optimize=True, load=True))
-    vp_value_area_pct = tagged_parameter(DecimalParameter(0.55, 0.85, decimals=2, default=0.70, space="buy", optimize=True, load=True))
-    vp_price_source = tagged_parameter(CategoricalParameter(PRICE_SOURCE_CHOICES, default="hlc3", space="buy", optimize=True, load=True))
-    vp_smooth_bins = tagged_parameter(IntParameter(1, 6, default=3, space="buy", optimize=True, load=True))
-    vp_hvn_threshold = tagged_parameter(DecimalParameter(0.50, 0.90, decimals=2, default=0.70, space="buy", optimize=True, load=True))
-    vp_lvn_threshold = tagged_parameter(DecimalParameter(0.10, 0.55, decimals=2, default=0.35, space="buy", optimize=True, load=True))
-    vp_pressure_delta_min = tagged_parameter(DecimalParameter(0.00, 0.35, decimals=2, default=0.05, space="buy", optimize=True, load=True))
-    vp_node_near_pct = tagged_parameter(DecimalParameter(0.002, 0.030, decimals=3, default=0.010, space="buy", optimize=True, load=True))
-    vp_volume_percentile_min = tagged_parameter(DecimalParameter(0.00, 0.90, decimals=2, default=0.55, space="buy", optimize=True, load=True))
-    vp_score_window = tagged_parameter(IntParameter(12, 120, default=48, space="buy", optimize=True, load=True))
-    vp_fast_traverse_atr_mult = tagged_parameter(DecimalParameter(0.50, 2.80, decimals=2, default=1.20, space="buy", optimize=True, load=True))
-    vp_entry_score_margin = tagged_parameter(DecimalParameter(0.00, 0.20, decimals=2, default=0.02, space="buy", optimize=True, load=True))
+    vp_window = tagged_parameter(IntParameter(24, 168, default=96, space="buy", optimize=False, load=True))
+    vp_bins = tagged_parameter(IntParameter(24, 72, default=48, space="buy", optimize=False, load=True))
+    vp_value_area_pct = tagged_parameter(DecimalParameter(0.55, 0.85, decimals=2, default=0.70, space="buy", optimize=False, load=True))
+    vp_price_source = tagged_parameter(CategoricalParameter(PRICE_SOURCE_CHOICES, default="hlc3", space="buy", optimize=False, load=True))
+    vp_smooth_bins = tagged_parameter(IntParameter(1, 6, default=3, space="buy", optimize=False, load=True))
+    vp_hvn_threshold = tagged_parameter(DecimalParameter(0.50, 0.90, decimals=2, default=0.70, space="buy", optimize=False, load=True))
+    vp_lvn_threshold = tagged_parameter(DecimalParameter(0.10, 0.55, decimals=2, default=0.35, space="buy", optimize=False, load=True))
+    vp_pressure_delta_min = tagged_parameter(DecimalParameter(0.00, 0.35, decimals=2, default=0.05, space="buy", optimize=False, load=True))
+    vp_node_near_pct = tagged_parameter(CategoricalParameter([0.005, 0.01, 0.02], default=0.01, space="buy", optimize=False, load=True))
+    vp_volume_percentile_min = tagged_parameter(DecimalParameter(0.00, 0.90, decimals=2, default=0.55, space="buy", optimize=False, load=True))
+    vp_score_window = tagged_parameter(IntParameter(12, 120, default=48, space="buy", optimize=False, load=True))
+    vp_fast_traverse_atr_mult = tagged_parameter(CategoricalParameter([0.8, 1.2, 1.8], default=1.2, space="buy", optimize=False, load=True))
+    vp_entry_score_margin = tagged_parameter(CategoricalParameter([0.0, 0.02, 0.05, 0.1], default=0.02, space="buy", optimize=False, load=True))
 
-    use_vp_1h_guard = tagged_parameter(BooleanParameter(default=False, space="buy", optimize=True, load=True))
-    vp_guard_mode = tagged_parameter(CategoricalParameter(GUARD_MODE_CHOICES, default="score_or_context", space="buy", optimize=True, load=True))
-    vp_score_min = tagged_parameter(DecimalParameter(0.00, 1.00, decimals=2, default=0.25, space="buy", optimize=True, load=True))
-    vp_context_min = tagged_parameter(DecimalParameter(0.00, 1.00, decimals=2, default=0.28, space="buy", optimize=True, load=True))
+    use_vp_1h_guard = tagged_parameter(BooleanParameter(default=False, space="buy", optimize=False, load=True))
+    vp_guard_mode = tagged_parameter(CategoricalParameter(GUARD_MODE_CHOICES, default="score_or_context", space="buy", optimize=False, load=True))
+    vp_score_min = tagged_parameter(DecimalParameter(0.00, 1.00, decimals=2, default=0.25, space="buy", optimize=False, load=True))
+    vp_context_min = tagged_parameter(DecimalParameter(0.00, 1.00, decimals=2, default=0.28, space="buy", optimize=False, load=True))
 
-    use_vp_4h_guard = tagged_parameter(BooleanParameter(default=False, space="buy", optimize=True, load=True))
-    vp_4h_window = tagged_parameter(IntParameter(12, 96, default=48, space="buy", optimize=True, load=True))
-    vp_4h_bins = tagged_parameter(IntParameter(16, 64, default=36, space="buy", optimize=True, load=True))
+    use_vp_4h_guard = tagged_parameter(BooleanParameter(default=False, space="buy", optimize=False, load=True))
+    vp_4h_window = tagged_parameter(IntParameter(12, 96, default=48, space="buy", optimize=False, load=True))
+    vp_4h_bins = tagged_parameter(IntParameter(16, 64, default=36, space="buy", optimize=False, load=True))
 
-    use_vp_1d_guard = tagged_parameter(BooleanParameter(default=False, space="buy", optimize=True, load=True))
-    vp_1d_window = tagged_parameter(IntParameter(10, 84, default=30, space="buy", optimize=True, load=True))
-    vp_1d_bins = tagged_parameter(IntParameter(16, 64, default=36, space="buy", optimize=True, load=True))
+    use_vp_1d_guard = tagged_parameter(BooleanParameter(default=False, space="buy", optimize=False, load=True))
+    vp_1d_window = tagged_parameter(IntParameter(10, 84, default=30, space="buy", optimize=False, load=True))
+    vp_1d_bins = tagged_parameter(IntParameter(16, 64, default=36, space="buy", optimize=False, load=True))
 
     def leverage(self, pair: str, current_time: datetime, current_rate: float, proposed_leverage: float, max_leverage: float, entry_tag: str | None, side: str, **kwargs: Any) -> float:
         _ = pair, current_time, current_rate, proposed_leverage, max_leverage, entry_tag, side, kwargs

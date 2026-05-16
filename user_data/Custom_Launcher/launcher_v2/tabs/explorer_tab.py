@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 import tkinter as tk
 from tkinter import messagebox, ttk
@@ -21,6 +22,9 @@ def _split_list(value: Any) -> list[str]:
 
 
 SIEVE_RESULT_COLUMNS = (
+    "score",
+    "strategy_batch",
+    "speed_run_mode",
     "strategy",
     "side",
     "core_behavior",
@@ -45,6 +49,9 @@ SIEVE_RESULT_COLUMNS = (
 )
 
 SIEVE_DEFAULT_COLUMN_ORDER = (
+    "score",
+    "strategy_batch",
+    "speed_run_mode",
     "winrate",
     "max_drawdown_pct",
     "profit_total_abs",
@@ -96,11 +103,19 @@ class ExplorerTab(BaseTab):
         self.backtest_worker_count_var = tk.StringVar(value=default_settings.backtest_worker_count)
         self.pipeline_handoff_dir_var = tk.StringVar(value=default_settings.pipeline_handoff_dir)
         self.sieve_strategy_filter_var = tk.StringVar(value="sieve1_*.py")
+        self.sieve_strategy_batch_var = tk.StringVar(value="all")
+        self.sieve_batch_queue_var = tk.StringVar(value="volume_profile,structure_levels,continuation_patterns,reversal_patterns,market_state_pressure,multi_confluence,small_concepts,avwap,zones")
+        self.sieve_batch_priority_var = tk.StringVar(value="least_run_first")
+        self.sieve_speed_run_var = tk.BooleanVar(value=False)
+        self.sieve_speed_pair_count_var = tk.StringVar(value="5")
         self.sieve_take_profit_var = tk.StringVar(value="2")
         self.sieve_stoploss_var = tk.StringVar(value="2")
+        self.sieve_auto_windows_var = tk.BooleanVar(value=True)
+        self.sieve_auto_window_count_var = tk.StringVar(value="2")
         self.sieve_target_sweep_var = tk.BooleanVar(value=False)
         self.sieve_target_pairs_var = tk.StringVar(value="1/1, 1.5/1.5, 2/2, 3/2, 4/2, 2/3, 3/3")
         self.sieve_result_batch_var = tk.StringVar(value="")
+        self.sieve_result_batch_filter_var = tk.StringVar(value="")
         self.sieve_filter_var = tk.StringVar(value="")
         self.sieve_filter_winrate_min_var = tk.StringVar(value="")
         self.sieve_filter_profit_min_var = tk.StringVar(value="")
@@ -109,7 +124,7 @@ class ExplorerTab(BaseTab):
         self.sieve_filter_tp_eq_var = tk.StringVar(value="")
         self.sieve_filter_sl_eq_var = tk.StringVar(value="")
         self.sieve_status_var = tk.StringVar(value="Run status: idle")
-        self._sieve_sort_column = "profit_total_abs"
+        self._sieve_sort_column = "score"
         self._sieve_sort_reverse = True
         self._catalog_rows: list[dict[str, Any]] = []
         self._window_rows: list[dict[str, str]] = []
@@ -119,6 +134,7 @@ class ExplorerTab(BaseTab):
         self.target_params_tree: ttk.Treeview | None = None
         self.open_support_params_tree: ttk.Treeview | None = None
         self.sieve_result_batch_combo: ttk.Combobox | None = None
+        self.sieve_strategy_batch_combo: ttk.Combobox | None = None
         self.sieve_results_tree: ttk.Treeview | None = None
         self.sieve_result_columns: tuple[str, ...] = ()
         self.sieve_column_order: list[str] = list(SIEVE_DEFAULT_COLUMN_ORDER)
@@ -292,22 +308,34 @@ class ExplorerTab(BaseTab):
         controls.grid(row=0, column=0, sticky="ew", padx=8, pady=8)
         for col in (1, 3, 5):
             controls.grid_columnconfigure(col, weight=1)
-        self._editable_entry(controls, 0, 0, "Strategy filter", self.sieve_strategy_filter_var)
-        self._editable_entry(controls, 0, 2, "Take profit %", self.sieve_take_profit_var)
-        self._editable_entry(controls, 0, 4, "Stoploss %", self.sieve_stoploss_var)
-        ttk.Label(controls, text="Result batch").grid(row=1, column=0, sticky="w", padx=8, pady=4)
-        self.sieve_result_batch_combo = ttk.Combobox(controls, textvariable=self.sieve_result_batch_var, state="readonly")
-        self.sieve_result_batch_combo.grid(row=1, column=1, sticky="ew", padx=8, pady=4)
-        self._editable_entry(controls, 1, 2, "Result filter", self.sieve_filter_var)
-        ttk.Checkbutton(controls, text="Target sweep", variable=self.sieve_target_sweep_var).grid(row=2, column=0, sticky="w", padx=8, pady=4)
-        self._editable_entry(controls, 2, 2, "TP/SL grid", self.sieve_target_pairs_var)
-        ttk.Button(controls, text="Run Entry Sieve", command=self._run_entry_sieve).grid(row=3, column=0, sticky="w", padx=8, pady=4)
-        ttk.Button(controls, text="Refresh results", command=self._refresh_sieve_results).grid(row=3, column=1, sticky="w", padx=8, pady=4)
-        ttk.Button(controls, text="Move column left", command=lambda: self._move_sieve_column(-1)).grid(row=3, column=2, sticky="w", padx=8, pady=4)
-        ttk.Button(controls, text="Move column right", command=lambda: self._move_sieve_column(1)).grid(row=3, column=3, sticky="w", padx=8, pady=4)
-        ttk.Button(controls, text="Reset columns", command=self._reset_sieve_columns).grid(row=3, column=4, sticky="w", padx=8, pady=4)
-        ttk.Button(controls, text="Open results folder", command=self._open_sieve_results_folder).grid(row=3, column=5, sticky="w", padx=8, pady=4)
-        ttk.Label(controls, textvariable=self.sieve_status_var).grid(row=4, column=0, columnspan=6, sticky="w", padx=8, pady=4)
+        ttk.Label(controls, text="Strategy batch").grid(row=0, column=0, sticky="w", padx=8, pady=4)
+        self.sieve_strategy_batch_combo = ttk.Combobox(controls, textvariable=self.sieve_strategy_batch_var, state="readonly")
+        self.sieve_strategy_batch_combo.grid(row=0, column=1, sticky="ew", padx=8, pady=4)
+        self._editable_entry(controls, 0, 2, "Strategy filter", self.sieve_strategy_filter_var)
+        ttk.Checkbutton(controls, text="Speed run", variable=self.sieve_speed_run_var).grid(row=0, column=4, sticky="w", padx=8, pady=4)
+        self._editable_entry(controls, 0, 5, "Speed pairs", self.sieve_speed_pair_count_var)
+        self._editable_entry(controls, 1, 0, "Take profit %", self.sieve_take_profit_var)
+        self._editable_entry(controls, 1, 2, "Stoploss %", self.sieve_stoploss_var)
+        ttk.Label(controls, text="Result batches").grid(row=1, column=4, sticky="w", padx=8, pady=4)
+        self.sieve_result_batch_combo = ttk.Combobox(controls, textvariable=self.sieve_result_batch_var, state="normal")
+        self.sieve_result_batch_combo.grid(row=1, column=5, sticky="ew", padx=8, pady=4)
+        self._editable_entry(controls, 2, 0, "Batch queue", self.sieve_batch_queue_var)
+        ttk.Label(controls, text="Queue priority").grid(row=2, column=2, sticky="w", padx=8, pady=4)
+        ttk.Combobox(controls, textvariable=self.sieve_batch_priority_var, values=("least_run_first", "configured"), state="readonly").grid(row=2, column=3, sticky="ew", padx=8, pady=4)
+        self._editable_entry(controls, 2, 4, "Result file filter", self.sieve_result_batch_filter_var)
+        ttk.Checkbutton(controls, text="Auto windows", variable=self.sieve_auto_windows_var).grid(row=3, column=0, sticky="w", padx=8, pady=4)
+        ttk.Label(controls, text="Windows/file").grid(row=3, column=1, sticky="e", padx=8, pady=4)
+        ttk.Combobox(controls, textvariable=self.sieve_auto_window_count_var, values=("1", "2", "3"), state="readonly", width=6).grid(row=3, column=2, sticky="w", padx=8, pady=4)
+        ttk.Checkbutton(controls, text="Target sweep", variable=self.sieve_target_sweep_var).grid(row=3, column=3, sticky="w", padx=8, pady=4)
+        self._editable_entry(controls, 3, 4, "TP/SL grid", self.sieve_target_pairs_var)
+        ttk.Button(controls, text="Run Entry Sieve", command=self._run_entry_sieve).grid(row=4, column=0, sticky="w", padx=8, pady=4)
+        ttk.Button(controls, text="Run batch queue", command=self._run_entry_sieve_batch_queue).grid(row=4, column=1, sticky="w", padx=8, pady=4)
+        ttk.Button(controls, text="Refresh results", command=self._refresh_sieve_results).grid(row=4, column=2, sticky="w", padx=8, pady=4)
+        ttk.Button(controls, text="Move column left", command=lambda: self._move_sieve_column(-1)).grid(row=4, column=3, sticky="w", padx=8, pady=4)
+        ttk.Button(controls, text="Move column right", command=lambda: self._move_sieve_column(1)).grid(row=4, column=4, sticky="w", padx=8, pady=4)
+        ttk.Button(controls, text="Reset columns", command=self._reset_sieve_columns).grid(row=4, column=5, sticky="w", padx=8, pady=4)
+        ttk.Button(controls, text="Open results folder", command=self._open_sieve_results_folder).grid(row=5, column=0, sticky="w", padx=8, pady=4)
+        ttk.Label(controls, textvariable=self.sieve_status_var).grid(row=6, column=0, columnspan=6, sticky="w", padx=8, pady=4)
 
         filters = ttk.LabelFrame(sieve_tab, text="Result column filters")
         filters.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 8))
@@ -319,7 +347,8 @@ class ExplorerTab(BaseTab):
         self._editable_entry(filters, 0, 6, "Trades >=", self.sieve_filter_trades_min_var)
         self._editable_entry(filters, 1, 0, "TP % =", self.sieve_filter_tp_eq_var)
         self._editable_entry(filters, 1, 2, "SL % =", self.sieve_filter_sl_eq_var)
-        ttk.Button(filters, text="Clear filters", command=self._clear_sieve_column_filters).grid(row=1, column=4, sticky="w", padx=8, pady=4)
+        self._editable_entry(filters, 1, 4, "Row contains", self.sieve_filter_var)
+        ttk.Button(filters, text="Clear filters", command=self._clear_sieve_column_filters).grid(row=1, column=6, sticky="w", padx=8, pady=4)
 
         results = ttk.LabelFrame(sieve_tab, text="Runtime results")
         results.grid(row=2, column=0, sticky="nsew", padx=8, pady=(0, 8))
@@ -328,6 +357,9 @@ class ExplorerTab(BaseTab):
         columns = SIEVE_RESULT_COLUMNS
         self.sieve_results_tree = ttk.Treeview(results, columns=columns, show="headings", height=14)
         headings = {
+            "score": "Score",
+            "strategy_batch": "Batch",
+            "speed_run_mode": "Speed",
             "strategy": "Strategy",
             "side": "Side",
             "core_behavior": "Core behaviour",
@@ -357,9 +389,18 @@ class ExplorerTab(BaseTab):
             width = 95
             minwidth = 80
             stretch = False
-            if column == "strategy":
+            if column == "score":
+                width = 90
+                minwidth = 70
+            elif column == "strategy":
                 width = 360
                 minwidth = 320
+            elif column == "strategy_batch":
+                width = 150
+                minwidth = 110
+            elif column == "speed_run_mode":
+                width = 70
+                minwidth = 60
             elif column == "side":
                 width = 70
                 minwidth = 60
@@ -409,8 +450,11 @@ class ExplorerTab(BaseTab):
         self.target_selection_var.trace_add("write", lambda *_: self._update_specific_target_state())
         self.search_breadth_var.trace_add("write", lambda *_: self._show_target_params(self._active_target_label))
         self.auto_epochs_var.trace_add("write", lambda *_: self._update_epochs_mode_state())
+        self.sieve_speed_run_var.trace_add("write", lambda *_: self._update_epochs_mode_state())
+        self.sieve_result_batch_filter_var.trace_add("write", lambda *_: self._refresh_sieve_results())
         self.sieve_filter_var.trace_add("write", lambda *_: self._refresh_sieve_results())
         for variable in (
+            self.sieve_filter_var,
             self.sieve_filter_winrate_min_var,
             self.sieve_filter_profit_min_var,
             self.sieve_filter_drawdown_max_var,
@@ -426,6 +470,7 @@ class ExplorerTab(BaseTab):
         if self.coverage_tree is not None:
             self.coverage_tree.bind("<<TreeviewSelect>>", self._coverage_selected, add="+")
         self._update_epochs_mode_state()
+        self._update_sieve_speed_run_state()
 
     def _update_epochs_mode_state(self) -> None:
         auto = bool(self.auto_epochs_var.get())
@@ -435,6 +480,15 @@ class ExplorerTab(BaseTab):
             self.epochs_entry.configure(state="disabled" if auto else "normal")
         if self.auto_epochs_cap_entry is not None:
             self.auto_epochs_cap_entry.configure(state="normal" if auto else "disabled")
+        self._update_sieve_speed_run_state()
+
+    def _update_sieve_speed_run_state(self) -> None:
+        if not hasattr(self, "sieve_speed_run_var") or not bool(self.sieve_speed_run_var.get()):
+            return
+        if self.epochs_entry is not None:
+            self.epochs_entry.configure(state="disabled")
+        if self.auto_epochs_cap_entry is not None:
+            self.auto_epochs_cap_entry.configure(state="disabled")
 
     def _strategy_context(self) -> tuple[str, str]:
         common = self.context.registry.get("common")
@@ -460,8 +514,22 @@ class ExplorerTab(BaseTab):
 
     def refresh(self) -> None:
         self._load_windows()
+        self._load_sieve_batches()
         self._load_catalog()
         self._update_specific_target_state()
+
+    def _load_sieve_batches(self) -> None:
+        if self.sieve_strategy_batch_combo is None:
+            return
+        try:
+            batches = self.sieve_service.load_strategy_batches()
+            values = [str(batch.get("id") or "") for batch in batches if str(batch.get("id") or "").strip()]
+        except Exception as exc:
+            values = ["all"]
+            self.context.shared.status.set(f"Entry Sieve batch load failed: {exc}")
+        self.sieve_strategy_batch_combo.configure(values=values)
+        if self.sieve_strategy_batch_var.get() not in values:
+            self.sieve_strategy_batch_var.set(values[0] if values else "all")
 
     def _load_windows(self) -> None:
         self._window_rows = self.service.load_windows("explorer/config/market_windows.json")
@@ -661,6 +729,8 @@ class ExplorerTab(BaseTab):
     def _sieve_settings(self) -> EntrySieveSettings:
         return EntrySieveSettings(
             preset_name="LauncherV2-auto",
+            auto_window_mode=self.sieve_auto_windows_var.get(),
+            auto_window_count=self.sieve_auto_window_count_var.get(),
             training_windows=self._selected_values(self.training_listbox) if self.training_listbox is not None else [],
             validation_windows=self._selected_values(self.validation_listbox) if self.validation_listbox is not None else [],
             epochs=self.epochs_var.get(),
@@ -672,7 +742,11 @@ class ExplorerTab(BaseTab):
             backtest_python_exe=self.backtest_python_exe_var.get(),
             backtest_worker_count=self.backtest_worker_count_var.get(),
             pipeline_handoff_dir=self.pipeline_handoff_dir_var.get(),
+            strategy_batch=self.sieve_strategy_batch_var.get(),
+            batch_queue_priority=self.sieve_batch_priority_var.get(),
             strategy_filter=self.sieve_strategy_filter_var.get(),
+            speed_run_mode=self.sieve_speed_run_var.get(),
+            speed_pair_count=self.sieve_speed_pair_count_var.get(),
             take_profit_pct=self.sieve_take_profit_var.get(),
             stoploss_pct=self.sieve_stoploss_var.get(),
             target_sweep_enabled=self.sieve_target_sweep_var.get(),
@@ -704,6 +778,20 @@ class ExplorerTab(BaseTab):
         self.context.shared.status.set("Entry Sieve running")
         self.sieve_status_var.set("Run status: starting")
 
+    def _run_entry_sieve_batch_queue(self) -> None:
+        self.refresh()
+        self.preset_name_var.set("LauncherV2-auto")
+        self.context.emit("save_state", {"reason": "entry_sieve_batch_queue_run"})
+        batch_ids = _split_list(self.sieve_batch_queue_var.get())
+        try:
+            command = self.sieve_service.build_batch_queue_command(self._sieve_settings(), batch_ids)
+        except Exception as exc:
+            messagebox.showerror("Entry Sieve batch queue", str(exc), parent=self)
+            return
+        self.context.process_runner.run(command, cwd=str(self.context.app_dir), owner=self.tab_key)
+        self.context.shared.status.set("Entry Sieve batch queue running")
+        self.sieve_status_var.set("Run status: batch queue starting")
+
     def _open_sieve_results_folder(self) -> None:
         try:
             self.sieve_service.results_dir.mkdir(parents=True, exist_ok=True)
@@ -729,15 +817,27 @@ class ExplorerTab(BaseTab):
             status = self.sieve_service.load_run_status()
             self.sieve_status_var.set(self._format_sieve_status(status))
             batches = self.sieve_service.load_result_batches()
+            batch_filter = self.sieve_result_batch_filter_var.get().strip()
+            if batch_filter:
+                batches = [batch for batch in batches if self._sieve_result_batch_matches_filter(batch, batch_filter)]
             batch_ids = [str(batch.get("id") or "") for batch in batches]
             if self.sieve_result_batch_combo is not None:
-                self.sieve_result_batch_combo.configure(values=batch_ids)
+                self.sieve_result_batch_combo.configure(values=["all", *batch_ids])
             selected_batch = self.sieve_result_batch_var.get().strip()
-            if batch_ids and selected_batch not in batch_ids:
+            selected_batches = self._selected_sieve_result_batches(selected_batch, batch_ids)
+            if not batch_ids:
+                if selected_batch:
+                    self.sieve_result_batch_var.set("")
+                selected_batches = []
+                rows = []
+            elif not selected_batches:
                 latest = next((str(batch.get("id") or "") for batch in batches if batch.get("latest")), "")
                 selected_batch = latest or batch_ids[0]
                 self.sieve_result_batch_var.set(selected_batch)
-            rows = self.sieve_service.load_results(selected_batch)
+                selected_batches = [selected_batch]
+                rows = self.sieve_service.load_results(selected_batch)
+            else:
+                rows = self.sieve_service.load_results_many(selected_batches) if len(selected_batches) > 1 else self.sieve_service.load_results(selected_batches[0])
         except Exception as exc:
             self.context.shared.status.set(f"Entry Sieve results load failed: {exc}")
             rows = []
@@ -748,6 +848,9 @@ class ExplorerTab(BaseTab):
         rows = sorted(rows, key=lambda row: self._sieve_sort_key(row, self._sieve_sort_column), reverse=self._sieve_sort_reverse)
         rendered = [
             (
+                self._fmt_result(self._sieve_score(row)),
+                row.get("strategy_batch_label", "") or row.get("strategy_batch", ""),
+                "yes" if row.get("speed_run_mode") else "",
                 row.get("strategy", ""),
                 row.get("side", "") or self._strategy_side(row.get("strategy", "")),
                 row.get("core_behavior", "") or self._strategy_core_behavior(row.get("strategy", "")),
@@ -772,6 +875,26 @@ class ExplorerTab(BaseTab):
             for row in rows
         ]
         set_tree_rows(self.sieve_results_tree, rendered)
+
+    def _selected_sieve_result_batches(self, selection: str, batch_ids: list[str]) -> list[str]:
+        selected = _split_list(selection)
+        if not selected:
+            return []
+        known = set(batch_ids)
+        if any(item.lower() == "all" for item in selected):
+            return batch_ids
+        return [item for item in selected if item in known]
+
+    @staticmethod
+    def _sieve_result_batch_matches_filter(batch: dict[str, Any], filter_text: str) -> bool:
+        tokens = [token.lower() for token in _split_list(filter_text)]
+        if not tokens:
+            return True
+        haystack = " ".join(
+            str(batch.get(key) or "")
+            for key in ("id", "label", "path", "strategy_batch", "strategy_batch_label", "status", "phase")
+        ).lower()
+        return all(token in haystack for token in tokens)
 
     def _apply_sieve_column_filters(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         active_filters: list[tuple[str, str, float, float]] = []
@@ -869,18 +992,23 @@ class ExplorerTab(BaseTab):
 
     @staticmethod
     def _is_legacy_sieve_column_order(order: list[str]) -> bool:
-        return order == list(SIEVE_RESULT_COLUMNS)
+        if "score" not in order:
+            return True
+        batch_columns = {"strategy_batch", "speed_run_mode"}
+        return order == list(SIEVE_RESULT_COLUMNS) or order == [column for column in SIEVE_DEFAULT_COLUMN_ORDER if column not in batch_columns]
 
     def _sort_sieve_results(self, column: str) -> None:
         if self._sieve_sort_column == column:
             self._sieve_sort_reverse = not self._sieve_sort_reverse
         else:
             self._sieve_sort_column = column
-            self._sieve_sort_reverse = column in {"profit_total_abs", "profit_total", "trade_count", "winrate", "best_params_count", "epoch_count"}
+            self._sieve_sort_reverse = column in {"score", "profit_total_abs", "profit_total", "trade_count", "winrate", "best_params_count", "epoch_count"}
         self._refresh_sieve_results()
 
     @staticmethod
     def _sieve_sort_key(row: dict[str, Any], column: str) -> tuple[int, Any]:
+        if column == "score":
+            return (1, ExplorerTab._sieve_score(row))
         if column in {"analysis_read", "analysis_next"}:
             value = ExplorerTab._sieve_analysis(row)[0 if column == "analysis_read" else 1]
             return (1, value.lower())
@@ -920,6 +1048,32 @@ class ExplorerTab(BaseTab):
         if profit < 0:
             return "weak entry", "rethink gate"
         return "flat/noisy", "add context"
+
+    @staticmethod
+    def _sieve_score(row: dict[str, Any]) -> float:
+        if str(row.get("status") or "").strip().lower() != "ok":
+            return -999.0
+        trades = max(0.0, ExplorerTab._to_float(row.get("trade_count")))
+        if trades <= 0:
+            return -100.0
+
+        winrate = min(1.0, max(0.0, ExplorerTab._to_float(row.get("winrate"))))
+        take_profit = max(0.0, ExplorerTab._to_float(row.get("take_profit_pct")))
+        stoploss = max(0.0, ExplorerTab._to_float(row.get("stoploss_pct")))
+        profit_pct = ExplorerTab._to_float(row.get("profit_total")) * 100.0
+
+        if take_profit <= 0 or stoploss <= 0:
+            expectancy_r = 0.0
+        else:
+            expectancy_r = (winrate * take_profit) - ((1.0 - winrate) * stoploss)
+            expectancy_r /= stoploss
+        sample_factor = min(1.0, (trades / 50.0) ** 0.5)
+        activity_bonus = min(15.0, math.log1p(trades) * 3.0)
+
+        score = sample_factor * ((35.0 * winrate) + (45.0 * expectancy_r))
+        score += max(-60.0, min(80.0, profit_pct * 2.5))
+        score += activity_bonus
+        return score
 
     @staticmethod
     def _to_float(value: Any) -> float:
@@ -1020,12 +1174,20 @@ class ExplorerTab(BaseTab):
             "backtest_python_exes": self._settings().backtest_python_exes,
             "backtest_worker_count": self.backtest_worker_count_var.get(),
             "pipeline_handoff_dir": self.pipeline_handoff_dir_var.get(),
+            "sieve_strategy_batch": self.sieve_strategy_batch_var.get(),
+            "sieve_batch_queue": self.sieve_batch_queue_var.get(),
+            "sieve_batch_priority": self.sieve_batch_priority_var.get(),
             "sieve_strategy_filter": self.sieve_strategy_filter_var.get(),
+            "sieve_speed_run": self.sieve_speed_run_var.get(),
+            "sieve_speed_pair_count": self.sieve_speed_pair_count_var.get(),
             "sieve_take_profit_pct": self.sieve_take_profit_var.get(),
             "sieve_stoploss_pct": self.sieve_stoploss_var.get(),
+            "sieve_auto_windows": self.sieve_auto_windows_var.get(),
+            "sieve_auto_window_count": self.sieve_auto_window_count_var.get(),
             "sieve_target_sweep": self.sieve_target_sweep_var.get(),
             "sieve_target_pairs": self.sieve_target_pairs_var.get(),
             "sieve_result_batch": self.sieve_result_batch_var.get(),
+            "sieve_result_batch_filter": self.sieve_result_batch_filter_var.get(),
             "sieve_result_filter": self.sieve_filter_var.get(),
             "sieve_filter_winrate_min": self.sieve_filter_winrate_min_var.get(),
             "sieve_filter_profit_min": self.sieve_filter_profit_min_var.get(),
@@ -1053,12 +1215,22 @@ class ExplorerTab(BaseTab):
         self.backtest_python_exe_var.set(settings.backtest_python_exe)
         self.backtest_worker_count_var.set(settings.backtest_worker_count)
         self.pipeline_handoff_dir_var.set(settings.pipeline_handoff_dir)
+        self.sieve_strategy_batch_var.set(str(state.get("sieve_strategy_batch") or "all"))
+        self.sieve_batch_queue_var.set(str(state.get("sieve_batch_queue") or "volume_profile,structure_levels,continuation_patterns,reversal_patterns,market_state_pressure,multi_confluence,small_concepts,avwap,zones"))
+        self.sieve_batch_priority_var.set(str(state.get("sieve_batch_priority") or "least_run_first"))
         self.sieve_strategy_filter_var.set(str(state.get("sieve_strategy_filter") or "sieve1_*.py"))
+        speed_run = state.get("sieve_speed_run", False)
+        self.sieve_speed_run_var.set(speed_run if isinstance(speed_run, bool) else str(speed_run).strip().lower() in {"1", "true", "yes", "on"})
+        self.sieve_speed_pair_count_var.set(str(state.get("sieve_speed_pair_count") or "5"))
         self.sieve_take_profit_var.set(str(state.get("sieve_take_profit_pct") or "2"))
         self.sieve_stoploss_var.set(str(state.get("sieve_stoploss_pct") or "2"))
+        auto_windows = state.get("sieve_auto_windows")
+        self.sieve_auto_windows_var.set(True if auto_windows is None else str(auto_windows).strip().lower() not in {"0", "false", "no", "off"})
+        self.sieve_auto_window_count_var.set(str(state.get("sieve_auto_window_count") or "2"))
         self.sieve_target_sweep_var.set(bool(state.get("sieve_target_sweep")))
         self.sieve_target_pairs_var.set(str(state.get("sieve_target_pairs") or "1/1, 1.5/1.5, 2/2, 3/2, 4/2, 2/3, 3/3"))
         self.sieve_result_batch_var.set(str(state.get("sieve_result_batch") or ""))
+        self.sieve_result_batch_filter_var.set(str(state.get("sieve_result_batch_filter") or ""))
         self.sieve_filter_var.set(str(state.get("sieve_result_filter") or ""))
         self.sieve_filter_winrate_min_var.set(str(state.get("sieve_filter_winrate_min") or ""))
         self.sieve_filter_profit_min_var.set(str(state.get("sieve_filter_profit_min") or ""))

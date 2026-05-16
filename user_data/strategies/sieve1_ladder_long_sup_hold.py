@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from datetime import datetime
 import os
@@ -12,7 +12,7 @@ from freqtrade.strategy import CategoricalParameter, DecimalParameter, IntParame
 from user_data.Indicators.complex_volume_profile import add_volume_profile
 
 
-LEVEL_LOOKBACK_CHOICES = [48, 96, 168, 336, 720]
+LEVEL_LOOKBACK_CHOICES = [48, 96, 168, 336]
 LOCAL_LOOKBACK_CHOICES = [6, 12, 24, 48]
 VOLUME_WINDOW_CHOICES = [12, 24, 48, 72]
 D1_LEVEL_LOOKBACK_CHOICES = [20, 50, 100, 200]
@@ -50,7 +50,7 @@ class Sieve1LadderLongSupHold(IStrategy):
     INTERFACE_VERSION = 3
     can_short = False
     timeframe = "1h"
-    startup_candle_count = 1200
+    startup_candle_count = 336
     process_only_new_candles = True
 
     minimal_roi = {"0": _pct_env("ENTRY_SIEVE_TAKE_PROFIT_PCT", 0.02)}
@@ -69,48 +69,48 @@ class Sieve1LadderLongSupHold(IStrategy):
     CONFIRMATION_PROFILE = "long_support_hold"
     BREATHING_PROFILE = "none"
 
-    level_lookback = _tag(CategoricalParameter(LEVEL_LOOKBACK_CHOICES, default=168, space="buy", optimize=True, load=True), MODE)
-    local_lookback = _tag(CategoricalParameter(LOCAL_LOOKBACK_CHOICES, default=24, space="buy", optimize=True, load=True), MODE)
-    d1_level_lookback = _tag(CategoricalParameter(D1_LEVEL_LOOKBACK_CHOICES, default=50, space="buy", optimize=True, load=True), MODE)
-    volume_window = _tag(CategoricalParameter(VOLUME_WINDOW_CHOICES, default=24, space="buy", optimize=True, load=True), MODE)
-    d1_volume_window = _tag(CategoricalParameter(D1_VOLUME_WINDOW_CHOICES, default=28, space="buy", optimize=True, load=True), MODE)
-    confirm_bars = _tag(IntParameter(3, 48, default=12, space="buy", optimize=True, load=True), MODE)
-    zone_pct = _tag(DecimalParameter(0.002, 0.040, decimals=3, default=0.012, space="buy", optimize=True, load=True), MODE)
-    trigger_buffer_pct = _tag(DecimalParameter(0.000, 0.020, decimals=3, default=0.003, space="buy", optimize=True, load=True), MODE)
-    h1_rvol_enable = _tag(CategoricalParameter(ENABLE_CHOICES, default="on", space="buy", optimize=True, load=True), MODE)
-    h1_pressure_enable = _tag(CategoricalParameter(ENABLE_CHOICES, default="on", space="buy", optimize=True, load=True), MODE)
-    h1_event_enable = _tag(CategoricalParameter(ENABLE_CHOICES, default="on", space="buy", optimize=True, load=True), MODE)
-    d1_rvol_enable = _tag(CategoricalParameter(ENABLE_CHOICES, default="on", space="buy", optimize=True, load=True), MODE)
-    d1_pressure_enable = _tag(CategoricalParameter(ENABLE_CHOICES, default="on", space="buy", optimize=True, load=True), MODE)
-    d1_structure_mode = _tag(CategoricalParameter(D1_STRUCTURE_MODE_CHOICES, default="near", space="buy", optimize=True, load=True), MODE)
-    h1_rvol_min = _tag(DecimalParameter(0.8, 2.5, decimals=1, default=1.1, space="buy", optimize=True, load=True), MODE)
-    h1_pressure_min = _tag(DecimalParameter(0.0, 1.5, decimals=1, default=0.3, space="buy", optimize=True, load=True), MODE)
-    d1_rvol_min = _tag(DecimalParameter(0.7, 2.2, decimals=1, default=1.0, space="buy", optimize=True, load=True), MODE)
-    d1_pressure_min = _tag(DecimalParameter(0.0, 1.2, decimals=1, default=0.2, space="buy", optimize=True, load=True), MODE)
+    level_lookback = _tag(CategoricalParameter([96, 168, 336], default=168, space="buy", optimize=True, load=True), MODE)
+    local_lookback = _tag(CategoricalParameter([12, 24, 48], default=24, space="buy", optimize=True, load=True), MODE)
+    d1_level_lookback = _tag(CategoricalParameter(D1_LEVEL_LOOKBACK_CHOICES, default=50, space="buy", optimize=False, load=True), MODE)
+    volume_window = _tag(CategoricalParameter([12, 24, 48], default=24, space="buy", optimize=False, load=True), MODE)
+    d1_volume_window = _tag(CategoricalParameter(D1_VOLUME_WINDOW_CHOICES, default=28, space="buy", optimize=False, load=True), MODE)
+    confirm_bars = _tag(CategoricalParameter([3, 6, 12], default=12, space="buy", optimize=True, load=True), MODE)
+    zone_pct = _tag(CategoricalParameter([0.006, 0.012, 0.024], default=0.012, space="buy", optimize=True, load=True), MODE)
+    trigger_buffer_pct = _tag(CategoricalParameter([0.0, 0.003, 0.006, 0.01], default=0.003, space="buy", optimize=True, load=True), MODE)
+    h1_rvol_enable = _tag(CategoricalParameter(['off', 'on'], default='on', space="buy", optimize=True, load=True), MODE)
+    h1_pressure_enable = _tag(CategoricalParameter(['off', 'on'], default='on', space="buy", optimize=True, load=True), MODE)
+    h1_event_enable = _tag(CategoricalParameter(['off', 'on'], default='on', space="buy", optimize=True, load=True), MODE)
+    d1_rvol_enable = _tag(CategoricalParameter(ENABLE_CHOICES, default="on", space="buy", optimize=False, load=True), MODE)
+    d1_pressure_enable = _tag(CategoricalParameter(ENABLE_CHOICES, default="on", space="buy", optimize=False, load=True), MODE)
+    d1_structure_mode = _tag(CategoricalParameter(['off', 'near', 'aligned'], default='near', space="buy", optimize=True, load=True), MODE)
+    h1_rvol_min = _tag(CategoricalParameter([1.0, 1.1, 1.2, 1.6], default=1.1, space="buy", optimize=False, load=True), MODE)
+    h1_pressure_min = _tag(CategoricalParameter([0.1, 0.3, 0.6], default=0.3, space="buy", optimize=False, load=True), MODE)
+    d1_rvol_min = _tag(DecimalParameter(0.7, 2.2, decimals=1, default=1.0, space="buy", optimize=False, load=True), MODE)
+    d1_pressure_min = _tag(DecimalParameter(0.0, 1.2, decimals=1, default=0.2, space="buy", optimize=False, load=True), MODE)
 
-    use_vp_4h_guard = _tag(CategoricalParameter(ENABLE_CHOICES, default="off", space="buy", optimize=True, load=True), MODE)
-    vp_4h_guard_mode = _tag(CategoricalParameter(GUARD_MODE_CHOICES, default="score_or_context", space="buy", optimize=True, load=True), MODE)
-    vp_4h_window = _tag(CategoricalParameter([12, 24, 48, 72, 96], default=48, space="buy", optimize=True, load=True), MODE)
-    vp_4h_bins = _tag(CategoricalParameter([16, 24, 36, 48, 64], default=36, space="buy", optimize=True, load=True), MODE)
-    vp_4h_score_min = _tag(DecimalParameter(0.00, 1.00, decimals=2, default=0.25, space="buy", optimize=True, load=True), MODE)
-    vp_4h_context_min = _tag(DecimalParameter(0.00, 1.00, decimals=2, default=0.28, space="buy", optimize=True, load=True), MODE)
-    use_vp_1d_guard = _tag(CategoricalParameter(ENABLE_CHOICES, default="off", space="buy", optimize=True, load=True), MODE)
-    vp_1d_guard_mode = _tag(CategoricalParameter(GUARD_MODE_CHOICES, default="context", space="buy", optimize=True, load=True), MODE)
-    vp_1d_window = _tag(CategoricalParameter([10, 20, 30, 45, 60, 84], default=30, space="buy", optimize=True, load=True), MODE)
-    vp_1d_bins = _tag(CategoricalParameter([16, 24, 36, 48, 64], default=36, space="buy", optimize=True, load=True), MODE)
-    vp_1d_score_min = _tag(DecimalParameter(0.00, 1.00, decimals=2, default=0.25, space="buy", optimize=True, load=True), MODE)
-    vp_1d_context_min = _tag(DecimalParameter(0.00, 1.00, decimals=2, default=0.28, space="buy", optimize=True, load=True), MODE)
-    vp_guard_value_area_pct = _tag(DecimalParameter(0.55, 0.85, decimals=2, default=0.70, space="buy", optimize=True, load=True), MODE)
-    vp_guard_price_source = _tag(CategoricalParameter(PRICE_SOURCE_CHOICES, default="hlc3", space="buy", optimize=True, load=True), MODE)
-    vp_guard_node_near_pct = _tag(DecimalParameter(0.002, 0.030, decimals=3, default=0.010, space="buy", optimize=True, load=True), MODE)
-    vp_guard_pressure_delta_min = _tag(DecimalParameter(0.00, 0.35, decimals=2, default=0.05, space="buy", optimize=True, load=True), MODE)
+    use_vp_4h_guard = _tag(CategoricalParameter(ENABLE_CHOICES, default="off", space="buy", optimize=False, load=True), MODE)
+    vp_4h_guard_mode = _tag(CategoricalParameter(GUARD_MODE_CHOICES, default="score_or_context", space="buy", optimize=False, load=True), MODE)
+    vp_4h_window = _tag(CategoricalParameter([12, 24, 48, 72, 96], default=48, space="buy", optimize=False, load=True), MODE)
+    vp_4h_bins = _tag(CategoricalParameter([16, 24, 36, 48, 64], default=36, space="buy", optimize=False, load=True), MODE)
+    vp_4h_score_min = _tag(DecimalParameter(0.00, 1.00, decimals=2, default=0.25, space="buy", optimize=False, load=True), MODE)
+    vp_4h_context_min = _tag(DecimalParameter(0.00, 1.00, decimals=2, default=0.28, space="buy", optimize=False, load=True), MODE)
+    use_vp_1d_guard = _tag(CategoricalParameter(ENABLE_CHOICES, default="off", space="buy", optimize=False, load=True), MODE)
+    vp_1d_guard_mode = _tag(CategoricalParameter(GUARD_MODE_CHOICES, default="context", space="buy", optimize=False, load=True), MODE)
+    vp_1d_window = _tag(CategoricalParameter([10, 20, 30, 45, 60, 84], default=30, space="buy", optimize=False, load=True), MODE)
+    vp_1d_bins = _tag(CategoricalParameter([16, 24, 36, 48, 64], default=36, space="buy", optimize=False, load=True), MODE)
+    vp_1d_score_min = _tag(DecimalParameter(0.00, 1.00, decimals=2, default=0.25, space="buy", optimize=False, load=True), MODE)
+    vp_1d_context_min = _tag(DecimalParameter(0.00, 1.00, decimals=2, default=0.28, space="buy", optimize=False, load=True), MODE)
+    vp_guard_value_area_pct = _tag(DecimalParameter(0.55, 0.85, decimals=2, default=0.70, space="buy", optimize=False, load=True), MODE)
+    vp_guard_price_source = _tag(CategoricalParameter(PRICE_SOURCE_CHOICES, default="hlc3", space="buy", optimize=False, load=True), MODE)
+    vp_guard_node_near_pct = _tag(DecimalParameter(0.002, 0.030, decimals=3, default=0.010, space="buy", optimize=False, load=True), MODE)
+    vp_guard_pressure_delta_min = _tag(DecimalParameter(0.00, 0.35, decimals=2, default=0.05, space="buy", optimize=False, load=True), MODE)
 
     def leverage(self, pair: str, current_time: datetime, current_rate: float, proposed_leverage: float, max_leverage: float, entry_tag: str | None, side: str, **kwargs: Any) -> float:
         _ = pair, current_time, current_rate, proposed_leverage, max_leverage, entry_tag, side, kwargs
         return 1.0
 
     def informative_pairs(self) -> list[tuple[str, str]]:
-        if not self.dp:
+        if not getattr(self, "dp", None):
             return []
         try:
             whitelist = self.dp.current_whitelist()
@@ -184,7 +184,7 @@ class Sieve1LadderLongSupHold(IStrategy):
         return frame
 
     def _merge_daily_context(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        if not self.dp or "date" not in dataframe.columns:
+        if not getattr(self, "dp", None) or "date" not in dataframe.columns:
             return dataframe
         daily = self.dp.get_pair_dataframe(pair=metadata.get("pair", ""), timeframe="1d")
         if daily is None or daily.empty or "date" not in daily.columns:

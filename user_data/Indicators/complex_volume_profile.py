@@ -40,7 +40,7 @@ class VolumeProfileConfig:
     candle is interacting with those profile levels in a way worth testing
     against forward returns.
 
-    Tunable groups:
+    Configuration groups:
     - Profile construction:
       ``window`` controls how many candles form each rolling profile.
       ``bins`` controls price-resolution of the volume histogram.
@@ -63,11 +63,11 @@ class VolumeProfileConfig:
       fast LVN traverse.
     - Scoring and context:
       ``poc_migration_window`` controls how far back POC/value direction is
-      compared. ``score_window`` controls recent event memory and de-duplication
-      cooldown. ``entry_score_margin`` requires long/short score separation
-      before a trigger is emitted. ``context_*`` values control when the
-      smoothed profile context becomes full bull/bear or softer directional
-      chop.
+      compared. ``score_window`` controls recent event memory and
+      de-duplication cooldown. ``entry_score_margin`` requires long/short
+      score separation before a trigger is emitted. ``context_*`` values
+      control when the smoothed profile context becomes full bull/bear or
+      softer directional chop.
     """
 
     window: int = 96
@@ -93,6 +93,7 @@ class VolumeProfileConfig:
     context_soft_min: float = 0.26
     context_soft_margin: float = 0.035
     context_balance_min: float = 0.42
+    include_diagnostics: bool = False
     prefix: str = "vp"
 
 
@@ -123,6 +124,7 @@ def add_volume_profile(
     context_soft_min: float | None = None,
     context_soft_margin: float | None = None,
     context_balance_min: float | None = None,
+    include_diagnostics: bool | None = None,
     prefix: str | None = None,
 ) -> DataFrame:
     """
@@ -132,34 +134,16 @@ def add_volume_profile(
     range overlap. Rolling windows are processed as NumPy blocks, so the slow
     path is chunked by block instead of looping candle by candle.
 
-    Output columns use ``prefix`` and include:
+    Default output columns use ``prefix`` and include:
     - Profile levels:
       ``*_poc`` is the highest-volume price bin in the rolling profile.
       ``*_vah`` and ``*_val`` are value-area high/low. ``*_prior_*`` columns
       are shifted one candle and should be preferred for entry logic to avoid
       using the current candle's completed profile as its own trigger.
-    - Raw node levels and diagnostics:
+    - Node levels:
       ``*_hvn_above/below`` and ``*_lvn_above/below`` are nearest high/low
       volume nodes around the current close. ``*_hvn_*_strength`` and
-      ``*_lvn_*_thinness`` describe node quality. Distance columns describe how
-      far the current close is from those nodes.
-    - Profile shape:
-      ``*_entropy``, ``*_concentration``, ``*_skew``, and ``*_kurtosis`` are
-      diagnostics for whether the profile is balanced, concentrated, or
-      asymmetric. They are useful as guards, not direct entry triggers.
-    - Pressure and value movement:
-      ``*_delta_ratio`` estimates candle directional volume pressure.
-      ``*_poc_delta_ratio`` estimates pressure around the POC bin.
-      ``*_poc_migration_pct`` tracks POC movement over
-      ``poc_migration_window``. ``*_value_direction_pct`` tracks movement of
-      the VAH/VAL midpoint and is named as direction because that is the useful
-      interpretation for strategies.
-    - Event evidence:
-      ``*_vah_breakout_with_pressure`` and ``*_val_breakdown_with_pressure``
-      mark value-area breaks with pressure. ``*_lower_rejection_with_pressure``
-      and ``*_upper_rejection_with_pressure`` mark failed auctions back into
-      value. LVN/HVN accept, reject, reclaim, and fast-traverse columns expose
-      the raw event components used by the trigger score.
+      ``*_lvn_*_thinness`` describe node quality.
     - Strategy-facing triggers:
       ``*_entry_trigger_long`` and ``*_entry_trigger_short`` are de-duplicated
       entry-trigger evidence. They are intentionally not final trade decisions;
@@ -180,6 +164,9 @@ def add_volume_profile(
       ``*_market_context`` is the strategy-facing directional state:
       ``2`` bull, ``1`` bullish chop, ``0`` undefined, ``-1`` bearish chop,
       and ``-2`` bear.
+
+    Pass ``include_diagnostics=True`` to also emit intermediate pressure,
+    migration, event-component, distance, and profile-shape columns for review.
     """
 
     cfg = _resolve_config(
@@ -207,6 +194,7 @@ def add_volume_profile(
         context_soft_min=context_soft_min,
         context_soft_margin=context_soft_margin,
         context_balance_min=context_balance_min,
+        include_diagnostics=include_diagnostics,
         prefix=prefix,
     )
     _validate_config(cfg)
@@ -215,6 +203,10 @@ def add_volume_profile(
     frame = dataframe.copy()
     n_rows = len(frame)
     p = cfg.prefix
+    existing = [column for column in frame.columns if str(column).startswith(f"{p}_")]
+    if existing:
+        frame = frame.drop(columns=existing)
+    source_columns = frame.columns
 
     float_columns = [
         "profile_low",
@@ -285,7 +277,7 @@ def add_volume_profile(
         frame[f"{p}_{name}"] = False
 
     if n_rows < cfg.window:
-        return frame
+        return _volume_profile_output_frame(frame, source_columns, cfg)
 
     open_arr = _float_array(frame["open"])
     high_arr = _float_array(frame["high"])
@@ -336,7 +328,7 @@ def add_volume_profile(
         frame.iloc[output_index, frame.columns.get_loc(f"{p}_{name}")] = values
 
     frame = _add_interaction_columns(frame, cfg)
-    return frame
+    return _volume_profile_output_frame(frame, source_columns, cfg)
 
 
 @dataclass(frozen=True)
@@ -600,6 +592,7 @@ def _resolve_config(
         "context_soft_min": cfg.context_soft_min,
         "context_soft_margin": cfg.context_soft_margin,
         "context_balance_min": cfg.context_balance_min,
+        "include_diagnostics": cfg.include_diagnostics,
         "prefix": cfg.prefix,
     }
     for key, value in overrides.items():
@@ -658,6 +651,65 @@ def _validate_dataframe(dataframe: DataFrame) -> None:
     missing = sorted(required.difference(dataframe.columns))
     if missing:
         raise ValueError(f"DataFrame is missing OHLCV columns: {missing}")
+
+
+def _strategy_output_columns(prefix: str) -> list[str]:
+    """Columns intended for normal strategy use.
+
+    The profile engine calculates many intermediate values because the scores
+    need them. Default output stays compact: levels, context, scores, and the
+    high-level tactical flags. Pass ``include_diagnostics=True`` when reviewing
+    plots or debugging why a score fired.
+    """
+
+    suffixes = (
+        "profile_low",
+        "profile_high",
+        "poc",
+        "vah",
+        "val",
+        "prior_poc",
+        "prior_vah",
+        "prior_val",
+        "value_area_width",
+        "value_area_width_pct",
+        "value_area_position",
+        "hvn_above",
+        "hvn_below",
+        "lvn_above",
+        "lvn_below",
+        "hvn_above_strength",
+        "hvn_below_strength",
+        "lvn_above_thinness",
+        "lvn_below_thinness",
+        "in_value_area",
+        "above_value_area",
+        "below_value_area",
+        "entry_trigger_long",
+        "entry_trigger_short",
+        "context_score_bull",
+        "context_score_bear",
+        "context_score_balance",
+        "market_context",
+        "node_entry_long",
+        "node_entry_short",
+        "node_hold_long",
+        "node_hold_short",
+        "node_exit_long",
+        "node_exit_short",
+        "score_long",
+        "score_short",
+        "score_abs",
+        "state",
+    )
+    return [f"{prefix}_{suffix}" for suffix in suffixes]
+
+
+def _volume_profile_output_frame(frame: DataFrame, original_columns: pd.Index, cfg: VolumeProfileConfig) -> DataFrame:
+    if bool(cfg.include_diagnostics):
+        return frame
+    keep = list(original_columns) + [column for column in _strategy_output_columns(cfg.prefix) if column in frame.columns]
+    return frame.loc[:, keep].copy()
 
 
 def _add_interaction_columns(frame: DataFrame, cfg: VolumeProfileConfig) -> DataFrame:

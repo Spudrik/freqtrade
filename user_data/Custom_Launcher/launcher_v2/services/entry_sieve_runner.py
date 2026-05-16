@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from copy import deepcopy
 from dataclasses import dataclass
@@ -33,10 +34,49 @@ from explorer.explorer_support import (
     run_command,
 )
 from explorer.explorer_targets import resolve_params
-from explorer.explorer_windows import compact_window, load_window_manifest, resolve_windows, window_label
+from explorer.explorer_windows import compact_window, load_window_manifest, normalize_window, resolve_windows, window_label
 
 
 BACKTEST_LANE_START_STAGGER_SECONDS = 1.0
+PIPELINED_BACKTEST_WORKER_CAP = 3
+BACKTEST_WAIT_STATUS_SECONDS = 60.0
+FULL_CYCLE_VALIDATION_WINDOW = "full_cycle_2020_2026"
+TIMEFRAME_SECONDS = {
+    "5m": 5 * 60,
+    "15m": 15 * 60,
+    "30m": 30 * 60,
+    "1h": 60 * 60,
+    "2h": 2 * 60 * 60,
+    "4h": 4 * 60 * 60,
+    "8h": 8 * 60 * 60,
+    "12h": 12 * 60 * 60,
+    "1d": 24 * 60 * 60,
+    "3d": 3 * 24 * 60 * 60,
+}
+MIN_TRAINING_CANDLES = {
+    "1h": 1000,
+    "4h": 600,
+    "8h": 450,
+    "1d": 500,
+    "3d": 250,
+}
+TARGET_TRAINING_CANDLES = {
+    "1h": 3000,
+    "4h": 1200,
+    "8h": 900,
+    "1d": 700,
+    "3d": 350,
+}
+RESULT_METADATA_KEYS = (
+    "strategy_batch",
+    "strategy_batch_label",
+    "strategy_filter",
+    "speed_run_mode",
+    "speed_pair_count",
+    "auto_window_mode",
+    "auto_window_count",
+    "target_sweep_enabled",
+)
 
 
 def load_json(path: Path, default: Any) -> Any:
@@ -60,6 +100,301 @@ def _safe_name(value: str) -> str:
     return "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in str(value)).strip("_") or "item"
 
 
+def _listish(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        return [str(item).strip().lower() for item in value if str(item).strip()]
+    text = str(value or "").replace(";", ",").replace("|", ",")
+    return [item.strip().lower() for item in text.split(",") if item.strip()]
+
+
+def _literal_or_name(node: ast.AST, constants: dict[str, Any] | None = None) -> Any:
+    if isinstance(node, ast.Constant):
+        return node.value
+    if isinstance(node, ast.Name) and constants is not None:
+        return constants.get(node.id)
+    try:
+        return ast.literal_eval(node)
+    except Exception:
+        return None
+
+
+def _strategy_constants(strategy: dict[str, str]) -> dict[str, Any]:
+    path = Path(str(strategy.get("strategy_file") or ""))
+    if not path.exists():
+        return {}
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
+    except Exception:
+        return {}
+    constants: dict[str, Any] = {}
+    wanted = {"ENTRY_MODE", "ENTRY_TAG", "SIDE", "TIMEFRAME"}
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        value = _literal_or_name(node.value, constants)
+        if value is None:
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name) and target.id in wanted:
+                constants[target.id] = value
+    class_name = str(strategy.get("strategy_class") or "")
+    for node in tree.body:
+        if not isinstance(node, ast.ClassDef) or (class_name and node.name != class_name):
+            continue
+        for stmt in node.body:
+            if not isinstance(stmt, ast.Assign):
+                continue
+            if not any(isinstance(target, ast.Name) and target.id == "timeframe" for target in stmt.targets):
+                continue
+            value = _literal_or_name(stmt.value, constants)
+            if value is not None:
+                constants["CLASS_TIMEFRAME"] = value
+        if class_name:
+            break
+    return constants
+
+
+def _strategy_timeframe(strategy: dict[str, str], constants: dict[str, Any]) -> str:
+    for key in ("TIMEFRAME", "CLASS_TIMEFRAME"):
+        value = str(constants.get(key) or "").strip().lower()
+        if value in TIMEFRAME_SECONDS:
+            return value
+    path = Path(str(strategy.get("strategy_file") or ""))
+    tokens = str(path.stem or strategy.get("name") or "").lower().replace("-", "_").split("_")
+    for token in reversed(tokens):
+        if token in TIMEFRAME_SECONDS:
+            return token
+    return "1h"
+
+
+def _strategy_profile(strategy: dict[str, str]) -> dict[str, Any]:
+    constants = _strategy_constants(strategy)
+    timeframe = _strategy_timeframe(strategy, constants)
+    path = Path(str(strategy.get("strategy_file") or ""))
+    parts = [
+        strategy.get("name"),
+        path.stem,
+        strategy.get("strategy_class"),
+        strategy.get("core_behavior"),
+        constants.get("ENTRY_MODE"),
+        constants.get("ENTRY_TAG"),
+    ]
+    text = "_".join(str(part or "") for part in parts).lower().replace("-", "_").replace(" ", "_")
+    pattern_types: list[str] = []
+    family = "generic"
+    patterns = [
+        ("inverse_head_shoulders", "reversal"),
+        ("head_shoulders", "reversal"),
+        ("double_bottom", "reversal"),
+        ("double_top", "reversal"),
+        ("triple_bottom", "multi_peak"),
+        ("triple_top", "multi_peak"),
+        ("wolfe", "wolfe"),
+        ("pennant", "continuation"),
+        ("flag", "continuation"),
+        ("ascending_channel", "geometry"),
+        ("descending_channel", "geometry"),
+        ("rectangle", "geometry"),
+        ("triangle", "geometry"),
+        ("wedge", "geometry"),
+        ("compression", "geometry"),
+        ("channel", "geometry"),
+    ]
+    for pattern, pattern_family in patterns:
+        if pattern in text:
+            pattern_types.append(pattern)
+            family = pattern_family
+    if not pattern_types:
+        if "continuation" in text:
+            family = "continuation"
+        elif "reversal" in text or "choch" in text or "capitulation" in text:
+            family = "reversal"
+        elif "geometry" in text:
+            family = "geometry"
+        elif "vp_" in text or "volume_profile" in text:
+            family = "volume_profile"
+        elif "relative_strength" in text:
+            family = "relative_strength"
+        elif "tlv2" in text or "trendline" in text:
+            family = "trendline"
+        elif "prior_" in text or "equal_high" in text or "equal_low" in text:
+            family = "prior_levels"
+        elif "avwap" in text:
+            family = "avwap"
+    return {
+        "timeframe": timeframe,
+        "family": family,
+        "pattern_types": pattern_types,
+        "text": text,
+    }
+
+
+def _load_auto_windows(path: str | Path) -> list[dict[str, Any]]:
+    auto_path = Path(path)
+    if not auto_path.exists():
+        raise ValueError(f"Entry Sieve auto window manifest not found: {auto_path}")
+    payload = load_json(auto_path, {})
+    raw_windows: list[Any] = []
+    if isinstance(payload, dict):
+        for key in ("auto_windows", "market_windows", "windows"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                raw_windows.extend(value)
+    elif isinstance(payload, list):
+        raw_windows = payload
+    windows = [normalize_window(window) for window in raw_windows if isinstance(window, dict)]
+    if not windows:
+        raise ValueError(f"Entry Sieve auto window manifest has no windows: {auto_path}")
+    return windows
+
+
+def _parse_timerange(window: dict[str, Any]) -> tuple[datetime, datetime] | None:
+    text = str(window.get("timerange") or "").strip()
+    if "-" not in text:
+        return None
+    start_text, end_text = text.split("-", 1)
+    try:
+        start = datetime.strptime(start_text[:8], "%Y%m%d")
+        end = datetime.strptime(end_text[:8], "%Y%m%d")
+    except ValueError:
+        return None
+    if end <= start:
+        return None
+    return start, end
+
+
+def _approx_candles(window: dict[str, Any], timeframe: str) -> int:
+    parsed = _parse_timerange(window)
+    seconds = TIMEFRAME_SECONDS.get(str(timeframe).lower())
+    if parsed is None or not seconds:
+        return 0
+    start, end = parsed
+    return max(0, int((end - start).total_seconds() // seconds))
+
+
+def _window_timeframe_match(window: dict[str, Any], timeframe: str) -> bool:
+    timeframes = _listish(window.get("timeframes") or window.get("timeframe"))
+    return not timeframes or "all" in timeframes or str(timeframe).lower() in timeframes
+
+
+def _auto_window_count(job: dict[str, Any]) -> int:
+    try:
+        count = int(str(job.get("auto_window_count") or "2").strip())
+    except (TypeError, ValueError):
+        count = 2
+    return min(3, max(1, count))
+
+
+def _window_score(window: dict[str, Any], profile: dict[str, Any]) -> float:
+    timeframe = str(profile.get("timeframe") or "1h").lower()
+    if not _window_timeframe_match(window, timeframe):
+        return -1_000_000.0
+    candles = _approx_candles(window, timeframe)
+    minimum = int(MIN_TRAINING_CANDLES.get(timeframe, 500))
+    if candles and candles < minimum:
+        return -1_000_000.0
+
+    score = 0.0
+    try:
+        score += float(window.get("priority") or 0.0)
+    except (TypeError, ValueError):
+        pass
+    category = str(window.get("category") or window.get("segment_type") or "").lower()
+    window_families = set(_listish(window.get("pattern_families") or window.get("pattern_family") or window.get("families")))
+    window_types = set(_listish(window.get("pattern_types") or window.get("pattern_type") or window.get("patterns")))
+    profile_family = str(profile.get("family") or "generic").lower()
+    profile_types = {str(item).lower() for item in profile.get("pattern_types") or []}
+    family_match = bool(profile_family and profile_family in window_families)
+    type_match = bool(profile_types and profile_types.intersection(window_types))
+
+    if _listish(window.get("timeframes") or window.get("timeframe")):
+        score += 200.0
+    if type_match:
+        score += 1000.0
+    if family_match:
+        score += 500.0
+    if profile_family in {"continuation", "geometry", "reversal", "multi_peak", "wolfe"} and category.startswith("pattern") and (family_match or type_match):
+        score += 120.0
+    if profile_family in {"continuation", "geometry", "reversal", "multi_peak", "wolfe"} and category.startswith("pattern") and not (family_match or type_match):
+        score -= 250.0
+    if profile_family not in {"continuation", "geometry", "reversal", "multi_peak", "wolfe"} and category in {"generic", "regime", "market_state", "full_cycle"}:
+        score += 250.0
+    if "generic" in window_families or category == "generic":
+        score += 80.0
+
+    target = int(TARGET_TRAINING_CANDLES.get(timeframe, minimum * 2))
+    if candles:
+        score += min(150.0, (candles / max(minimum, 1)) * 25.0)
+        if candles > target:
+            score -= min(160.0, ((candles - target) / max(target, 1)) * 50.0)
+    return score
+
+
+def _select_auto_windows(
+    strategy: dict[str, str],
+    auto_windows: list[dict[str, Any]],
+    market_windows: list[dict[str, Any]],
+    job: dict[str, Any],
+) -> list[dict[str, Any]]:
+    profile = _strategy_profile(strategy)
+    count = _auto_window_count(job)
+    candidates = [*auto_windows, *market_windows]
+    scored: list[tuple[float, int, dict[str, Any]]] = []
+    for index, window in enumerate(candidates):
+        normalized = normalize_window(window)
+        score = _window_score(normalized, profile)
+        if score <= -999_999:
+            continue
+        scored.append((score, index, normalized))
+    scored.sort(key=lambda item: (-item[0], item[1]))
+
+    selected: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for _, _, window in scored:
+        key = str(window.get("name") or window.get("timerange") or "")
+        if not key or key in seen:
+            continue
+        selected.append(window)
+        seen.add(key)
+        if len(selected) >= count:
+            return selected
+
+    strategy_name = strategy.get("name") or strategy.get("strategy_class") or strategy.get("strategy_file") or "unknown"
+    timeframe = str(profile.get("timeframe") or "1h")
+    raise ValueError(f"Entry Sieve could not assign {count} auto training window(s) for {strategy_name} on {timeframe}.")
+
+
+def _manual_training_plan(strategies: list[dict[str, str]], training_windows: list[dict[str, Any]]) -> list[tuple[dict[str, str], dict[str, Any]]]:
+    return [(strategy, training_window) for strategy in strategies for training_window in training_windows]
+
+
+def _auto_training_plan(
+    strategies: list[dict[str, str]],
+    market_windows: list[dict[str, Any]],
+    job: dict[str, Any],
+) -> list[tuple[dict[str, str], dict[str, Any]]]:
+    auto_windows = _load_auto_windows(job.get("auto_windows_file") or "")
+    plan: list[tuple[dict[str, str], dict[str, Any]]] = []
+    for strategy in strategies:
+        for training_window in _select_auto_windows(strategy, auto_windows, market_windows, job):
+            plan.append((strategy, training_window))
+    return plan
+
+
+def _build_training_plan(
+    strategies: list[dict[str, str]],
+    market_windows: list[dict[str, Any]],
+    job: dict[str, Any],
+) -> tuple[list[tuple[dict[str, str], dict[str, Any]]], int]:
+    if bool(job.get("auto_window_mode")):
+        count = _auto_window_count(job)
+        return _auto_training_plan(strategies, market_windows, job), count
+    training_windows = resolve_windows(market_windows, job.get("training_windows") or [], label="training")
+    return _manual_training_plan(strategies, training_windows), len(training_windows)
+
+
 def _metric(metrics: dict[str, Any], *keys: str) -> Any:
     for key in keys:
         value = metrics.get(key)
@@ -77,13 +412,65 @@ def _base_snapshot(strategy_class: str) -> dict[str, Any]:
     }
 
 
-def _build_preset(base_preset: dict[str, Any], strategy_file: Path, strategy_class: str, runtime_dir: Path) -> dict[str, Any]:
+def _build_preset(base_preset: dict[str, Any], strategy_file: Path, strategy_class: str, runtime_dir: Path, timeframe: str = "") -> dict[str, Any]:
     preset = deepcopy(base_preset)
     preset["strategy_file"] = str(strategy_file)
     preset["strategy_class"] = strategy_class
+    if timeframe:
+        preset["timeframe"] = str(timeframe)
     preset["hyperopt_spaces"] = "buy"
     preset["backtest_export"] = "trades"
     preset["backtest_directory"] = str(runtime_dir / "backtests")
+    return preset
+
+
+def _job_result_metadata(job: dict[str, Any]) -> dict[str, Any]:
+    batch_id = str(job.get("strategy_batch") or "all").strip() or "all"
+    return {
+        "strategy_batch": batch_id,
+        "strategy_batch_label": str(job.get("strategy_batch_label") or batch_id),
+        "strategy_filter": str(job.get("strategy_filter") or ""),
+        "speed_run_mode": bool(job.get("speed_run_mode")),
+        "speed_pair_count": str(job.get("speed_pair_count") or ""),
+        "auto_window_mode": bool(job.get("auto_window_mode")),
+        "auto_window_count": str(job.get("auto_window_count") or ""),
+        "target_sweep_enabled": bool(job.get("target_sweep_enabled")),
+    }
+
+
+def _annotate_strategies_with_job_metadata(strategies: list[dict[str, str]], job: dict[str, Any]) -> list[dict[str, str]]:
+    metadata = _job_result_metadata(job)
+    annotated: list[dict[str, str]] = []
+    for strategy in strategies:
+        row = dict(strategy)
+        row.update(metadata)
+        annotated.append(row)
+    return annotated
+
+
+def _pair_tokens(value: Any) -> list[str]:
+    text = str(value or "").replace(";", "\n").replace(",", "\n")
+    return [token.strip() for token in text.split() if token.strip()]
+
+
+def _speed_pair_count(job: dict[str, Any]) -> int:
+    try:
+        count = int(str(job.get("speed_pair_count") or "5").strip())
+    except (TypeError, ValueError):
+        count = 5
+    return max(1, count)
+
+
+def _speed_limited_preset(base_preset: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
+    preset = deepcopy(base_preset)
+    if not bool(job.get("speed_run_mode")):
+        return preset
+    if str(preset.get("pair_mode") or "").strip().lower() != "manual":
+        return preset
+    pairs = _pair_tokens(preset.get("pairs"))
+    if not pairs:
+        return preset
+    preset["pairs"] = "\n".join(pairs[: _speed_pair_count(job)])
     return preset
 
 
@@ -129,7 +516,8 @@ def _child_env(
     stoploss_pct: str | None = None,
 ) -> dict[str, str]:
     env = build_child_env(os.environ.copy(), cwd)
-    extra_paths = [str(original_strategy_dir), str(original_strategy_dir.parent)]
+    user_data_dir = original_strategy_dir.parent
+    extra_paths = [str(original_strategy_dir), str(user_data_dir), str(user_data_dir / "Indicators")]
     existing = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = os.pathsep.join(extra_paths) + (os.pathsep + existing if existing else "")
     env["ENTRY_SIEVE_TAKE_PROFIT_PCT"] = str(take_profit_pct or job.get("take_profit_pct") or "2")
@@ -169,6 +557,14 @@ def _result_row(
         "strategy": strategy.get("name") or Path(strategy.get("strategy_file", "")).stem,
         "strategy_class": strategy.get("strategy_class", ""),
         "strategy_file": strategy.get("strategy_file", ""),
+        "strategy_batch": str(strategy.get("strategy_batch") or "all"),
+        "strategy_batch_label": str(strategy.get("strategy_batch_label") or strategy.get("strategy_batch") or "all"),
+        "strategy_filter": str(strategy.get("strategy_filter") or ""),
+        "speed_run_mode": bool(strategy.get("speed_run_mode")),
+        "speed_pair_count": str(strategy.get("speed_pair_count") or ""),
+        "auto_window_mode": bool(strategy.get("auto_window_mode")),
+        "auto_window_count": str(strategy.get("auto_window_count") or ""),
+        "target_sweep_enabled": bool(strategy.get("target_sweep_enabled")),
         "side": strategy.get("side", ""),
         "core_behavior": strategy.get("core_behavior", ""),
         "training_window": window_label(training_window),
@@ -232,6 +628,7 @@ def _write_result_summary(
     updated_at: str,
     row_count: int | None = None,
     created_at: str = "",
+    metadata: dict[str, Any] | None = None,
 ) -> None:
     results_file = _result_file(runtime_dir, job_id)
     summary_file = _result_summary_file(runtime_dir, job_id)
@@ -253,6 +650,13 @@ def _write_result_summary(
         "path": str(results_file),
         "summary_path": str(summary_file),
     }
+    for key in RESULT_METADATA_KEYS:
+        if key in payload:
+            summary[key] = payload.get(key)
+    if metadata:
+        for key in RESULT_METADATA_KEYS:
+            if key in metadata:
+                summary[key] = metadata.get(key)
     save_json(summary_file, summary)
     save_json(
         runtime_dir / "latest.json",
@@ -263,6 +667,7 @@ def _write_result_summary(
             "updated_at": updated_at,
             "status": status,
             "phase": phase,
+            **{key: summary[key] for key in RESULT_METADATA_KEYS if key in summary},
         },
     )
 
@@ -288,28 +693,21 @@ def _append_result(runtime_dir: Path, row: dict[str, Any]) -> None:
         phase=str(payload.get("phase") or "backtest"),
         updated_at=updated_at,
         row_count=row_count,
+        metadata={key: row.get(key) for key in RESULT_METADATA_KEYS if key in row},
     )
 
 
 def _initialize_result_batch(runtime_dir: Path, job: dict[str, Any]) -> None:
-    job_id = str(job.get("job_id") or "unknown")
-    now = datetime.now().astimezone().isoformat()
-    results_file = _result_file(runtime_dir, job_id)
-    results_file.parent.mkdir(parents=True, exist_ok=True)
-    if not results_file.exists():
-        results_file.write_text("", encoding="utf-8")
-    _write_result_summary(
-        runtime_dir,
-        job_id,
-        status="running",
-        phase="starting",
-        updated_at=now,
-        row_count=_count_jsonl_rows(results_file),
-        created_at=str(job.get("created_at") or now),
-    )
+    _result_file(runtime_dir, str(job.get("job_id") or "unknown")).parent.mkdir(parents=True, exist_ok=True)
 
 
 def _update_result_batch_status(runtime_dir: Path, job_id: str, status_payload: dict[str, Any]) -> None:
+    results_file = _result_file(runtime_dir, job_id)
+    summary_file = _result_summary_file(runtime_dir, job_id)
+    if not results_file.exists() and not summary_file.exists():
+        return
+    if results_file.exists() and _count_jsonl_rows(results_file) == 0:
+        return
     updated_at = str(status_payload.get("updated_at") or datetime.now().astimezone().isoformat())
     _write_result_summary(
         runtime_dir,
@@ -317,6 +715,7 @@ def _update_result_batch_status(runtime_dir: Path, job_id: str, status_payload: 
         status=str(status_payload.get("status") or "running"),
         phase=str(status_payload.get("phase") or ""),
         updated_at=updated_at,
+        metadata={key: status_payload.get(key) for key in RESULT_METADATA_KEYS if key in status_payload},
     )
 
 
@@ -432,6 +831,11 @@ def _finish_pending(
     job_id: str,
     completed_backtests: int,
     total_backtests: int,
+    run_index: int | None = None,
+    total_hyperopts: int | None = None,
+    completed_hyperopts: int | None = None,
+    current_strategy: str = "",
+    current_training_window: str = "",
 ) -> int:
     if pending is None or pending.future is None:
         return 0
@@ -465,15 +869,38 @@ def _finish_one_pending(
     job_id: str,
     completed_backtests: int,
     total_backtests: int,
+    run_index: int | None = None,
+    total_hyperopts: int | None = None,
+    completed_hyperopts: int | None = None,
+    current_strategy: str = "",
+    current_training_window: str = "",
 ) -> int:
     if not pending_batches:
         return 0
     completed = [batch for batch in pending_batches if batch.future is not None and batch.future.done()]
     if not completed:
         futures = [batch.future for batch in pending_batches if batch.future is not None]
-        if futures:
-            done, _ = wait(futures, return_when=FIRST_COMPLETED)
+        while futures:
+            _write_run_status(
+                runtime_dir,
+                job_id,
+                status="running",
+                phase="backtest_wait",
+                run_index=run_index,
+                total_hyperopts=total_hyperopts,
+                completed_hyperopts=completed_hyperopts,
+                completed_backtests=completed_backtests,
+                total_backtests=total_backtests,
+                current_strategy=current_strategy,
+                current_training_window=current_training_window,
+                queued_backtest_batches=len(pending_batches),
+                message=f"Waiting for backtest lane ({len(pending_batches)} queued, {completed_backtests}/{total_backtests} complete)",
+            )
+            done, _ = wait(futures, timeout=BACKTEST_WAIT_STATUS_SECONDS, return_when=FIRST_COMPLETED)
+            if not done:
+                continue
             completed = [batch for batch in pending_batches if batch.future in done]
+            break
     batch = completed[0] if completed else pending_batches[0]
     pending_batches.remove(batch)
     return _finish_pending(
@@ -482,6 +909,11 @@ def _finish_one_pending(
         job_id=job_id,
         completed_backtests=completed_backtests,
         total_backtests=total_backtests,
+        run_index=run_index,
+        total_hyperopts=total_hyperopts,
+        completed_hyperopts=completed_hyperopts,
+        current_strategy=current_strategy,
+        current_training_window=current_training_window,
     )
 
 
@@ -507,7 +939,8 @@ def _prepare_strategy_window(
         raise RuntimeError("Entry Sieve preset must include project_root.")
     cwd = project_root.resolve()
     python_exe = str(base_preset.get("python_exe") or job.get("python_exe") or sys.executable)
-    preset = _build_preset(base_preset, runtime_strategy_file, strategy_class, runtime_dir)
+    strategy_timeframe = str(_strategy_profile(strategy).get("timeframe") or "")
+    preset = _build_preset(base_preset, runtime_strategy_file, strategy_class, runtime_dir, strategy_timeframe)
     env = _child_env(job, cwd, source_file.parent)
 
     catalog = load_catalog(source_file, strategy_class)
@@ -686,6 +1119,19 @@ def _worker_count(value: Any, *, default: int) -> int:
     return min(9, max(1, count))
 
 
+def _effective_backtest_worker_count(
+    requested_count: int,
+    *,
+    split_venv_pipeline: bool,
+    target_sweep_enabled: bool,
+) -> int:
+    if not split_venv_pipeline:
+        return 1
+    if target_sweep_enabled:
+        return requested_count
+    return min(requested_count, PIPELINED_BACKTEST_WORKER_CAP)
+
+
 def _backtest_lanes(
     *,
     base_python_exe: str,
@@ -814,10 +1260,12 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("Entry Sieve requires LauncherV2-auto or BackTest2021-26 in presets.json.")
 
     all_windows = load_window_manifest(job["market_windows_file"])
-    training_windows = resolve_windows(all_windows, job.get("training_windows") or [], label="training")
-    validation_windows = resolve_windows(all_windows, job.get("validation_windows") or [], label="validation")
-    strategies = [strategy for strategy in job.get("strategies") or [] if isinstance(strategy, dict)]
-    base_preset = presets[preset_name]
+    auto_window_mode = bool(job.get("auto_window_mode"))
+    validation_selection = [job.get("auto_validation_window") or FULL_CYCLE_VALIDATION_WINDOW] if auto_window_mode else job.get("validation_windows") or []
+    validation_windows = resolve_windows(all_windows, validation_selection, label="validation")
+    strategies = _annotate_strategies_with_job_metadata([strategy for strategy in job.get("strategies") or [] if isinstance(strategy, dict)], job)
+    training_plan, configured_training_window_count = _build_training_plan(strategies, all_windows, job)
+    base_preset = _speed_limited_preset(presets[preset_name], job)
     job_id = str(job.get("job_id") or job_file.stem)
     _initialize_result_batch(runtime_dir, job)
     split_venv_pipeline = bool(job.get("split_venv_pipeline"))
@@ -828,7 +1276,12 @@ def main(argv: list[str] | None = None) -> int:
     else:
         backtest_python_exe = str(job.get("backtest_python_exe") or base_preset.get("python_exe") or sys.executable)
     backtest_python_exes = _split_python_exes(job.get("backtest_python_exes"))
-    backtest_worker_count = _worker_count(job.get("backtest_worker_count"), default=2 if split_venv_pipeline else 1)
+    requested_backtest_worker_count = _worker_count(job.get("backtest_worker_count"), default=2 if split_venv_pipeline else 1)
+    backtest_worker_count = _effective_backtest_worker_count(
+        requested_backtest_worker_count,
+        split_venv_pipeline=split_venv_pipeline,
+        target_sweep_enabled=target_sweep_enabled,
+    )
     backtest_lanes = _backtest_lanes(
         base_python_exe=base_python_exe,
         backtest_python_exe=backtest_python_exe,
@@ -842,15 +1295,20 @@ def main(argv: list[str] | None = None) -> int:
     if not isinstance(state, dict):
         state = {}
 
-    total_runs = len(strategies) * len(training_windows)
+    total_runs = len(training_plan)
     target_pair_count = len(_target_pairs(job))
     total_backtests = total_runs * len(validation_windows) * target_pair_count
     print(f"Entry Sieve job: {job_id}")
-    print(f"Strategies: {len(strategies)} | training windows: {len(training_windows)} | validation windows: {len(validation_windows)} | runs: {total_runs}")
+    if auto_window_mode:
+        print(f"Strategies: {len(strategies)} | auto windows/file: {configured_training_window_count} | validation windows: {len(validation_windows)} | runs: {total_runs}")
+    else:
+        print(f"Strategies: {len(strategies)} | training windows: {configured_training_window_count} | validation windows: {len(validation_windows)} | runs: {total_runs}")
     if split_venv_pipeline:
-        print(f"Split-venv backtest lanes ({len(backtest_lanes)}/{backtest_worker_count} requested):")
+        print(f"Split-venv backtest lanes ({len(backtest_lanes)}/{requested_backtest_worker_count} requested, {backtest_worker_count} effective):")
         for lane_index, lane in enumerate(backtest_lanes, start=1):
             print(f"  lane {lane_index}: {lane}")
+    if bool(job.get("speed_run_mode")):
+        print(f"Speed run mode enabled: first {_speed_pair_count(job)} manual pair(s), 1 auto window, 60 epochs, target sweep disabled")
     if target_sweep_enabled:
         pairs = _target_pairs(job)
         pair_text = ", ".join(f"{pair['take_profit_pct']}/{pair['stoploss_pct']}" for pair in pairs)
@@ -865,9 +1323,10 @@ def main(argv: list[str] | None = None) -> int:
         total_backtests=total_backtests,
         completed_backtests=0,
         strategy_count=len(strategies),
-        training_window_count=len(training_windows),
+        training_window_count=configured_training_window_count,
         validation_window_count=len(validation_windows),
         target_pair_count=target_pair_count,
+        auto_window_mode=auto_window_mode,
         message="Entry Sieve run started",
     )
 
@@ -875,11 +1334,36 @@ def main(argv: list[str] | None = None) -> int:
     pending_batches: list[PendingBacktests] = []
     final_completed_backtests = 0
     if target_sweep_enabled:
-        for strategy in strategies:
+        for strategy, training_window in training_plan:
             strategy_name = strategy.get("name") or Path(str(strategy.get("strategy_file") or "")).stem
-            for training_window in training_windows:
-                run_index += 1
-                print(f"\nEntry Sieve {run_index}/{total_runs}: {strategy_name} | train={window_label(training_window)}")
+            run_index += 1
+            print(f"\nEntry Sieve {run_index}/{total_runs}: {strategy_name} | train={window_label(training_window)}")
+            _write_run_status(
+                runtime_dir,
+                job_id,
+                status="running",
+                phase="hyperopt",
+                run_index=run_index,
+                total_hyperopts=total_runs,
+                completed_hyperopts=run_index - 1,
+                total_backtests=total_backtests,
+                completed_backtests=0,
+                current_strategy=strategy_name,
+                current_training_window=window_label(training_window),
+                message=f"Hyperopt {run_index}/{total_runs}: {strategy_name}",
+            )
+            try:
+                pending_batches.append(
+                    _prepare_strategy_window(
+                        job=job,
+                        base_preset=base_preset,
+                        runtime_dir=runtime_dir,
+                        state=state,
+                        strategy=strategy,
+                        training_window=training_window,
+                        validation_windows=validation_windows,
+                    )
+                )
                 _write_run_status(
                     runtime_dir,
                     job_id,
@@ -887,69 +1371,43 @@ def main(argv: list[str] | None = None) -> int:
                     phase="hyperopt",
                     run_index=run_index,
                     total_hyperopts=total_runs,
-                    completed_hyperopts=run_index - 1,
+                    completed_hyperopts=run_index,
                     total_backtests=total_backtests,
                     completed_backtests=0,
                     current_strategy=strategy_name,
                     current_training_window=window_label(training_window),
-                    message=f"Hyperopt {run_index}/{total_runs}: {strategy_name}",
+                    message=f"Hyperopt complete {run_index}/{total_runs}: {strategy_name}",
                 )
-                try:
-                    pending_batches.append(
-                        _prepare_strategy_window(
-                            job=job,
-                            base_preset=base_preset,
-                            runtime_dir=runtime_dir,
-                            state=state,
+            except Exception as exc:
+                print(f"Entry Sieve run failed: {exc}")
+                for validation_window in validation_windows:
+                    _append_result(
+                        runtime_dir,
+                        _result_row(
+                            job_id=job_id,
                             strategy=strategy,
                             training_window=training_window,
-                            validation_windows=validation_windows,
-                        )
+                            validation_window=validation_window,
+                            take_profit_pct=str(job.get("take_profit_pct") or "2"),
+                            stoploss_pct=str(job.get("stoploss_pct") or "2"),
+                            status="error",
+                            error=str(exc),
+                        ),
                     )
-                    _write_run_status(
-                        runtime_dir,
-                        job_id,
-                        status="running",
-                        phase="hyperopt",
-                        run_index=run_index,
-                        total_hyperopts=total_runs,
-                        completed_hyperopts=run_index,
-                        total_backtests=total_backtests,
-                        completed_backtests=0,
-                        current_strategy=strategy_name,
-                        current_training_window=window_label(training_window),
-                        message=f"Hyperopt complete {run_index}/{total_runs}: {strategy_name}",
-                    )
-                except Exception as exc:
-                    print(f"Entry Sieve run failed: {exc}")
-                    for validation_window in validation_windows:
-                        _append_result(
-                            runtime_dir,
-                            _result_row(
-                                job_id=job_id,
-                                strategy=strategy,
-                                training_window=training_window,
-                                validation_window=validation_window,
-                                take_profit_pct=str(job.get("take_profit_pct") or "2"),
-                                stoploss_pct=str(job.get("stoploss_pct") or "2"),
-                                status="error",
-                                error=str(exc),
-                            ),
-                        )
-                    _write_run_status(
-                        runtime_dir,
-                        job_id,
-                        status="running",
-                        phase="hyperopt",
-                        run_index=run_index,
-                        total_hyperopts=total_runs,
-                        completed_hyperopts=run_index,
-                        total_backtests=total_backtests,
-                        completed_backtests=0,
-                        current_strategy=strategy_name,
-                        current_training_window=window_label(training_window),
-                        message=f"Hyperopt failed {run_index}/{total_runs}: {strategy_name}",
-                    )
+                _write_run_status(
+                    runtime_dir,
+                    job_id,
+                    status="running",
+                    phase="hyperopt",
+                    run_index=run_index,
+                    total_hyperopts=total_runs,
+                    completed_hyperopts=run_index,
+                    total_backtests=total_backtests,
+                    completed_backtests=0,
+                    current_strategy=strategy_name,
+                    current_training_window=window_label(training_window),
+                    message=f"Hyperopt failed {run_index}/{total_runs}: {strategy_name}",
+                )
         _write_run_status(
             runtime_dir,
             job_id,
@@ -973,103 +1431,107 @@ def main(argv: list[str] | None = None) -> int:
         completed_backtests = 0
         lane_cursor = 0
         with ThreadPoolExecutor(max_workers=max(1, len(backtest_lanes)), thread_name_prefix="entry-sieve-backtest") as executor:
-            for strategy in strategies:
+            for strategy, training_window in training_plan:
                 strategy_name = strategy.get("name") or Path(str(strategy.get("strategy_file") or "")).stem
-                for training_window in training_windows:
-                    run_index += 1
-                    print(f"\nEntry Sieve {run_index}/{total_runs}: {strategy_name} | train={window_label(training_window)}")
+                run_index += 1
+                print(f"\nEntry Sieve {run_index}/{total_runs}: {strategy_name} | train={window_label(training_window)}")
+                _write_run_status(
+                    runtime_dir,
+                    job_id,
+                    status="running",
+                    phase="hyperopt",
+                    run_index=run_index,
+                    total_hyperopts=total_runs,
+                    completed_hyperopts=run_index - 1,
+                    total_backtests=total_backtests,
+                    completed_backtests=completed_backtests,
+                    current_strategy=strategy_name,
+                    current_training_window=window_label(training_window),
+                    message=f"Hyperopt {run_index}/{total_runs}: {strategy_name}",
+                )
+                try:
+                    batch = _prepare_strategy_window(
+                        job=job,
+                        base_preset=base_preset,
+                        runtime_dir=runtime_dir,
+                        state=state,
+                        strategy=strategy,
+                        training_window=training_window,
+                        validation_windows=validation_windows,
+                    )
+                    if split_venv_pipeline:
+                        while len(queued_batches) >= len(backtest_lanes):
+                            completed_backtests += _finish_one_pending(
+                                runtime_dir,
+                                queued_batches,
+                                job_id=job_id,
+                                completed_backtests=completed_backtests,
+                                total_backtests=total_backtests,
+                                run_index=run_index,
+                                total_hyperopts=total_runs,
+                                completed_hyperopts=run_index,
+                                current_strategy=strategy_name,
+                                current_training_window=window_label(training_window),
+                            )
+                        lane_index = lane_cursor % len(backtest_lanes)
+                        batch.future = executor.submit(
+                            _run_backtest_batch_on_lane,
+                            batch,
+                            backtest_lanes[lane_index],
+                            lane_index + 1,
+                        )
+                        queued_batches.append(batch)
+                        lane_cursor += 1
+                    else:
+                        rows = _run_backtest_batch(batch, backtest_lanes[0])
+                        for row in rows:
+                            _append_result(runtime_dir, row)
+                        completed_backtests += len(rows)
                     _write_run_status(
                         runtime_dir,
                         job_id,
                         status="running",
-                        phase="hyperopt",
+                        phase="backtest" if split_venv_pipeline else "hyperopt_backtest",
                         run_index=run_index,
                         total_hyperopts=total_runs,
-                        completed_hyperopts=run_index - 1,
+                        completed_hyperopts=run_index,
                         total_backtests=total_backtests,
                         completed_backtests=completed_backtests,
                         current_strategy=strategy_name,
                         current_training_window=window_label(training_window),
-                        message=f"Hyperopt {run_index}/{total_runs}: {strategy_name}",
+                        message=f"Run queued {run_index}/{total_runs}: {strategy_name}" if split_venv_pipeline else f"Run complete {run_index}/{total_runs}: {strategy_name}",
                     )
-                    try:
-                        batch = _prepare_strategy_window(
-                            job=job,
-                            base_preset=base_preset,
-                            runtime_dir=runtime_dir,
-                            state=state,
-                            strategy=strategy,
-                            training_window=training_window,
-                            validation_windows=validation_windows,
-                        )
-                        if split_venv_pipeline:
-                            while len(queued_batches) >= len(backtest_lanes):
-                                completed_backtests += _finish_one_pending(
-                                    runtime_dir,
-                                    queued_batches,
-                                    job_id=job_id,
-                                    completed_backtests=completed_backtests,
-                                    total_backtests=total_backtests,
-                                )
-                            lane_index = lane_cursor % len(backtest_lanes)
-                            batch.future = executor.submit(
-                                _run_backtest_batch_on_lane,
-                                batch,
-                                backtest_lanes[lane_index],
-                                lane_index + 1,
-                            )
-                            queued_batches.append(batch)
-                            lane_cursor += 1
-                        else:
-                            rows = _run_backtest_batch(batch, backtest_lanes[0])
-                            for row in rows:
-                                _append_result(runtime_dir, row)
-                            completed_backtests += len(rows)
-                        _write_run_status(
+                except Exception as exc:
+                    print(f"Entry Sieve run failed: {exc}")
+                    for validation_window in validation_windows:
+                        _append_result(
                             runtime_dir,
-                            job_id,
-                            status="running",
-                            phase="backtest" if split_venv_pipeline else "hyperopt_backtest",
-                            run_index=run_index,
-                            total_hyperopts=total_runs,
-                            completed_hyperopts=run_index,
-                            total_backtests=total_backtests,
-                            completed_backtests=completed_backtests,
-                            current_strategy=strategy_name,
-                            current_training_window=window_label(training_window),
-                            message=f"Run queued {run_index}/{total_runs}: {strategy_name}" if split_venv_pipeline else f"Run complete {run_index}/{total_runs}: {strategy_name}",
+                            _result_row(
+                                job_id=job_id,
+                                strategy=strategy,
+                                training_window=training_window,
+                                validation_window=validation_window,
+                                take_profit_pct=str(job.get("take_profit_pct") or "2"),
+                                stoploss_pct=str(job.get("stoploss_pct") or "2"),
+                                status="error",
+                                error=str(exc),
+                            ),
                         )
-                    except Exception as exc:
-                        print(f"Entry Sieve run failed: {exc}")
-                        for validation_window in validation_windows:
-                            _append_result(
-                                runtime_dir,
-                                _result_row(
-                                    job_id=job_id,
-                                    strategy=strategy,
-                                    training_window=training_window,
-                                    validation_window=validation_window,
-                                    take_profit_pct=str(job.get("take_profit_pct") or "2"),
-                                    stoploss_pct=str(job.get("stoploss_pct") or "2"),
-                                    status="error",
-                                    error=str(exc),
-                                ),
-                            )
-                        completed_backtests += len(validation_windows)
-                        _write_run_status(
-                            runtime_dir,
-                            job_id,
-                            status="running",
-                            phase="error",
-                            run_index=run_index,
-                            total_hyperopts=total_runs,
-                            completed_hyperopts=run_index,
-                            total_backtests=total_backtests,
-                            completed_backtests=completed_backtests,
-                            current_strategy=strategy_name,
-                            current_training_window=window_label(training_window),
-                            message=f"Run failed {run_index}/{total_runs}: {strategy_name}",
-                        )
+                    completed_backtests += len(validation_windows)
+                    _write_run_status(
+                        runtime_dir,
+                        job_id,
+                        status="running",
+                        phase="error",
+                        run_index=run_index,
+                        total_hyperopts=total_runs,
+                        completed_hyperopts=run_index,
+                        total_backtests=total_backtests,
+                        completed_backtests=completed_backtests,
+                        current_strategy=strategy_name,
+                        current_training_window=window_label(training_window),
+                        message=f"Run failed {run_index}/{total_runs}: {strategy_name}",
+                    )
             while queued_batches:
                 completed_backtests += _finish_one_pending(
                     runtime_dir,
@@ -1077,6 +1539,11 @@ def main(argv: list[str] | None = None) -> int:
                     job_id=job_id,
                     completed_backtests=completed_backtests,
                     total_backtests=total_backtests,
+                    run_index=run_index,
+                    total_hyperopts=total_runs,
+                    completed_hyperopts=total_runs,
+                    current_strategy="final_backtest_drain",
+                    current_training_window="",
                 )
         final_completed_backtests = completed_backtests
     _write_run_status(

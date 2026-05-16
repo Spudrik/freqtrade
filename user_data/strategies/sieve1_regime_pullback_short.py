@@ -161,7 +161,7 @@ class Sieve1RegimePullbackShort(IStrategy):
     INTERFACE_VERSION = 3
 
     timeframe = "1h"
-    startup_candle_count = 240
+    startup_candle_count = 144
     process_only_new_candles = True
     can_short = True
 
@@ -175,48 +175,48 @@ class Sieve1RegimePullbackShort(IStrategy):
     ignore_roi_if_entry_signal = False
 
     ema_fast_period = tagged_parameter(
-        IntParameter(18, 36, default=24, space="buy", optimize=True, load=True),
-        "family:entry",
+        CategoricalParameter([18, 24, 36], default=24, space="buy", optimize=True, load=True),
+        "family:entries",
         "mode:entry_regime_pullback_short",
     )
     ema_slow_period = tagged_parameter(
-        IntParameter(72, 144, default=96, space="buy", optimize=True, load=True),
-        "family:entry",
+        CategoricalParameter([72, 96, 144], default=96, space="buy", optimize=True, load=True),
+        "family:entries",
         "mode:entry_regime_pullback_short",
     )
     rsi_pullback_high = tagged_parameter(
-        IntParameter(52, 64, default=58, space="buy", optimize=True, load=True),
-        "family:entry",
+        IntParameter(52, 64, default=58, space="buy", optimize=False, load=True),
+        "family:entries",
         "mode:entry_regime_pullback_short",
     )
     pullback_atr_max = tagged_parameter(
-        DecimalParameter(0.10, 1.20, decimals=2, default=0.55, space="buy", optimize=True, load=True),
-        "family:entry",
+        CategoricalParameter([0.35, 0.55, 0.9], default=0.55, space="buy", optimize=True, load=True),
+        "family:entries",
         "mode:entry_regime_pullback_short",
     )
     volume_ratio_min = tagged_parameter(
-        DecimalParameter(0.60, 1.60, decimals=2, default=0.85, space="buy", optimize=True, load=True),
-        "family:entry",
+        CategoricalParameter([0.8, 0.85, 1.0, 1.3, 1.6], default=0.85, space="buy", optimize=True, load=True),
+        "family:entries",
         "mode:entry_regime_pullback_short",
     )
 
 
-    use_vp_4h_guard = tagged_parameter(BooleanParameter(default=False, space="buy", optimize=True, load=True), "family:entry", "mode:entry_vp_guard")
-    vp_4h_guard_mode = tagged_parameter(CategoricalParameter(GUARD_MODE_CHOICES, default="score_or_context", space="buy", optimize=True, load=True), "family:entry", "mode:entry_vp_guard")
-    vp_4h_window = tagged_parameter(IntParameter(12, 96, default=48, space="buy", optimize=True, load=True), "family:entry", "mode:entry_vp_guard")
-    vp_4h_bins = tagged_parameter(IntParameter(16, 64, default=36, space="buy", optimize=True, load=True), "family:entry", "mode:entry_vp_guard")
-    vp_4h_score_min = tagged_parameter(DecimalParameter(0.00, 1.00, decimals=2, default=0.25, space="buy", optimize=True, load=True), "family:entry", "mode:entry_vp_guard")
-    vp_4h_context_min = tagged_parameter(DecimalParameter(0.00, 1.00, decimals=2, default=0.28, space="buy", optimize=True, load=True), "family:entry", "mode:entry_vp_guard")
-    use_vp_1d_guard = tagged_parameter(BooleanParameter(default=False, space="buy", optimize=True, load=True), "family:entry", "mode:entry_vp_guard")
-    vp_1d_guard_mode = tagged_parameter(CategoricalParameter(GUARD_MODE_CHOICES, default="context", space="buy", optimize=True, load=True), "family:entry", "mode:entry_vp_guard")
-    vp_1d_window = tagged_parameter(IntParameter(10, 84, default=30, space="buy", optimize=True, load=True), "family:entry", "mode:entry_vp_guard")
-    vp_1d_bins = tagged_parameter(IntParameter(16, 64, default=36, space="buy", optimize=True, load=True), "family:entry", "mode:entry_vp_guard")
-    vp_1d_score_min = tagged_parameter(DecimalParameter(0.00, 1.00, decimals=2, default=0.25, space="buy", optimize=True, load=True), "family:entry", "mode:entry_vp_guard")
-    vp_1d_context_min = tagged_parameter(DecimalParameter(0.00, 1.00, decimals=2, default=0.28, space="buy", optimize=True, load=True), "family:entry", "mode:entry_vp_guard")
-    vp_guard_value_area_pct = tagged_parameter(DecimalParameter(0.55, 0.85, decimals=2, default=0.70, space="buy", optimize=True, load=True), "family:entry", "mode:entry_vp_guard")
-    vp_guard_price_source = tagged_parameter(CategoricalParameter(PRICE_SOURCE_CHOICES, default="hlc3", space="buy", optimize=True, load=True), "family:entry", "mode:entry_vp_guard")
-    vp_guard_node_near_pct = tagged_parameter(DecimalParameter(0.002, 0.030, decimals=3, default=0.010, space="buy", optimize=True, load=True), "family:entry", "mode:entry_vp_guard")
-    vp_guard_pressure_delta_min = tagged_parameter(DecimalParameter(0.00, 0.35, decimals=2, default=0.05, space="buy", optimize=True, load=True), "family:entry", "mode:entry_vp_guard")
+    use_vp_4h_guard = tagged_parameter(BooleanParameter(default=False, space="buy", optimize=False, load=True), "family:entries", "mode:entry_vp_guard")
+    vp_4h_guard_mode = tagged_parameter(CategoricalParameter(GUARD_MODE_CHOICES, default="score_or_context", space="buy", optimize=False, load=True), "family:entries", "mode:entry_vp_guard")
+    vp_4h_window = tagged_parameter(IntParameter(12, 96, default=48, space="buy", optimize=False, load=True), "family:entries", "mode:entry_vp_guard")
+    vp_4h_bins = tagged_parameter(IntParameter(16, 64, default=36, space="buy", optimize=False, load=True), "family:entries", "mode:entry_vp_guard")
+    vp_4h_score_min = tagged_parameter(DecimalParameter(0.00, 1.00, decimals=2, default=0.25, space="buy", optimize=False, load=True), "family:entries", "mode:entry_vp_guard")
+    vp_4h_context_min = tagged_parameter(DecimalParameter(0.00, 1.00, decimals=2, default=0.28, space="buy", optimize=False, load=True), "family:entries", "mode:entry_vp_guard")
+    use_vp_1d_guard = tagged_parameter(BooleanParameter(default=False, space="buy", optimize=False, load=True), "family:entries", "mode:entry_vp_guard")
+    vp_1d_guard_mode = tagged_parameter(CategoricalParameter(GUARD_MODE_CHOICES, default="context", space="buy", optimize=False, load=True), "family:entries", "mode:entry_vp_guard")
+    vp_1d_window = tagged_parameter(IntParameter(10, 84, default=30, space="buy", optimize=False, load=True), "family:entries", "mode:entry_vp_guard")
+    vp_1d_bins = tagged_parameter(IntParameter(16, 64, default=36, space="buy", optimize=False, load=True), "family:entries", "mode:entry_vp_guard")
+    vp_1d_score_min = tagged_parameter(DecimalParameter(0.00, 1.00, decimals=2, default=0.25, space="buy", optimize=False, load=True), "family:entries", "mode:entry_vp_guard")
+    vp_1d_context_min = tagged_parameter(DecimalParameter(0.00, 1.00, decimals=2, default=0.28, space="buy", optimize=False, load=True), "family:entries", "mode:entry_vp_guard")
+    vp_guard_value_area_pct = tagged_parameter(DecimalParameter(0.55, 0.85, decimals=2, default=0.70, space="buy", optimize=False, load=True), "family:entries", "mode:entry_vp_guard")
+    vp_guard_price_source = tagged_parameter(CategoricalParameter(PRICE_SOURCE_CHOICES, default="hlc3", space="buy", optimize=False, load=True), "family:entries", "mode:entry_vp_guard")
+    vp_guard_node_near_pct = tagged_parameter(DecimalParameter(0.002, 0.030, decimals=3, default=0.010, space="buy", optimize=False, load=True), "family:entries", "mode:entry_vp_guard")
+    vp_guard_pressure_delta_min = tagged_parameter(DecimalParameter(0.00, 0.35, decimals=2, default=0.05, space="buy", optimize=False, load=True), "family:entries", "mode:entry_vp_guard")
 
     def informative_pairs(self) -> list[tuple[str, str]]:
         if not getattr(self, "dp", None):

@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "default_batch": "all",
+  "batches": [
+    {
+      "id": "all",
+      "label": "All Sieve1",
+      "include": ["sieve1_*.py"],
+      "exclude": [],
+      "description": "All active Sieve1 entry files."
+    },
+    {
+      "id": "volume_profile",
+      "label": "Volume Profile",
+      "include": ["sieve1_vp_*.py"],
+      "exclude": ["sieve1_multi*.py"],
+      "description": "Volume-profile node, value-area, HVN, LVN, POC, VAL, and VAH entry probes."
+    },
+    {
+      "id": "geometry",
+      "label": "Geometry",
+      "include": ["sieve1_geometry_*.py"],
+      "exclude": [],
+      "description": "Channel, rectangle, triangle, wedge, and compression geometry entries."
+    },
+    {
+      "id": "continuation_patterns",
+      "label": "Continuation Patterns",
+      "include": ["sieve1_continuation_*.py"],
+      "exclude": [],
+      "description": "Flag and pennant setup, present, and confirmed continuation probes."
+    },
+    {
+      "id": "reversal_patterns",
+      "label": "Reversal Patterns",
+      "include": ["sieve1_reversal_*.py", "sieve1_triple_*.py", "sieve1_wolfe_*.py"],
+      "exclude": [],
+      "description": "Double/triple, head-and-shoulders, inverse head-and-shoulders, and Wolfe reversal probes."
+    },
+    {
+      "id": "structure_levels",
+      "label": "Structure / Levels",
+      "include": [
+        "sieve1_bos_*.py",
+        "sieve1_choch_*.py",
+        "sieve1_tlv2_*.py",
+        "sieve1_prior_*.py",
+        "sieve1_equal_*.py",
+        "sieve1_ladder_*.py",
+        "sieve1_pivot_*.py",
+        "sieve1_*liquidity*.py"
+      ],
+      "exclude": ["sieve1_multi*.py"],
+      "description": "BOS/CHoCH, trendline, prior-level, equal-level, ladder, pivot, and liquidity-level entries."
+    },
+    {
+      "id": "market_state_pressure",
+      "label": "Market State / Pressure",
+      "include": [
+        "sieve1_relative_strength_*.py",
+        "sieve1_capitulation_*.py",
+        "sieve1_regime_*.py",
+        "sieve1_volatility_*.py"
+      ],
+      "exclude": [],
+      "description": "Relative-strength, capitulation, regime, and volatility pressure probes."
+    },
+    {
+      "id": "multi_confluence",
+      "label": "Confluence Probes",
+      "include": ["sieve1_multi*.py"],
+      "exclude": [],
+      "description": "Explicitly labelled multi-idea confluence probes."
+    },
+    {
+      "id": "avwap",
+      "label": "AVWAP",
+      "include": ["sieve1_avwap_*.py"],
+      "exclude": ["sieve1_multi*.py"],
+      "description": "Anchored VWAP reclaim/reject and band entries."
+    },
+    {
+      "id": "zones",
+      "label": "Supply / Demand Zones",
+      "include": ["sieve1_supply_zone_*.py", "sieve1_demand_zone_*.py"],
+      "exclude": ["sieve1_multi*.py"],
+      "description": "Supply and demand zone break, reject, and reclaim entries."
+    },
+    {
+      "id": "small_concepts",
+      "label": "Small Concepts",
+      "include": [
+        "sieve1_avwap_*.py",
+        "sieve1_supply_zone_*.py",
+        "sieve1_demand_zone_*.py",
+        "sieve1_equal_*.py",
+        "sieve1_capitulation_*.py",
+        "sieve1_regime_*.py",
+        "sieve1_volatility_*.py"
+      ],
+      "exclude": ["sieve1_multi*.py"],
+      "description": "Smaller families useful for a short health-check run."
+    }
+  ]
+}

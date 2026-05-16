@@ -20,7 +20,7 @@ ENTRY_SIEVE_STOPLOSS_ENV = "ENTRY_SIEVE_STOPLOSS_PCT"
 ENTRY_MODE = "entry_vp_hvn_reclaim_long"
 ENTRY_TAG = "vp_hvn_reclaim_long"
 SIDE = "long"
-TRIGGER_COLUMN = "vp_hvn_below_reclaim"
+TRIGGER_COLUMN = "vp_node_entry_long"
 CORE_BEHAVIOR = "HVN reclaim from below"
 GUARD_MODE_CHOICES = ["direction", "score", "context", "score_or_context", "balance"]
 PRICE_SOURCE_CHOICES = ["close", "hl2", "hlc3", "ohlc4"]
@@ -104,7 +104,7 @@ class Sieve1VpHvnReclaimLong(IStrategy):
     INTERFACE_VERSION = 3
 
     timeframe = "1h"
-    startup_candle_count = 1200
+    startup_candle_count = 168
     process_only_new_candles = True
     can_short = False
 
@@ -117,41 +117,41 @@ class Sieve1VpHvnReclaimLong(IStrategy):
     trailing_stop = False
     ignore_roi_if_entry_signal = False
 
-    vp_window = tagged_parameter(IntParameter(24, 168, default=96, space="buy", optimize=True, load=True))
-    vp_bins = tagged_parameter(IntParameter(24, 72, default=48, space="buy", optimize=True, load=True))
-    vp_value_area_pct = tagged_parameter(DecimalParameter(0.55, 0.85, decimals=2, default=0.70, space="buy", optimize=True, load=True))
-    vp_price_source = tagged_parameter(CategoricalParameter(PRICE_SOURCE_CHOICES, default="hlc3", space="buy", optimize=True, load=True))
-    vp_smooth_bins = tagged_parameter(IntParameter(1, 6, default=3, space="buy", optimize=True, load=True))
-    vp_hvn_threshold = tagged_parameter(DecimalParameter(0.50, 0.90, decimals=2, default=0.70, space="buy", optimize=True, load=True))
-    vp_lvn_threshold = tagged_parameter(DecimalParameter(0.10, 0.55, decimals=2, default=0.35, space="buy", optimize=True, load=True))
-    vp_pressure_delta_min = tagged_parameter(DecimalParameter(0.00, 0.35, decimals=2, default=0.05, space="buy", optimize=True, load=True))
-    vp_node_near_pct = tagged_parameter(DecimalParameter(0.002, 0.030, decimals=3, default=0.010, space="buy", optimize=True, load=True))
-    vp_node_hvn_strength_min = tagged_parameter(DecimalParameter(0.40, 0.95, decimals=2, default=0.70, space="buy", optimize=True, load=True))
-    vp_node_lvn_thinness_min = tagged_parameter(DecimalParameter(0.25, 0.95, decimals=2, default=0.55, space="buy", optimize=True, load=True))
-    vp_volume_percentile_min = tagged_parameter(DecimalParameter(0.00, 0.90, decimals=2, default=0.55, space="buy", optimize=True, load=True))
-    vp_poc_migration_window = tagged_parameter(IntParameter(4, 36, default=12, space="buy", optimize=True, load=True))
-    vp_score_window = tagged_parameter(IntParameter(12, 120, default=48, space="buy", optimize=True, load=True))
-    vp_fast_traverse_atr_mult = tagged_parameter(DecimalParameter(0.50, 2.80, decimals=2, default=1.20, space="buy", optimize=True, load=True))
-    vp_entry_score_margin = tagged_parameter(DecimalParameter(0.00, 0.20, decimals=2, default=0.02, space="buy", optimize=True, load=True))
+    vp_window = tagged_parameter(IntParameter(24, 168, default=96, space="buy", optimize=False, load=True))
+    vp_bins = tagged_parameter(IntParameter(24, 72, default=48, space="buy", optimize=False, load=True))
+    vp_value_area_pct = tagged_parameter(DecimalParameter(0.55, 0.85, decimals=2, default=0.70, space="buy", optimize=False, load=True))
+    vp_price_source = tagged_parameter(CategoricalParameter(PRICE_SOURCE_CHOICES, default="hlc3", space="buy", optimize=False, load=True))
+    vp_smooth_bins = tagged_parameter(IntParameter(1, 6, default=3, space="buy", optimize=False, load=True))
+    vp_hvn_threshold = tagged_parameter(DecimalParameter(0.50, 0.90, decimals=2, default=0.70, space="buy", optimize=False, load=True))
+    vp_lvn_threshold = tagged_parameter(DecimalParameter(0.10, 0.55, decimals=2, default=0.35, space="buy", optimize=False, load=True))
+    vp_pressure_delta_min = tagged_parameter(DecimalParameter(0.00, 0.35, decimals=2, default=0.05, space="buy", optimize=False, load=True))
+    vp_node_near_pct = tagged_parameter(CategoricalParameter([0.005, 0.01, 0.02], default=0.01, space="buy", optimize=True, load=True))
+    vp_node_hvn_strength_min = tagged_parameter(DecimalParameter(0.40, 0.95, decimals=2, default=0.70, space="buy", optimize=False, load=True))
+    vp_node_lvn_thinness_min = tagged_parameter(DecimalParameter(0.25, 0.95, decimals=2, default=0.55, space="buy", optimize=False, load=True))
+    vp_volume_percentile_min = tagged_parameter(DecimalParameter(0.00, 0.90, decimals=2, default=0.55, space="buy", optimize=False, load=True))
+    vp_poc_migration_window = tagged_parameter(IntParameter(4, 36, default=12, space="buy", optimize=False, load=True))
+    vp_score_window = tagged_parameter(IntParameter(12, 120, default=48, space="buy", optimize=False, load=True))
+    vp_fast_traverse_atr_mult = tagged_parameter(CategoricalParameter([0.8, 1.2, 1.8], default=1.2, space="buy", optimize=True, load=True))
+    vp_entry_score_margin = tagged_parameter(CategoricalParameter([0.0, 0.02, 0.05, 0.1], default=0.02, space="buy", optimize=True, load=True))
 
     use_entry_score_guard = tagged_parameter(BooleanParameter(default=False, space="buy", optimize=True, load=True))
-    entry_score_min = tagged_parameter(DecimalParameter(0.00, 1.00, decimals=2, default=0.20, space="buy", optimize=True, load=True))
+    entry_score_min = tagged_parameter(CategoricalParameter([0.2, 0.35, 0.5, 0.65], default=0.2, space="buy", optimize=True, load=True))
     use_entry_context_guard = tagged_parameter(BooleanParameter(default=False, space="buy", optimize=True, load=True))
-    entry_context_min = tagged_parameter(DecimalParameter(0.00, 1.00, decimals=2, default=0.26, space="buy", optimize=True, load=True))
+    entry_context_min = tagged_parameter(CategoricalParameter([0.2, 0.26, 0.3, 0.45], default=0.26, space="buy", optimize=True, load=True))
 
-    use_vp_4h_guard = tagged_parameter(BooleanParameter(default=False, space="buy", optimize=True, load=True))
-    vp_4h_guard_mode = tagged_parameter(CategoricalParameter(GUARD_MODE_CHOICES, default="score_or_context", space="buy", optimize=True, load=True))
-    vp_4h_window = tagged_parameter(IntParameter(12, 96, default=48, space="buy", optimize=True, load=True))
-    vp_4h_bins = tagged_parameter(IntParameter(16, 64, default=36, space="buy", optimize=True, load=True))
-    vp_4h_score_min = tagged_parameter(DecimalParameter(0.00, 1.00, decimals=2, default=0.25, space="buy", optimize=True, load=True))
-    vp_4h_context_min = tagged_parameter(DecimalParameter(0.00, 1.00, decimals=2, default=0.28, space="buy", optimize=True, load=True))
+    use_vp_4h_guard = tagged_parameter(BooleanParameter(default=False, space="buy", optimize=False, load=True))
+    vp_4h_guard_mode = tagged_parameter(CategoricalParameter(GUARD_MODE_CHOICES, default="score_or_context", space="buy", optimize=False, load=True))
+    vp_4h_window = tagged_parameter(IntParameter(12, 96, default=48, space="buy", optimize=False, load=True))
+    vp_4h_bins = tagged_parameter(IntParameter(16, 64, default=36, space="buy", optimize=False, load=True))
+    vp_4h_score_min = tagged_parameter(DecimalParameter(0.00, 1.00, decimals=2, default=0.25, space="buy", optimize=False, load=True))
+    vp_4h_context_min = tagged_parameter(DecimalParameter(0.00, 1.00, decimals=2, default=0.28, space="buy", optimize=False, load=True))
 
-    use_vp_1d_guard = tagged_parameter(BooleanParameter(default=False, space="buy", optimize=True, load=True))
-    vp_1d_guard_mode = tagged_parameter(CategoricalParameter(GUARD_MODE_CHOICES, default="context", space="buy", optimize=True, load=True))
-    vp_1d_window = tagged_parameter(IntParameter(10, 84, default=30, space="buy", optimize=True, load=True))
-    vp_1d_bins = tagged_parameter(IntParameter(16, 64, default=36, space="buy", optimize=True, load=True))
-    vp_1d_score_min = tagged_parameter(DecimalParameter(0.00, 1.00, decimals=2, default=0.25, space="buy", optimize=True, load=True))
-    vp_1d_context_min = tagged_parameter(DecimalParameter(0.00, 1.00, decimals=2, default=0.28, space="buy", optimize=True, load=True))
+    use_vp_1d_guard = tagged_parameter(BooleanParameter(default=False, space="buy", optimize=False, load=True))
+    vp_1d_guard_mode = tagged_parameter(CategoricalParameter(GUARD_MODE_CHOICES, default="context", space="buy", optimize=False, load=True))
+    vp_1d_window = tagged_parameter(IntParameter(10, 84, default=30, space="buy", optimize=False, load=True))
+    vp_1d_bins = tagged_parameter(IntParameter(16, 64, default=36, space="buy", optimize=False, load=True))
+    vp_1d_score_min = tagged_parameter(DecimalParameter(0.00, 1.00, decimals=2, default=0.25, space="buy", optimize=False, load=True))
+    vp_1d_context_min = tagged_parameter(DecimalParameter(0.00, 1.00, decimals=2, default=0.28, space="buy", optimize=False, load=True))
 
     def leverage(self, pair: str, current_time: datetime, current_rate: float, proposed_leverage: float, max_leverage: float, entry_tag: str | None, side: str, **kwargs: Any) -> float:
         _ = pair, current_time, current_rate, proposed_leverage, max_leverage, entry_tag, side, kwargs
@@ -196,7 +196,12 @@ class Sieve1VpHvnReclaimLong(IStrategy):
         dataframe["enter_short"] = 0
         dataframe["enter_tag"] = None
 
-        condition = _bool(dataframe, TRIGGER_COLUMN)
+        condition = (
+            _bool(dataframe, TRIGGER_COLUMN)
+            & _num(dataframe, "vp_score_long").gt(_num(dataframe, "vp_score_short"))
+            & _num(dataframe, "close").gt(_num(dataframe, "vp_hvn_below", np.nan))
+            & _num(dataframe, "close").gt(_num(dataframe, "open"))
+        )
         if bool(self.use_entry_score_guard.value):
             condition &= self._score_guard(dataframe, "vp", SIDE, float(self.entry_score_min.value))
         if bool(self.use_entry_context_guard.value):
@@ -301,4 +306,3 @@ class Sieve1VpHvnReclaimLong(IStrategy):
 
 
 apply_explicit_hyperopt_surface(Sieve1VpHvnReclaimLong)
-
