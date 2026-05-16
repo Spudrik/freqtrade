@@ -66,10 +66,35 @@
       "description": "Relative-strength, capitulation, regime, and volatility pressure probes."
     },
     {
+      "id": "tlv2_vp",
+      "label": "TLV2 + VP",
+      "include": ["sieve1_multi2_tlv2_vp_*.py"],
+      "exclude": [],
+      "description": "Two-concept confluence probes using TLV2 line interaction as the entry trigger and Volume Profile as required confirmation."
+    },
+    {
+      "id": "tlv2_boschoch",
+      "label": "TLV2 + BOS/CHoCH",
+      "include": ["sieve1_multi2_tlv2_boschoch_*.py"],
+      "exclude": [],
+      "description": "Two-concept confluence probes using TLV2 line interaction with matching BOS/CHoCH structural confirmation."
+    },
+    {
+      "id": "vp_prior_levels",
+      "label": "VP + Prior Levels",
+      "include": ["sieve1_multi2_vp_prior_*.py"],
+      "exclude": [],
+      "description": "Two-concept confluence probes using prior/equal level events with Volume Profile confirmation."
+    },
+    {
       "id": "multi_confluence",
       "label": "Confluence Probes",
       "include": ["sieve1_multi*.py"],
-      "exclude": [],
+      "exclude": [
+        "sieve1_multi2_tlv2_vp_*.py",
+        "sieve1_multi2_tlv2_boschoch_*.py",
+        "sieve1_multi2_vp_prior_*.py"
+      ],
       "description": "Explicitly labelled multi-idea confluence probes."
     },
     {

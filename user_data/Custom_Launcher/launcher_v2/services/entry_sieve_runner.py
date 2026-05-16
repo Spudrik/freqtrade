@@ -46,6 +46,7 @@ PIPELINED_BACKTEST_WORKER_CAP = 3
 BACKTEST_WAIT_STATUS_SECONDS = 60.0
 BACKTEST_START_STAGGER_SECONDS = 15.0
 BACKTEST_START_RAM_LIMIT_PERCENT = 80.0
+SPEED_RUN_EPOCH_CAP = 120
 FULL_CYCLE_VALIDATION_WINDOW = "full_cycle_2020_2026"
 TIMEFRAME_SECONDS = {
     "5m": 5 * 60,
@@ -1240,8 +1241,20 @@ def _resolve_epochs(job: dict[str, Any], resolved_params: list[str]) -> str:
                 cap = 0
             if cap > 0:
                 value = min(value, cap)
-        return str(value)
-    return str(job.get("epochs") or "200")
+    else:
+        try:
+            value = int(str(job.get("epochs") or "200").strip())
+        except (TypeError, ValueError):
+            value = 200
+    if bool(job.get("speed_run_mode")):
+        cap_text = str(job.get("auto_epochs_cap") or SPEED_RUN_EPOCH_CAP).strip()
+        try:
+            cap = int(cap_text)
+        except (TypeError, ValueError):
+            cap = SPEED_RUN_EPOCH_CAP
+        if cap > 0:
+            value = min(value, cap)
+    return str(max(1, value))
 
 
 def _format_pct(value: float) -> str:
@@ -1550,7 +1563,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"{_final_backtest_worker_limit(backtest_lane_count=len(backtest_lanes), base_preset=base_preset, split_venv_pipeline=split_venv_pipeline)} lane(s) during final drain"
             )
     if bool(job.get("speed_run_mode")):
-        print(f"Speed run mode enabled: first {_speed_pair_count(job)} manual pair(s), 1 auto window, 60 epochs, target sweep disabled")
+        print(f"Speed run mode enabled: first {_speed_pair_count(job)} manual pair(s), 1 auto window, epochs capped at {job.get('auto_epochs_cap') or SPEED_RUN_EPOCH_CAP}, target sweep disabled")
     if target_sweep_enabled:
         pairs = _target_pairs(job)
         pair_text = ", ".join(f"{pair['take_profit_pct']}/{pair['stoploss_pct']}" for pair in pairs)

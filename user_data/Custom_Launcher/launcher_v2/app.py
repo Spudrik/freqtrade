@@ -32,6 +32,7 @@ AUTO_PRESET_NAME = "LauncherV2-auto"
 FALLBACK_PRESET_NAME = "BackTest2021-26"
 OUTPUT_DRAIN_MAX_LINES = 250
 OUTPUT_DRAIN_MAX_CHARS = 120_000
+ENTRY_SIEVE_STATUS_POLL_MS = 3000
 
 
 class LauncherV2(tk.Tk):
@@ -85,10 +86,14 @@ class LauncherV2(tk.Tk):
             notify=self._notify_tabs,
         )
         self.tabs: dict[str, Any] = {}
+        self._entry_sieve_console_signature = ""
+        self._entry_sieve_console_had_active = False
+        self._entry_sieve_log_offsets: dict[str, int] = {}
         self._build_ui()
         self.load_execute_preset()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.after(100, self._drain_output_queue)
+        self.after(1000, self._poll_entry_sieve_console_status)
 
     def _configure_style(self) -> None:
         style = ttk.Style(self)
@@ -632,6 +637,180 @@ class LauncherV2(tk.Tk):
             tab = self.tabs.get(key)
             if tab is not None:
                 tab.on_app_event("process_output", payload)
+
+    def _poll_entry_sieve_console_status(self) -> None:
+        try:
+            active, signature, line = self._entry_sieve_console_line()
+            log_text = self._entry_sieve_log_delta() if active and not self.process_runner.is_running() else ""
+            if log_text:
+                self._dispatch_process_output(
+                    {
+                        "stream": "entry_sieve_log",
+                        "text": log_text,
+                        "owner": "explorer",
+                        "log_file": "",
+                    }
+                )
+            should_emit = bool(line) and signature != self._entry_sieve_console_signature
+            if should_emit and (active or self._entry_sieve_console_had_active):
+                self._entry_sieve_console_signature = signature
+                self._entry_sieve_console_had_active = active
+                self._dispatch_process_output(
+                    {
+                        "stream": "entry_sieve_status",
+                        "text": line,
+                        "owner": "explorer",
+                        "log_file": "",
+                    }
+                )
+            elif active:
+                self._entry_sieve_console_had_active = True
+                self._entry_sieve_console_signature = signature
+            elif not active:
+                self._entry_sieve_console_had_active = False
+                self._entry_sieve_console_signature = signature
+        except Exception:
+            pass
+        if not self._closing:
+            self.after(ENTRY_SIEVE_STATUS_POLL_MS, self._poll_entry_sieve_console_status)
+
+    def _entry_sieve_log_delta(self) -> str:
+        runtime_dir = self.context.app_dir / "launcher_v2" / "runtime" / "entry_sieve"
+        queue = self._latest_entry_sieve_queue(runtime_dir)
+        status = self._entry_sieve_status(runtime_dir)
+        job_id = str(status.get("job_id") or queue.get("current_job_id") or "").strip()
+        if not job_id:
+            return ""
+        explicit_log = str(queue.get("log_file") or "").strip()
+        log_path = Path(explicit_log) if explicit_log else runtime_dir / "logs" / f"{job_id}.log"
+        if not log_path.exists():
+            return ""
+        key = str(log_path)
+        try:
+            size = log_path.stat().st_size
+        except OSError:
+            return ""
+        offset = self._entry_sieve_log_offsets.get(key)
+        if offset is None:
+            offset = max(0, size - 80_000)
+        if size < offset:
+            offset = 0
+        if size == offset:
+            self._entry_sieve_log_offsets[key] = offset
+            return ""
+        try:
+            with log_path.open("r", encoding="utf-8", errors="replace") as handle:
+                handle.seek(offset)
+                text = handle.read(120_000)
+                self._entry_sieve_log_offsets[key] = handle.tell()
+        except OSError:
+            return ""
+        return text
+
+    def _entry_sieve_console_line(self) -> tuple[bool, str, str]:
+        runtime_dir = self.context.app_dir / "launcher_v2" / "runtime" / "entry_sieve"
+        queue = self._latest_entry_sieve_queue(runtime_dir)
+        status = self._entry_sieve_status(runtime_dir)
+        queue_status = str(queue.get("status") or "").lower()
+        run_status = str(status.get("status") or "").lower()
+        active = queue_status in {"pending", "running", "waiting"} or run_status == "running"
+        signature_payload = {
+            "queue_id": queue.get("queue_id"),
+            "queue_status": queue.get("status"),
+            "queue_phase": queue.get("phase"),
+            "current_batch": queue.get("current_batch"),
+            "batch_index": queue.get("batch_index"),
+            "batch_total": queue.get("batch_total"),
+            "job_id": status.get("job_id"),
+            "run_status": status.get("status"),
+            "run_phase": status.get("phase"),
+            "run_index": status.get("run_index"),
+            "completed_hyperopts": status.get("completed_hyperopts"),
+            "total_hyperopts": status.get("total_hyperopts"),
+            "completed_backtests": status.get("completed_backtests"),
+            "total_backtests": status.get("total_backtests"),
+            "waiting_backtest_batches": status.get("waiting_backtest_batches"),
+            "running_backtest_batches": status.get("running_backtest_batches"),
+            "message": status.get("message") or queue.get("message"),
+        }
+        signature = json.dumps(signature_payload, sort_keys=True, default=str)
+        parts = ["Entry Sieve"]
+        if queue:
+            batch = str(queue.get("current_batch") or "")
+            batch_index = queue.get("batch_index")
+            batch_total = queue.get("batch_total")
+            batch_text = f"batch {batch_index}/{batch_total} {batch}" if batch and batch_index and batch_total else batch
+            queue_bits = [str(queue.get("status") or ""), str(queue.get("phase") or "")]
+            if batch_text:
+                queue_bits.append(batch_text)
+            parts.append("queue " + " ".join(bit for bit in queue_bits if bit))
+        if status:
+            job_id = str(status.get("job_id") or "")
+            phase = str(status.get("phase") or "")
+            hyper = self._progress_text(status.get("completed_hyperopts"), status.get("total_hyperopts"))
+            backtest = self._progress_text(status.get("completed_backtests"), status.get("total_backtests"))
+            run_bits = [job_id, str(status.get("status") or ""), phase]
+            if hyper:
+                run_bits.append(f"hyperopt {hyper}")
+            if backtest:
+                run_bits.append(f"backtest {backtest}")
+            waiting = status.get("waiting_backtest_batches")
+            running = status.get("running_backtest_batches")
+            if waiting not in ("", None) or running not in ("", None):
+                run_bits.append(f"bt_wait/running {waiting or 0}/{running or 0}")
+            current_strategy = str(status.get("current_strategy") or "")
+            if current_strategy and current_strategy != "final_backtest_drain":
+                run_bits.append(current_strategy)
+            parts.append("run " + " ".join(bit for bit in run_bits if bit))
+        message = str(status.get("message") or queue.get("message") or "")
+        if message:
+            parts.append(message)
+        return active, signature, " | ".join(parts) + "\n"
+
+    def _latest_entry_sieve_queue(self, runtime_dir: Path) -> dict[str, Any]:
+        queue_dir = runtime_dir / "queues"
+        if not queue_dir.exists():
+            return {}
+        queues = sorted(queue_dir.glob("*.json"), key=lambda path: path.stat().st_mtime, reverse=True)
+        loaded = [self._read_json_file(path) for path in queues[:10]]
+        for queue in loaded:
+            if str(queue.get("status") or "").lower() in {"pending", "running", "waiting"}:
+                return queue
+        return loaded[0] if loaded else {}
+
+    def _entry_sieve_status(self, runtime_dir: Path) -> dict[str, Any]:
+        active = self._read_json_file(runtime_dir / "active.json")
+        status_file = str(active.get("status_file") or "").strip()
+        status_path = Path(status_file) if status_file else Path()
+        if status_file and status_path.exists():
+            status = self._read_json_file(status_path)
+            if status:
+                return status
+        status_dir = runtime_dir / "status"
+        if not status_dir.exists():
+            return active
+        statuses = sorted(status_dir.glob("*.json"), key=lambda path: path.stat().st_mtime, reverse=True)
+        for path in statuses[:10]:
+            status = self._read_json_file(path)
+            if str(status.get("status") or "").lower() == "running":
+                return status
+        return self._read_json_file(statuses[0]) if statuses else active
+
+    @staticmethod
+    def _progress_text(done: Any, total: Any) -> str:
+        if done in ("", None) and total in ("", None):
+            return ""
+        return f"{done or 0}/{total or 0}"
+
+    @staticmethod
+    def _read_json_file(path: Path) -> dict[str, Any]:
+        if not path.exists():
+            return {}
+        try:
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
+        except Exception:
+            return {}
+        return data if isinstance(data, dict) else {}
 
     def _on_close(self) -> None:
         self._closing = True

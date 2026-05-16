@@ -42,6 +42,30 @@ def _update_queue(queue_file: Path, queue: dict[str, Any], **fields_to_update: A
     save_json(queue_file, queue)
 
 
+def _run_batch_command(command: list[str], *, cwd: Path, log_file: Path) -> int:
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    with log_file.open("w", encoding="utf-8", errors="replace") as log_handle:
+        log_handle.write(f"Started: {datetime.now().astimezone().isoformat()}\n")
+        log_handle.write("Command: " + " ".join(command) + "\n\n")
+        log_handle.flush()
+        process = subprocess.Popen(
+            command,
+            cwd=str(cwd),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+        )
+        assert process.stdout is not None
+        for line in process.stdout:
+            print(line, end="", flush=True)
+            log_handle.write(line)
+            log_handle.flush()
+        return int(process.wait() or 0)
+
+
 def _active_run_is_running(service: EntrySieveService, current_job_id: str = "") -> bool:
     return bool(service.live_runs(exclude_job_id=current_job_id))
 
@@ -92,6 +116,7 @@ def main(argv: list[str] | None = None) -> int:
         job = load_json(job_path, {})
         job_id = str(job.get("job_id") or job_path.stem)
         command = [python_exe, "-u", "-m", "launcher_v2.services.entry_sieve_runner", "--job-file", str(job_path)]
+        log_file = service.runtime_dir / "logs" / f"{job_id}.log"
         _update_queue(
             queue_file,
             queue,
@@ -100,13 +125,14 @@ def main(argv: list[str] | None = None) -> int:
             current_batch=batch_id,
             current_job_id=job_id,
             command=command,
+            log_file=str(log_file),
             message=f"Running Entry Sieve batch {index}/{len(batch_ids)}: {batch_id}",
         )
-        completed_process = subprocess.run(command, cwd=str(app_dir))
-        if completed_process.returncode != 0:
-            failed.append({"batch": batch_id, "job_id": job_id, "returncode": completed_process.returncode})
+        returncode = _run_batch_command(command, cwd=app_dir, log_file=log_file)
+        if returncode != 0:
+            failed.append({"batch": batch_id, "job_id": job_id, "returncode": returncode})
             _update_queue(queue_file, queue, status="failed", phase="failed", failed_batches=failed, message=f"Batch failed: {batch_id}")
-            return int(completed_process.returncode or 1)
+            return int(returncode or 1)
         completed.append(batch_id)
         _update_queue(queue_file, queue, status="running", phase="batch_complete", completed_batches=completed, message=f"Completed batch {batch_id}")
 

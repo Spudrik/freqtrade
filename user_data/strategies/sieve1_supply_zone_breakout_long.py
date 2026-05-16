@@ -136,9 +136,7 @@ class Sieve1SupplyZoneBreakoutLong(IStrategy):
     volume_ratio_min = tagged_parameter(CategoricalParameter([0.8, 1.0, 1.3, 1.6], default=0.8, space="buy", optimize=True, load=True))
     pressure_min = tagged_parameter(CategoricalParameter([0.05, 0.1, 0.2, 0.35], default=0.05, space="buy", optimize=True, load=True))
 
-    use_trend_guard = tagged_parameter(BooleanParameter(default=False, space="buy", optimize=False, load=True))
-    trend_fast_period = tagged_parameter(IntParameter(3, 72, default=21, space="buy", optimize=False, load=True))
-    trend_slow_period = tagged_parameter(IntParameter(24, 240, default=96, space="buy", optimize=False, load=True))
+    use_close_direction_guard = tagged_parameter(BooleanParameter(default=False, space="buy", optimize=False, load=True))
 
     vp_window = tagged_parameter(IntParameter(24, 168, default=96, space="buy", optimize=False, load=True))
     vp_bins = tagged_parameter(IntParameter(24, 72, default=48, space="buy", optimize=False, load=True))
@@ -182,7 +180,6 @@ class Sieve1SupplyZoneBreakoutLong(IStrategy):
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         dataframe = self._add_volume_pressure(dataframe)
-        dataframe = self._add_trend(dataframe)
         dataframe = self._add_prior_period_levels(dataframe)
         dataframe = self._add_rolling_levels(dataframe)
         dataframe = self._add_avwap(dataframe)
@@ -202,8 +199,8 @@ class Sieve1SupplyZoneBreakoutLong(IStrategy):
         condition = self._entry_condition(dataframe)
         if bool(self.use_volume_guard.value):
             condition &= self._volume_guard(dataframe)
-        if bool(self.use_trend_guard.value):
-            condition &= self._trend_guard(dataframe)
+        if bool(self.use_close_direction_guard.value):
+            condition &= self._close_direction_guard(dataframe)
         if bool(self.use_vp_1h_guard.value):
             condition &= self._vp_guard(dataframe, "vp", SIDE, str(self.vp_guard_mode.value), float(self.vp_score_min.value), float(self.vp_context_min.value))
         if bool(self.use_vp_4h_guard.value):
@@ -272,11 +269,6 @@ class Sieve1SupplyZoneBreakoutLong(IStrategy):
         dataframe["entry_pressure"] = close_location.sub(0.5).mul(2.0)
         return dataframe
 
-    def _add_trend(self, dataframe: DataFrame) -> DataFrame:
-        close = _num(dataframe, "close")
-        dataframe["entry_ema_fast"] = close.ewm(span=int(self.trend_fast_period.value), adjust=False, min_periods=2).mean()
-        dataframe["entry_ema_slow"] = close.ewm(span=int(self.trend_slow_period.value), adjust=False, min_periods=2).mean()
-        return dataframe
 
     def _add_prior_period_levels(self, dataframe: DataFrame) -> DataFrame:
         dates = pd.to_datetime(dataframe["date"], utc=True, errors="coerce")
@@ -549,12 +541,11 @@ class Sieve1SupplyZoneBreakoutLong(IStrategy):
             return ratio_ok & pressure.ge(float(self.pressure_min.value))
         return ratio_ok & pressure.le(-float(self.pressure_min.value))
 
-    def _trend_guard(self, dataframe: DataFrame) -> Series:
-        fast = _num(dataframe, "entry_ema_fast")
-        slow = _num(dataframe, "entry_ema_slow")
+    def _close_direction_guard(self, dataframe: DataFrame) -> Series:
+        close = _num(dataframe, "close")
         if SIDE == "long":
-            return fast.ge(slow)
-        return fast.le(slow)
+            return close.gt(close.shift(1))
+        return close.lt(close.shift(1))
 
     def _merge_informative_vp(self, dataframe: DataFrame, metadata: dict, timeframe: str, prefix: str, window: int, bins: int) -> DataFrame:
         if not getattr(self, "dp", None) or "date" not in dataframe.columns:

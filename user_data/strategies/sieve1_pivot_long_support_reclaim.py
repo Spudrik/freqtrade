@@ -157,9 +157,8 @@ class Sieve1PivotLongSupportReclaim(IStrategy):
         dataframe[f"{prefix}_delta_pressure"] = delta_pressure
         dataframe[f"{prefix}_delta_zscore"] = self._zscore(delta, 96 if prefix == "h1" else 56)
         dataframe[f"{prefix}_cvd"] = delta.cumsum()
-        dataframe[f"{prefix}_cvd_fast"] = dataframe[f"{prefix}_cvd"].ewm(span=20, adjust=False, min_periods=5).mean()
-        dataframe[f"{prefix}_cvd_slow"] = dataframe[f"{prefix}_cvd"].ewm(span=48, adjust=False, min_periods=12).mean()
-        dataframe[f"{prefix}_cvd_trend"] = dataframe[f"{prefix}_cvd_fast"] - dataframe[f"{prefix}_cvd_slow"]
+        pressure_window = 48 if prefix == "h1" else 28
+        dataframe[f"{prefix}_cvd_trend"] = delta.rolling(pressure_window, min_periods=max(4, pressure_window // 4)).sum()
         for window in volume_windows:
             avg_volume = volume.shift(1).rolling(int(window), min_periods=max(2, int(window) // 4)).mean().replace(0.0, np.nan)
             dataframe[f"{prefix}_rvol_{window}"] = volume / avg_volume
@@ -175,10 +174,8 @@ class Sieve1PivotLongSupportReclaim(IStrategy):
             min_periods = max(5, int(lookback) // 4)
             frame[f"d1_resistance_{lookback}"] = high.shift(1).rolling(int(lookback), min_periods=min_periods).max()
             frame[f"d1_support_{lookback}"] = low.shift(1).rolling(int(lookback), min_periods=min_periods).min()
-        frame["d1_ema_fast"] = close.ewm(span=20, adjust=False, min_periods=10).mean()
-        frame["d1_ema_slow"] = close.ewm(span=60, adjust=False, min_periods=30).mean()
-        frame["d1_trend_up"] = frame["d1_ema_fast"] > frame["d1_ema_slow"]
-        frame["d1_trend_down"] = frame["d1_ema_fast"] < frame["d1_ema_slow"]
+        frame["d1_trend_up"] = close.gt(close.shift(1))
+        frame["d1_trend_down"] = close.lt(close.shift(1))
         return frame
 
     def _merge_daily_context(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
@@ -217,10 +214,8 @@ class Sieve1PivotLongSupportReclaim(IStrategy):
             dataframe[f"sieve_local_high_{lookback}"] = high.shift(1).rolling(int(lookback), min_periods=2).max()
             dataframe[f"sieve_local_low_{lookback}"] = low.shift(1).rolling(int(lookback), min_periods=2).min()
         dataframe = self._add_volume_pressure(dataframe, "h1", VOLUME_WINDOW_CHOICES)
-        dataframe["sieve_ema_fast"] = close.ewm(span=24, adjust=False, min_periods=12).mean()
-        dataframe["sieve_ema_slow"] = close.ewm(span=96, adjust=False, min_periods=48).mean()
-        dataframe["sieve_trend_up"] = dataframe["sieve_ema_fast"] > dataframe["sieve_ema_slow"]
-        dataframe["sieve_trend_down"] = dataframe["sieve_ema_fast"] < dataframe["sieve_ema_slow"]
+        dataframe["sieve_trend_up"] = close.gt(close.shift(1))
+        dataframe["sieve_trend_down"] = close.lt(close.shift(1))
         dataframe = self._merge_daily_context(dataframe, metadata)
         dataframe = self._merge_informative_vp(dataframe, metadata, "4h", "vp4h", int(self.vp_4h_window.value), int(self.vp_4h_bins.value))
         dataframe = self._merge_informative_vp(dataframe, metadata, "1d", "vp1d", int(self.vp_1d_window.value), int(self.vp_1d_bins.value))
@@ -388,7 +383,6 @@ class Sieve1PivotLongSupportReclaim(IStrategy):
         support = self._num(dataframe[f"sieve_support_{level}"])
         local_high = self._num(dataframe[f"sieve_local_high_{local}"])
         local_low = self._num(dataframe[f"sieve_local_low_{local}"])
-        ema_fast = self._num(dataframe["sieve_ema_fast"])
         trend_up = pd.Series(dataframe["sieve_trend_up"], index=dataframe.index).fillna(False).astype(bool)
         trend_down = pd.Series(dataframe["sieve_trend_down"], index=dataframe.index).fillna(False).astype(bool)
         kind = self.ENTRY_KIND
@@ -421,10 +415,10 @@ class Sieve1PivotLongSupportReclaim(IStrategy):
             structure = self._recent(break_mask, confirm) & high.ge(support * (1.0 - zone)) & local_high.ge(support * (1.0 - zone)) & close.le(support)
             side = "short"
         elif kind == "long_trend_pullback":
-            structure = trend_up & low.le(ema_fast * (1.0 + zone)) & low.le(support * (1.0 + zone)) & close.gt(ema_fast * (1.0 + trigger))
+            structure = trend_up & low.le(support * (1.0 + zone)) & close.gt(support * (1.0 + trigger)) & close.gt(prev_close)
             side = "long"
         elif kind == "short_trend_pullback":
-            structure = trend_down & high.ge(ema_fast * (1.0 - zone)) & high.ge(resistance * (1.0 - zone)) & close.lt(ema_fast * (1.0 - trigger))
+            structure = trend_down & high.ge(resistance * (1.0 - zone)) & close.lt(resistance * (1.0 - trigger)) & close.lt(prev_close)
             side = "short"
         else:
             structure = pd.Series(False, index=dataframe.index)

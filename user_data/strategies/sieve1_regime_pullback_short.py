@@ -153,9 +153,9 @@ class Sieve1RegimePullbackShort(IStrategy):
     Trend-regime pullback strategy.
 
     Hypothesis:
-    - Only trade in a directional EMA regime.
-    - Enter when price pulls back toward the faster trend mean, momentum resets,
-      then closes back in the trend direction on acceptable volume.
+    - Use a prior rolling range midpoint as broad directional context.
+    - Enter when price pulls back near that context, then closes back in the
+      intended direction on acceptable volume.
     """
 
     INTERFACE_VERSION = 3
@@ -174,18 +174,8 @@ class Sieve1RegimePullbackShort(IStrategy):
     trailing_stop = False
     ignore_roi_if_entry_signal = False
 
-    ema_fast_period = tagged_parameter(
-        CategoricalParameter([18, 24, 36], default=24, space="buy", optimize=True, load=True),
-        "family:entries",
-        "mode:entry_regime_pullback_short",
-    )
-    ema_slow_period = tagged_parameter(
-        CategoricalParameter([72, 96, 144], default=96, space="buy", optimize=True, load=True),
-        "family:entries",
-        "mode:entry_regime_pullback_short",
-    )
-    rsi_pullback_high = tagged_parameter(
-        IntParameter(52, 64, default=58, space="buy", optimize=False, load=True),
+    range_lookback = tagged_parameter(
+        CategoricalParameter([24, 48, 72], default=48, space="buy", optimize=True, load=True),
         "family:entries",
         "mode:entry_regime_pullback_short",
     )
@@ -227,13 +217,6 @@ class Sieve1RegimePullbackShort(IStrategy):
         except Exception:
             return []
 
-    @staticmethod
-    def _rsi(close: Series, period: int = 14) -> Series:
-        delta = close.diff()
-        gain = delta.clip(lower=0.0).ewm(alpha=1.0 / period, adjust=False, min_periods=period).mean()
-        loss = (-delta.clip(upper=0.0)).ewm(alpha=1.0 / period, adjust=False, min_periods=period).mean()
-        rs = gain / loss.replace(0.0, np.nan)
-        return (100.0 - (100.0 / (1.0 + rs))).fillna(50.0)
 
     @staticmethod
     def _atr(dataframe: DataFrame, period: int = 14) -> Series:
@@ -250,15 +233,17 @@ class Sieve1RegimePullbackShort(IStrategy):
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         _ = metadata
-        fast = int(self.ema_fast_period.value)
-        slow = int(self.ema_slow_period.value)
-        dataframe["ema_fast"] = dataframe["close"].ewm(span=fast, adjust=False, min_periods=fast).mean()
-        dataframe["ema_slow"] = dataframe["close"].ewm(span=slow, adjust=False, min_periods=slow).mean()
-        dataframe["rsi"] = self._rsi(dataframe["close"], 14)
+        lookback = int(self.range_lookback.value)
+        min_periods = max(6, lookback // 3)
+        prior_high = dataframe["high"].shift(1).rolling(lookback, min_periods=min_periods).max()
+        prior_low = dataframe["low"].shift(1).rolling(lookback, min_periods=min_periods).min()
+        dataframe["range_mid"] = prior_low.add(prior_high).div(2.0)
+        dataframe["range_direction_up"] = dataframe["range_mid"].gt(dataframe["range_mid"].shift(1))
+        dataframe["range_direction_down"] = dataframe["range_mid"].lt(dataframe["range_mid"].shift(1))
         dataframe["atr"] = self._atr(dataframe, 14)
         dataframe["volume_ratio"] = dataframe["volume"] / dataframe["volume"].rolling(48, min_periods=24).mean()
         dataframe["pullback_dist_atr"] = (
-            (dataframe["close"] - dataframe["ema_fast"]).abs() / dataframe["atr"].replace(0.0, np.nan)
+            (dataframe["close"] - dataframe["range_mid"]).abs() / dataframe["atr"].replace(0.0, np.nan)
         )
         dataframe = self._merge_informative_vp(dataframe, metadata, "4h", "vp4h", int(self.vp_4h_window.value), int(self.vp_4h_bins.value))
         dataframe = self._merge_informative_vp(dataframe, metadata, "1d", "vp1d", int(self.vp_1d_window.value), int(self.vp_1d_bins.value))
@@ -270,17 +255,17 @@ class Sieve1RegimePullbackShort(IStrategy):
         dataframe["enter_short"] = 0
         dataframe["enter_tag"] = None
 
-        short_regime = dataframe["ema_fast"] < dataframe["ema_slow"]
+        short_regime = dataframe["range_direction_down"]
         volume_ok = dataframe["volume_ratio"] >= float(self.volume_ratio_min.value)
-        near_mean = dataframe["pullback_dist_atr"] <= float(self.pullback_atr_max.value)
+        near_context = dataframe["pullback_dist_atr"] <= float(self.pullback_atr_max.value)
 
         short_trigger = (
             short_regime
-            & near_mean
+            & near_context
             & volume_ok
-            & dataframe["rsi"].between(45.0, float(self.rsi_pullback_high.value))
             & (dataframe["close"] < dataframe["open"])
-            & (dataframe["close"] < dataframe["ema_fast"])
+            & (dataframe["close"] < dataframe["close"].shift(1))
+            & (dataframe["close"] < dataframe["range_mid"])
         )
 
         if bool(self.use_vp_4h_guard.value):

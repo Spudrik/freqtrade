@@ -17,7 +17,7 @@ Core rules:
 - Indicator modules produce dataframe evidence, context, confidence scores, and optional advice flags. Strategies own final entry, exit, sizing, stake, add, peel, and risk decisions.
 - Advice flags such as `go_long`, `go_short`, `exit_long`, and `exit_short` are allowed when they are simple, explicit, and derived from that indicator's own evidence. Strategies still own final trade decisions and additional guards.
 - Do not build indicator or strategy ideas around standard technical indicators such as RSI, MACD, Bollinger Bands, Stochastic, ADX, generic oscillator crosses, or similar TA-library staples.
-- Moving averages are allowed only as simple price-action context, for example rising, falling, slope direction, price approaching a mean, or price reclaiming/losing a mean. They are not a standalone edge thesis.
+- Do not use moving averages, EMA/SMA trend filters, MACD-style average crosses, or generic mean-reversion bands as Sieve entry guards.
 - If a proposed indicator mainly repackages standard TA under new names, stop and tell the user before spending refinement time.
 - Prefer structure, liquidity, volume profile, and pattern evidence where the output is genuinely different.
 - Prefer price-action logic over lagging confirmation: reversal behaviour, continuation behaviour, breakout/breakdown behaviour, rejection/reclaim behaviour, and whether price is moving in the intended direction after the event.
@@ -42,8 +42,8 @@ Priority indicator families:
 - Hyperopt surfaces must be coarse and small. Prefer `CategoricalParameter` choices with a few meaningful values over wide decimal or integer ranges.
 - Strategy files should not retune full indicator construction. Use indicator defaults unless the strategy-facing reference identifies a small number of first-pass levers for that indicator.
 - Optional validation guards should use enable/disable flags plus coarse ranges. Volume and pressure guards are preferred supporting checks.
-- Do not suggest RSI, MACD, Bollinger, stochastic, or generic TA-stack guards. If a guard is needed, prefer volume, pressure, local price-action direction, proximity/reclaim/rejection behaviour, or an output from the active custom indicators.
-- Moving-average context may be suggested only in simple language such as rising, falling, approaching, reclaiming, losing, or direction alignment.
+- Do not suggest RSI, MACD, Bollinger, stochastic, moving-average trend filters, or generic TA-stack guards. If a guard is needed, prefer volume, pressure, local price-action direction, proximity/reclaim/rejection behaviour, or an output from the active custom indicators.
+- If directional confirmation is needed, use direct price-action checks rather than moving averages: close above/below the previous close, close above/below a project-indicator level for a small number of candles, reclaim/rejection of an indicator level, candle body direction, or pressure alignment with the trade side.
 - The strategy objective is to find statistically useful entries through Sieve diagnostics. It is not to optimize every available lever or make a final production trading system.
 
 ## Active Indicator Stack

@@ -105,13 +105,9 @@ class Sieve1GeometryAscendingChannelLowerBounceLong1D(IStrategy):
     use_pressure_guard = tagged_parameter(BooleanParameter(default=False, space="buy", optimize=True, load=True))
     pressure_window = tagged_parameter(CategoricalParameter([12, 24, 48], default=24, space="buy", optimize=True, load=True))
     pressure_min = tagged_parameter(CategoricalParameter([0.05, 0.1, 0.15, 0.2, 0.35], default=0.15, space="buy", optimize=True, load=True))
-    use_cvd_guard = tagged_parameter(BooleanParameter(default=False, space="buy", optimize=False, load=True))
-    cvd_fast_period = tagged_parameter(IntParameter(8, 48, default=20, space="buy", optimize=False, load=True))
-    cvd_slow_period = tagged_parameter(IntParameter(24, 160, default=60, space="buy", optimize=False, load=True))
+    use_accumulation_guard = tagged_parameter(BooleanParameter(default=False, space="buy", optimize=False, load=True))
     use_body_direction_guard = tagged_parameter(BooleanParameter(default=False, space="buy", optimize=False, load=True))
-    use_ema_trend_guard = tagged_parameter(BooleanParameter(default=False, space="buy", optimize=False, load=True))
-    ema_fast_period = tagged_parameter(IntParameter(8, 48, default=21, space="buy", optimize=False, load=True))
-    ema_slow_period = tagged_parameter(IntParameter(24, 160, default=89, space="buy", optimize=False, load=True))
+    use_close_direction_guard = tagged_parameter(BooleanParameter(default=False, space="buy", optimize=False, load=True))
 
     min_pattern_bars = tagged_parameter(IntParameter(6, 24, default=12, space="buy", optimize=False, load=True))
     max_pattern_bars = tagged_parameter(IntParameter(36, 120, default=72, space="buy", optimize=False, load=True))
@@ -179,7 +175,7 @@ class Sieve1GeometryAscendingChannelLowerBounceLong1D(IStrategy):
             window = int(self.volume_guard_window.value)
             baseline = volume.shift(1).rolling(window, min_periods=max(2, window // 3)).mean().replace(0.0, np.nan)
             guard &= volume.ge(baseline.mul(float(self.volume_ratio_min.value)))
-        if bool(self.use_pressure_guard.value) or bool(self.use_cvd_guard.value):
+        if bool(self.use_pressure_guard.value) or bool(self.use_accumulation_guard.value):
             open_ = _num(dataframe, "open")
             high = _num(dataframe, "high")
             low = _num(dataframe, "low")
@@ -194,20 +190,15 @@ class Sieve1GeometryAscendingChannelLowerBounceLong1D(IStrategy):
             pressure_baseline = volume.rolling(window, min_periods=max(2, window // 3)).sum().replace(0.0, np.nan)
             pressure_ratio = directional_volume.rolling(window, min_periods=max(2, window // 3)).sum() / pressure_baseline
             guard &= pressure_ratio.le(-float(self.pressure_min.value)) if SIDE == "short" else pressure_ratio.ge(float(self.pressure_min.value))
-        if bool(self.use_cvd_guard.value):
-            cvd = directional_volume.cumsum()
-            fast = cvd.ewm(span=int(self.cvd_fast_period.value), adjust=False, min_periods=max(2, int(self.cvd_fast_period.value) // 2)).mean()
-            slow = cvd.ewm(span=int(self.cvd_slow_period.value), adjust=False, min_periods=max(2, int(self.cvd_slow_period.value) // 2)).mean()
-            guard &= fast.le(slow) if SIDE == "short" else fast.ge(slow)
+        if bool(self.use_accumulation_guard.value):
+            window = int(self.pressure_window.value)
+            accumulation = directional_volume.rolling(window, min_periods=max(2, window // 3)).sum()
+            guard &= accumulation.le(0.0) if SIDE == "short" else accumulation.ge(0.0)
         if bool(self.use_body_direction_guard.value):
             open_ = _num(dataframe, "open")
             guard &= close.lt(open_) if SIDE == "short" else close.gt(open_)
-        if bool(self.use_ema_trend_guard.value):
-            fast_period = int(self.ema_fast_period.value)
-            slow_period = int(self.ema_slow_period.value)
-            fast = close.ewm(span=fast_period, adjust=False, min_periods=max(2, fast_period // 2)).mean()
-            slow = close.ewm(span=slow_period, adjust=False, min_periods=max(2, slow_period // 2)).mean()
-            guard &= fast.le(slow) if SIDE == "short" else fast.ge(slow)
+        if bool(self.use_close_direction_guard.value):
+            guard &= close.lt(close.shift(1)) if SIDE == "short" else close.gt(close.shift(1))
         return guard.fillna(False)
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:

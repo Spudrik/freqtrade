@@ -19,6 +19,7 @@ EXCLUDED_STRATEGY_FILES = {
     "PivotTrendlineMTFResearchStrategy.py",
 }
 MAX_BACKTEST_WORKERS = 20
+SPEED_RUN_EPOCH_CAP = 120
 
 DEFAULT_STRATEGY_BATCHES = [
     {
@@ -293,9 +294,7 @@ class EntrySieveService:
             settings,
             auto_window_mode=True,
             auto_window_count="1",
-            epochs="60",
-            auto_epochs=False,
-            auto_epochs_cap="",
+            auto_epochs_cap=str(SPEED_RUN_EPOCH_CAP),
             target_sweep_enabled=False,
             target_sweep_pairs="",
         )
@@ -774,6 +773,9 @@ class EntrySieveService:
             "continuation_patterns": "pattern_continuation",
             "reversal_patterns": "pattern_reversal",
             "structure_levels": "structure",
+            "tlv2_vp": "tlv2_vp",
+            "tlv2_boschoch": "tlv2_boschoch",
+            "vp_prior_levels": "vp_prior",
             "market_state_pressure": "pressure",
             "multi_confluence": "confluence",
             "small_concepts": "other",

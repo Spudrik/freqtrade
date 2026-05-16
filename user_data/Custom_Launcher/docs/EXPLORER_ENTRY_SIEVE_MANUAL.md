@@ -140,7 +140,7 @@ Scope:
   - Usually `sieve1_*.py`.
   - Keeps daily/TOP10 management strategies out of Sieve1.
 - Speed run:
-  - Forces 5 pairs, 1 auto window, 60 epochs, target sweep off.
+  - Forces 5 pairs, 1 auto window, target sweep off, and normal epoch resolution capped at 120.
   - Useful for faster breadth-first collection.
 - Auto windows:
   - Picks 1-3 windows per strategy.
@@ -160,7 +160,10 @@ Scope:
 - `reversal_patterns`: `sieve1_reversal_*.py`, `sieve1_triple_*.py`, `sieve1_wolfe_*.py`.
 - `structure_levels`: BOS, CHoCH, TLV2, prior/equal levels, ladder, pivot, liquidity.
 - `market_state_pressure`: relative strength, capitulation, regime, volatility.
-- `multi_confluence`: explicit `sieve1_multi*.py` confluence probes.
+- `tlv2_vp`: focused `sieve1_multi2_tlv2_vp_*.py` confluence probes.
+- `tlv2_boschoch`: focused `sieve1_multi2_tlv2_boschoch_*.py` confluence probes.
+- `vp_prior_levels`: focused `sieve1_multi2_vp_prior_*.py` confluence probes.
+- `multi_confluence`: remaining explicit `sieve1_multi*.py` confluence probes that are not split into the focused confluence batches above.
 - `avwap`: `sieve1_avwap_*.py`.
 - `zones`: supply/demand zone probes.
 - `small_concepts`: short mixed health-check group.
@@ -210,6 +213,10 @@ Scope:
   - UI launch buttons preflight against the same live-run state.
   - `active.json` is display state, not locking authority.
   - Closing the UI terminates Entry Sieve subprocess trees launched by that UI.
+- Console feedback:
+  - UI-owned Entry Sieve runs stream stdout through the normal Raw Console path.
+  - Batch-queue jobs tee child-runner stdout to `runtime/entry_sieve/logs/<job_id>.log`.
+  - The UI polls Entry Sieve queue/status state and tails the active job log when the run is background-owned.
 
 ## 13. Auto Window Selection
 
@@ -282,11 +289,14 @@ Scope:
   - volume spike/rising volume
   - directional volume pressure
   - accumulation/distribution pressure
-  - simple trend direction
+  - candle direction
+  - close-vs-previous-close direction
+  - reclaim/rejection/cross behaviour around project-indicator levels
+  - small N-candle follow-through above/below project-indicator thresholds
   - price action confirmation
 - Avoid standard indicators by default:
   - RSI, MACD, Bollinger, etc are not preferred.
-  - Moving averages are acceptable only for simple state: rising/falling/approaching.
+  - Moving averages, EMA/SMA trend filters, and generic mean-reversion bands are not Sieve entry guards.
 - Prefer project indicators and direct price-action logic.
 - Strategy files must be standalone Freqtrade strategy modules.
 - Do not use parent strategy classes, mixins, or external strategy helper files for hyperopted strategies.

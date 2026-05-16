@@ -153,7 +153,7 @@ class Sieve1CapitulationReclaimShort(IStrategy):
     Overshoot reclaim strategy.
 
     Hypothesis:
-    - Extreme distance from a slow mean plus abnormal volume often marks forced
+    - Extreme distance from a prior rolling range midpoint plus abnormal volume often marks forced
       selling/buying.
     - Entry waits for a reclaim candle instead of trying to catch the first spike.
     """
@@ -174,7 +174,7 @@ class Sieve1CapitulationReclaimShort(IStrategy):
     trailing_stop = False
     ignore_roi_if_entry_signal = False
 
-    mean_period = tagged_parameter(
+    reference_window = tagged_parameter(
         CategoricalParameter([96, 144, 216], default=144, space="buy", optimize=True, load=True),
         "family:entries",
         "mode:entry_capitulation_reclaim_short",
@@ -242,10 +242,13 @@ class Sieve1CapitulationReclaimShort(IStrategy):
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         _ = metadata
-        mean_period = int(self.mean_period.value)
-        dataframe["mean"] = dataframe["close"].ewm(span=mean_period, adjust=False, min_periods=mean_period).mean()
+        reference_window = int(self.reference_window.value)
+        min_periods = max(4, reference_window // 4)
+        prior_high = dataframe["high"].shift(1).rolling(reference_window, min_periods=min_periods).max()
+        prior_low = dataframe["low"].shift(1).rolling(reference_window, min_periods=min_periods).min()
+        dataframe["range_mid"] = prior_low.add(prior_high).div(2.0)
         dataframe["atr"] = self._atr(dataframe, 14)
-        dataframe["dist_atr"] = (dataframe["close"] - dataframe["mean"]) / dataframe["atr"].replace(0.0, np.nan)
+        dataframe["dist_atr"] = (dataframe["close"] - dataframe["range_mid"]) / dataframe["atr"].replace(0.0, np.nan)
         dataframe["volume_ratio"] = dataframe["volume"] / dataframe["volume"].rolling(72, min_periods=24).mean()
         candle_range = (dataframe["high"] - dataframe["low"]).replace(0.0, np.nan)
         dataframe["lower_wick_fraction"] = (dataframe[["open", "close"]].min(axis=1) - dataframe["low"]) / candle_range
