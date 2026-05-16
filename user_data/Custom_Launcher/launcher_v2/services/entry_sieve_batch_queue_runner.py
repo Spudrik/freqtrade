@@ -43,23 +43,20 @@ def _update_queue(queue_file: Path, queue: dict[str, Any], **fields_to_update: A
 
 
 def _active_run_is_running(service: EntrySieveService, current_job_id: str = "") -> bool:
-    status = service.load_run_status()
-    if str(status.get("status") or "").lower() != "running":
-        return False
-    active_job_id = str(status.get("job_id") or "")
-    return bool(active_job_id and active_job_id != current_job_id)
+    return bool(service.live_runs(exclude_job_id=current_job_id))
 
 
 def _wait_for_active_run(service: EntrySieveService, queue_file: Path, queue: dict[str, Any], poll_seconds: int) -> None:
     while _active_run_is_running(service):
-        status = service.load_run_status()
+        runs = service.live_runs()
+        active_ids = ", ".join(str(run.get("job_id") or "") for run in runs)
         _update_queue(
             queue_file,
             queue,
             status="waiting",
             phase="waiting_for_active_run",
-            active_job_id=str(status.get("job_id") or ""),
-            message=f"Waiting for active Entry Sieve run {status.get('job_id')}",
+            active_job_id=active_ids,
+            message=f"Waiting for active Entry Sieve run {active_ids}",
         )
         time.sleep(poll_seconds)
 
@@ -87,6 +84,8 @@ def main(argv: list[str] | None = None) -> int:
     for index, batch_id in enumerate(batch_ids, start=1):
         if batch_id in completed:
             continue
+        if bool(queue.get("wait_for_active", True)):
+            _wait_for_active_run(service, queue_file, queue, poll_seconds)
         settings = EntrySieveSettings(**{**base_settings.__dict__, "strategy_batch": batch_id})
         _update_queue(queue_file, queue, status="running", phase="building_job", current_batch=batch_id, batch_index=index, batch_total=len(batch_ids))
         job_path = service.build_job(settings)

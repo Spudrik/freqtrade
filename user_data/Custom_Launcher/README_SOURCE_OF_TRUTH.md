@@ -21,6 +21,7 @@ explorer/explorer_runner.py
 explorer/explorer_support.py
 explorer/tag_catalog.py
 explorer/config/market_windows.json
+docs/EXPLORER_ENTRY_SIEVE_MANUAL.md
 orderbook/collector.py
 orderbook/metrics.py
 orderbook/store.py

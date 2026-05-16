@@ -8,6 +8,8 @@ from typing import Any
 
 from ..command_builder import command_text
 
+MAX_BACKTEST_WORKERS = 20
+
 
 def _split_list(value: Any) -> list[str]:
     if isinstance(value, list):
@@ -39,7 +41,7 @@ def _normalize_worker_count(value: Any, default: str = "2") -> str:
         count = int(str(value).strip())
     except (TypeError, ValueError):
         return default
-    return str(min(9, max(1, count)))
+    return str(min(MAX_BACKTEST_WORKERS, max(1, count)))
 
 
 def _to_bool(value: Any) -> bool:
@@ -96,7 +98,7 @@ def _default_backtest_pythons(app_dir: Path) -> list[str]:
         str(worker_root / "freqtrade-backtest" / "Scripts" / "python.exe"),
         *[
             str(worker_root / f"freqtrade-backtest-{index:02d}" / "Scripts" / "python.exe")
-            for index in range(1, 9)
+            for index in range(1, MAX_BACKTEST_WORKERS)
         ],
     ]
 
@@ -333,9 +335,9 @@ class ExplorerService:
             try:
                 worker_count = int(str(settings.backtest_worker_count or "").strip())
             except (TypeError, ValueError):
-                raise ValueError("Split-venv backtest workers must be an integer from 1 to 9.") from None
-            if worker_count < 1 or worker_count > 9:
-                raise ValueError("Split-venv backtest workers must be between 1 and 9.")
+                raise ValueError(f"Split-venv backtest workers must be an integer from 1 to {MAX_BACKTEST_WORKERS}.") from None
+            if worker_count < 1 or worker_count > MAX_BACKTEST_WORKERS:
+                raise ValueError(f"Split-venv backtest workers must be between 1 and {MAX_BACKTEST_WORKERS}.")
             if not str(settings.pipeline_handoff_dir or "").strip():
                 raise ValueError("Split-venv pipeline requires a handoff directory.")
         if not settings.training_windows:

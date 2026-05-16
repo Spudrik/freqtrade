@@ -136,6 +136,7 @@ class ExplorerTab(BaseTab):
         self.sieve_result_batch_combo: ttk.Combobox | None = None
         self.sieve_strategy_batch_combo: ttk.Combobox | None = None
         self.sieve_results_tree: ttk.Treeview | None = None
+        self._sieve_result_batch_ids: list[str] = []
         self.sieve_result_columns: tuple[str, ...] = ()
         self.sieve_column_order: list[str] = list(SIEVE_DEFAULT_COLUMN_ORDER)
         self._sieve_selected_column = "winrate"
@@ -188,7 +189,7 @@ class ExplorerTab(BaseTab):
         self._editable_entry(controls, 4, 2, "Backtest Python", self.backtest_python_exe_var)
         self._editable_entry(controls, 4, 4, "Handoff dir", self.pipeline_handoff_dir_var)
         ttk.Label(controls, text="Backtest workers").grid(row=5, column=0, sticky="w", padx=8, pady=4)
-        ttk.Combobox(controls, textvariable=self.backtest_worker_count_var, values=[str(index) for index in range(1, 10)], state="readonly").grid(row=5, column=1, sticky="ew", padx=8, pady=4)
+        ttk.Combobox(controls, textvariable=self.backtest_worker_count_var, values=[str(index) for index in range(1, 21)], state="readonly").grid(row=5, column=1, sticky="ew", padx=8, pady=4)
 
         windows = ttk.Frame(main, style="App.TFrame")
         windows.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 8))
@@ -335,6 +336,7 @@ class ExplorerTab(BaseTab):
         ttk.Button(controls, text="Move column right", command=lambda: self._move_sieve_column(1)).grid(row=4, column=4, sticky="w", padx=8, pady=4)
         ttk.Button(controls, text="Reset columns", command=self._reset_sieve_columns).grid(row=4, column=5, sticky="w", padx=8, pady=4)
         ttk.Button(controls, text="Open results folder", command=self._open_sieve_results_folder).grid(row=5, column=0, sticky="w", padx=8, pady=4)
+        ttk.Button(controls, text="Delete selected result", command=self._delete_selected_sieve_result_batches).grid(row=5, column=1, sticky="w", padx=8, pady=4)
         ttk.Label(controls, textvariable=self.sieve_status_var).grid(row=6, column=0, columnspan=6, sticky="w", padx=8, pady=4)
 
         filters = ttk.LabelFrame(sieve_tab, text="Result column filters")
@@ -769,6 +771,10 @@ class ExplorerTab(BaseTab):
         self.refresh()
         self.preset_name_var.set("LauncherV2-auto")
         self.context.emit("save_state", {"reason": "entry_sieve_run"})
+        busy_message = self.sieve_service.busy_message()
+        if busy_message:
+            messagebox.showerror("Entry Sieve already running", busy_message, parent=self)
+            return
         try:
             command = self.sieve_service.build_command(self._sieve_settings())
         except Exception as exc:
@@ -783,6 +789,10 @@ class ExplorerTab(BaseTab):
         self.preset_name_var.set("LauncherV2-auto")
         self.context.emit("save_state", {"reason": "entry_sieve_batch_queue_run"})
         batch_ids = _split_list(self.sieve_batch_queue_var.get())
+        busy_message = self.sieve_service.busy_message()
+        if busy_message:
+            messagebox.showerror("Entry Sieve already running", busy_message, parent=self)
+            return
         try:
             command = self.sieve_service.build_batch_queue_command(self._sieve_settings(), batch_ids)
         except Exception as exc:
@@ -798,6 +808,28 @@ class ExplorerTab(BaseTab):
             open_path(self.sieve_service.results_dir)
         except Exception as exc:
             messagebox.showerror("Entry Sieve results", f"Could not open results folder:\n{exc}", parent=self)
+
+    def _delete_selected_sieve_result_batches(self) -> None:
+        selected_batches = self._selected_sieve_result_batches(
+            self.sieve_result_batch_var.get().strip(),
+            self._sieve_result_batch_ids,
+        )
+        if not selected_batches:
+            messagebox.showinfo("Delete Entry Sieve result", "Select one or more result batches to delete.", parent=self)
+            return
+        label = ", ".join(selected_batches[:5])
+        if len(selected_batches) > 5:
+            label += f", and {len(selected_batches) - 5} more"
+        if not messagebox.askyesno("Delete Entry Sieve result", f"Delete {len(selected_batches)} selected result batch(es)?\n\n{label}", parent=self):
+            return
+        try:
+            deleted = self.sieve_service.delete_result_batches(selected_batches)
+        except Exception as exc:
+            messagebox.showerror("Delete Entry Sieve result", str(exc), parent=self)
+            return
+        self.sieve_result_batch_var.set("")
+        self._refresh_sieve_results()
+        self.context.shared.status.set(f"Deleted {len(deleted)} Entry Sieve result file(s).")
 
     def _clear_sieve_column_filters(self) -> None:
         for variable in (
@@ -821,6 +853,7 @@ class ExplorerTab(BaseTab):
             if batch_filter:
                 batches = [batch for batch in batches if self._sieve_result_batch_matches_filter(batch, batch_filter)]
             batch_ids = [str(batch.get("id") or "") for batch in batches]
+            self._sieve_result_batch_ids = batch_ids
             if self.sieve_result_batch_combo is not None:
                 self.sieve_result_batch_combo.configure(values=["all", *batch_ids])
             selected_batch = self.sieve_result_batch_var.get().strip()

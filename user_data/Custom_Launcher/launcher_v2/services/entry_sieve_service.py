@@ -10,12 +10,15 @@ from pathlib import Path
 import sys
 from typing import Any
 
+from .entry_sieve_lock import live_entry_sieve_runs
+
 
 EXCLUDED_STRATEGY_FILES = {
     "__init__.py",
     "test_entry_research_base.py",
     "PivotTrendlineMTFResearchStrategy.py",
 }
+MAX_BACKTEST_WORKERS = 20
 
 DEFAULT_STRATEGY_BATCHES = [
     {
@@ -57,7 +60,7 @@ def _normalize_worker_count(value: Any, default: str = "2") -> str:
         count = int(str(value).strip())
     except (TypeError, ValueError):
         return default
-    return str(min(9, max(1, count)))
+    return str(min(MAX_BACKTEST_WORKERS, max(1, count)))
 
 
 def _default_repo_root(app_dir: Path) -> Path:
@@ -70,7 +73,7 @@ def _default_backtest_pythons(app_dir: Path) -> list[str]:
         str(worker_root / "freqtrade-backtest" / "Scripts" / "python.exe"),
         *[
             str(worker_root / f"freqtrade-backtest-{index:02d}" / "Scripts" / "python.exe")
-            for index in range(1, 9)
+            for index in range(1, MAX_BACKTEST_WORKERS)
         ],
     ]
 
@@ -420,6 +423,44 @@ class EntrySieveService:
             rows.extend(self.load_results(batch_id))
         return rows
 
+    def live_runs(self, *, exclude_job_id: str = "") -> list[dict[str, Any]]:
+        return live_entry_sieve_runs(self.runtime_dir, exclude_job_id=exclude_job_id)
+
+    def busy_message(self, *, exclude_job_id: str = "") -> str:
+        runs = self.live_runs(exclude_job_id=exclude_job_id)
+        if not runs:
+            return ""
+        labels = [
+            f"{run.get('job_id')} (pid {run.get('pid')}, {run.get('phase') or run.get('source') or 'running'})"
+            for run in runs
+        ]
+        return "Entry Sieve is already running: " + "; ".join(labels)
+
+    def delete_result_batches(self, batch_ids: list[str]) -> list[str]:
+        deleted: list[str] = []
+        deleted_job_ids: set[str] = set()
+        running_job_ids = {str(run.get("job_id") or "").strip() for run in self.live_runs()}
+        deletions: list[tuple[str, list[Path]]] = []
+        for batch_id in batch_ids:
+            path = self._resolve_result_batch(batch_id)
+            if not path.exists():
+                continue
+            if not self._is_deletable_result_path(path):
+                raise ValueError(f"Refusing to delete outside Entry Sieve results: {path}")
+            job_id = path.stem
+            if job_id in running_job_ids:
+                raise ValueError(f"Refusing to delete active running result batch: {job_id}")
+            deletions.append((job_id, self._related_result_paths(path)))
+        for job_id, related_paths in deletions:
+            for related_path in related_paths:
+                if related_path.exists():
+                    related_path.unlink()
+                    deleted.append(str(related_path))
+            deleted_job_ids.add(job_id)
+        if deleted_job_ids:
+            self._clear_latest_if_deleted(deleted_job_ids)
+        return deleted
+
     def load_run_status(self) -> dict[str, Any]:
         active = self.runtime_dir / "active.json"
         if not active.exists():
@@ -579,6 +620,33 @@ class EntrySieveService:
         name = Path(clean_id).name
         jsonl_path = self.results_dir / f"{name}.jsonl"
         return jsonl_path if jsonl_path.exists() else self.results_dir / f"{name}.json"
+
+    def _is_deletable_result_path(self, path: Path) -> bool:
+        try:
+            resolved = path.resolve()
+            results_dir = self.results_dir.resolve()
+            archive_dir = self.archive_dir.resolve()
+            legacy = (self.runtime_dir / "results.json").resolve()
+        except OSError:
+            return False
+        return resolved.parent in {results_dir, archive_dir} or resolved == legacy
+
+    def _related_result_paths(self, path: Path) -> list[Path]:
+        paths = [path]
+        if path.parent == self.results_dir:
+            paths.append(self.results_dir / f"{path.stem}.summary.json")
+        return paths
+
+    def _clear_latest_if_deleted(self, job_ids: set[str]) -> None:
+        latest = self.runtime_dir / "latest.json"
+        if not latest.exists():
+            return
+        try:
+            data = json.loads(latest.read_text(encoding="utf-8"))
+        except Exception:
+            return
+        if isinstance(data, dict) and str(data.get("job_id") or "") in job_ids:
+            latest.unlink()
 
     def _batch_summary(self, batch_id: str, path: Path, is_latest: bool) -> dict[str, Any]:
         data = self._summary_metadata(path)
@@ -781,9 +849,9 @@ class EntrySieveService:
             try:
                 worker_count = int(str(settings.backtest_worker_count or "").strip())
             except (TypeError, ValueError):
-                raise ValueError("Entry Sieve backtest workers must be an integer from 1 to 9.") from None
-            if worker_count < 1 or worker_count > 9:
-                raise ValueError("Entry Sieve backtest workers must be between 1 and 9.")
+                raise ValueError(f"Entry Sieve backtest workers must be an integer from 1 to {MAX_BACKTEST_WORKERS}.") from None
+            if worker_count < 1 or worker_count > MAX_BACKTEST_WORKERS:
+                raise ValueError(f"Entry Sieve backtest workers must be between 1 and {MAX_BACKTEST_WORKERS}.")
 
     @staticmethod
     def _strategy_class_name(path: Path) -> str:

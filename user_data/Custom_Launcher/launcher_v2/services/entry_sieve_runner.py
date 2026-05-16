@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import atexit
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from copy import deepcopy
 from dataclasses import dataclass
@@ -36,10 +37,15 @@ from explorer.explorer_support import (
 from explorer.explorer_targets import resolve_params
 from explorer.explorer_windows import compact_window, load_window_manifest, normalize_window, resolve_windows, window_label
 
+from .entry_sieve_lock import EntrySieveRunLock
+
 
 BACKTEST_LANE_START_STAGGER_SECONDS = 1.0
+MAX_BACKTEST_WORKERS = 20
 PIPELINED_BACKTEST_WORKER_CAP = 3
 BACKTEST_WAIT_STATUS_SECONDS = 60.0
+BACKTEST_START_STAGGER_SECONDS = 15.0
+BACKTEST_START_RAM_LIMIT_PERCENT = 80.0
 FULL_CYCLE_VALIDATION_WINDOW = "full_cycle_2020_2026"
 TIMEFRAME_SECONDS = {
     "5m": 5 * 60,
@@ -77,6 +83,7 @@ RESULT_METADATA_KEYS = (
     "auto_window_count",
     "target_sweep_enabled",
 )
+ACTIVE_ENTRY_SIEVE_LOCK: EntrySieveRunLock | None = None
 
 
 def load_json(path: Path, default: Any) -> Any:
@@ -498,6 +505,7 @@ class PendingBacktests:
     epoch_count: int
     hyperopt_loss: float | None
     future: Future[list[dict[str, Any]]] | None = None
+    lane_index: int | None = None
 
 
 def _prepare_runtime_strategy(source_file: Path, run_dir: Path) -> Path:
@@ -738,6 +746,14 @@ def _write_run_status(runtime_dir: Path, job_id: str, **fields: Any) -> None:
     save_json(status_file, payload)
     save_json(runtime_dir / "active.json", {"job_id": job_id, "status_file": str(status_file), "updated_at": now, "status": payload.get("status"), "phase": payload.get("phase")})
     _update_result_batch_status(runtime_dir, job_id, payload)
+    if ACTIVE_ENTRY_SIEVE_LOCK is not None:
+        ACTIVE_ENTRY_SIEVE_LOCK.heartbeat(
+            status=payload.get("status"),
+            phase=payload.get("phase"),
+            run_index=payload.get("run_index"),
+            current_strategy=payload.get("current_strategy"),
+            message=payload.get("message"),
+        )
 
 
 def _run_backtest_task(batch: PendingBacktests, task: BacktestTask, python_exe: str) -> dict[str, Any]:
@@ -811,8 +827,6 @@ def _run_backtest_batch(batch: PendingBacktests, python_exe: str) -> list[dict[s
 
 
 def _run_backtest_batch_on_lane(batch: PendingBacktests, python_exe: str, lane_index: int) -> list[dict[str, Any]]:
-    if lane_index > 1:
-        time.sleep((lane_index - 1) * BACKTEST_LANE_START_STAGGER_SECONDS)
     print(f"Entry Sieve backtest lane {lane_index}: {batch.strategy.get('name') or batch.strategy.get('strategy_class')} | {python_exe}")
     return _run_backtest_batch(batch, python_exe)
 
@@ -894,7 +908,8 @@ def _finish_one_pending(
                 current_strategy=current_strategy,
                 current_training_window=current_training_window,
                 queued_backtest_batches=len(pending_batches),
-                message=f"Waiting for backtest lane ({len(pending_batches)} queued, {completed_backtests}/{total_backtests} complete)",
+                running_backtest_batches=len(pending_batches),
+                message=f"Waiting for backtest lane ({len(pending_batches)} running, {completed_backtests}/{total_backtests} complete)",
             )
             done, _ = wait(futures, timeout=BACKTEST_WAIT_STATUS_SECONDS, return_when=FIRST_COMPLETED)
             if not done:
@@ -915,6 +930,204 @@ def _finish_one_pending(
         current_strategy=current_strategy,
         current_training_window=current_training_window,
     )
+
+
+def _finish_ready_backtests(
+    runtime_dir: Path,
+    running_batches: list[PendingBacktests],
+    *,
+    job_id: str,
+    completed_backtests: int,
+    total_backtests: int,
+    run_index: int | None = None,
+    total_hyperopts: int | None = None,
+    completed_hyperopts: int | None = None,
+    current_strategy: str = "",
+    current_training_window: str = "",
+) -> int:
+    written = 0
+    ready = [batch for batch in running_batches if batch.future is not None and batch.future.done()]
+    for batch in ready:
+        running_batches.remove(batch)
+        written += _finish_pending(
+            runtime_dir,
+            batch,
+            job_id=job_id,
+            completed_backtests=completed_backtests + written,
+            total_backtests=total_backtests,
+            run_index=run_index,
+            total_hyperopts=total_hyperopts,
+            completed_hyperopts=completed_hyperopts,
+            current_strategy=current_strategy,
+            current_training_window=current_training_window,
+        )
+    return written
+
+
+def _system_memory_percent() -> float | None:
+    try:
+        import psutil
+
+        return float(psutil.virtual_memory().percent)
+    except ImportError:
+        pass
+    except Exception:
+        return None
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+
+        class MEMORYSTATUSEX(ctypes.Structure):
+            _fields_ = [
+                ("dwLength", ctypes.c_ulong),
+                ("dwMemoryLoad", ctypes.c_ulong),
+                ("ullTotalPhys", ctypes.c_ulonglong),
+                ("ullAvailPhys", ctypes.c_ulonglong),
+                ("ullTotalPageFile", ctypes.c_ulonglong),
+                ("ullAvailPageFile", ctypes.c_ulonglong),
+                ("ullTotalVirtual", ctypes.c_ulonglong),
+                ("ullAvailVirtual", ctypes.c_ulonglong),
+                ("sullAvailExtendedVirtual", ctypes.c_ulonglong),
+            ]
+
+        memory_status = MEMORYSTATUSEX()
+        memory_status.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+        if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(memory_status)):
+            return float(memory_status.dwMemoryLoad)
+    except Exception:
+        return None
+    return None
+
+
+def _backtest_start_block_reason(last_start_at: float | None) -> str:
+    memory_percent = _system_memory_percent()
+    if memory_percent is not None and memory_percent >= BACKTEST_START_RAM_LIMIT_PERCENT:
+        return f"RAM {memory_percent:.1f}% >= {BACKTEST_START_RAM_LIMIT_PERCENT:.0f}%"
+    if last_start_at:
+        remaining_seconds = BACKTEST_START_STAGGER_SECONDS - (time.monotonic() - last_start_at)
+        if remaining_seconds > 0:
+            return f"Waiting {remaining_seconds:.0f}s before starting next backtest"
+    return ""
+
+
+def _next_available_lane_index(
+    running_batches: list[PendingBacktests],
+    *,
+    lane_count: int,
+    lane_cursor: int,
+) -> int | None:
+    occupied = {batch.lane_index for batch in running_batches if batch.lane_index is not None}
+    for offset in range(lane_count):
+        lane_index = (lane_cursor + offset) % lane_count
+        if lane_index not in occupied:
+            return lane_index
+    return None
+
+
+def _write_backtest_queue_status(
+    runtime_dir: Path,
+    *,
+    job_id: str,
+    phase: str,
+    run_index: int | None,
+    total_hyperopts: int | None,
+    completed_hyperopts: int | None,
+    completed_backtests: int,
+    total_backtests: int,
+    current_strategy: str,
+    current_training_window: str,
+    waiting_batches: list[PendingBacktests],
+    running_batches: list[PendingBacktests],
+    lane_limit: int,
+    message: str,
+) -> None:
+    _write_run_status(
+        runtime_dir,
+        job_id,
+        status="running",
+        phase=phase,
+        run_index=run_index,
+        total_hyperopts=total_hyperopts,
+        completed_hyperopts=completed_hyperopts,
+        completed_backtests=completed_backtests,
+        total_backtests=total_backtests,
+        current_strategy=current_strategy,
+        current_training_window=current_training_window,
+        queued_backtest_batches=len(waiting_batches) + len(running_batches),
+        waiting_backtest_batches=len(waiting_batches),
+        running_backtest_batches=len(running_batches),
+        backtest_worker_limit=lane_limit,
+        message=message,
+    )
+
+
+def _start_available_backtests(
+    runtime_dir: Path,
+    waiting_batches: list[PendingBacktests],
+    running_batches: list[PendingBacktests],
+    *,
+    executor: ThreadPoolExecutor,
+    backtest_lanes: list[str],
+    lane_limit: int,
+    lane_cursor: int,
+    last_start_at: float | None,
+    job_id: str,
+    completed_backtests: int,
+    total_backtests: int,
+    run_index: int | None,
+    total_hyperopts: int | None,
+    completed_hyperopts: int | None,
+    current_strategy: str,
+    current_training_window: str,
+    status_phase: str,
+) -> tuple[int, float | None, int, str]:
+    if not waiting_batches:
+        return lane_cursor, last_start_at, 0, ""
+    lane_count = len(backtest_lanes)
+    if lane_count <= 0:
+        return lane_cursor, last_start_at, 0, "No backtest lanes configured"
+    active_limit = max(1, min(lane_limit, lane_count))
+    started = 0
+    block_reason = ""
+    while waiting_batches and len(running_batches) < active_limit:
+        lane_index = _next_available_lane_index(running_batches, lane_count=lane_count, lane_cursor=lane_cursor)
+        if lane_index is None:
+            block_reason = "All backtest lanes are busy"
+            break
+        block_reason = _backtest_start_block_reason(last_start_at)
+        if block_reason:
+            break
+        batch = waiting_batches.pop(0)
+        batch.lane_index = lane_index
+        batch.future = executor.submit(
+            _run_backtest_batch_on_lane,
+            batch,
+            backtest_lanes[lane_index],
+            lane_index + 1,
+        )
+        running_batches.append(batch)
+        lane_cursor = (lane_index + 1) % lane_count
+        last_start_at = time.monotonic()
+        started += 1
+    if block_reason:
+        _write_backtest_queue_status(
+            runtime_dir,
+            job_id=job_id,
+            phase=status_phase,
+            run_index=run_index,
+            total_hyperopts=total_hyperopts,
+            completed_hyperopts=completed_hyperopts,
+            completed_backtests=completed_backtests,
+            total_backtests=total_backtests,
+            current_strategy=current_strategy,
+            current_training_window=current_training_window,
+            waiting_batches=waiting_batches,
+            running_batches=running_batches,
+            lane_limit=active_limit,
+            message=block_reason,
+        )
+    return lane_cursor, last_start_at, started, block_reason
 
 
 def _prepare_strategy_window(
@@ -1116,20 +1329,40 @@ def _worker_count(value: Any, *, default: int) -> int:
         count = int(str(value).strip())
     except (TypeError, ValueError):
         count = default
-    return min(9, max(1, count))
+    return min(MAX_BACKTEST_WORKERS, max(1, count))
+
+
+def _hyperopt_job_count(preset: dict[str, Any]) -> int:
+    try:
+        count = int(str(preset.get("hyperopt_jobs") or "").strip())
+    except (TypeError, ValueError):
+        count = 1
+    if count < 1:
+        cpu_total = max(1, int(os.cpu_count() or 1))
+        count = max(1, cpu_total + 1 + count)
+    return max(1, count)
+
+
+def _final_backtest_worker_limit(
+    *,
+    backtest_lane_count: int,
+    base_preset: dict[str, Any],
+    split_venv_pipeline: bool,
+) -> int:
+    if not split_venv_pipeline:
+        return 1
+    hyperopt_workers = _hyperopt_job_count(base_preset)
+    return max(1, min(backtest_lane_count, hyperopt_workers + PIPELINED_BACKTEST_WORKER_CAP))
 
 
 def _effective_backtest_worker_count(
     requested_count: int,
     *,
     split_venv_pipeline: bool,
-    target_sweep_enabled: bool,
 ) -> int:
     if not split_venv_pipeline:
         return 1
-    if target_sweep_enabled:
-        return requested_count
-    return min(requested_count, PIPELINED_BACKTEST_WORKER_CAP)
+    return requested_count
 
 
 def _backtest_lanes(
@@ -1267,6 +1500,10 @@ def main(argv: list[str] | None = None) -> int:
     training_plan, configured_training_window_count = _build_training_plan(strategies, all_windows, job)
     base_preset = _speed_limited_preset(presets[preset_name], job)
     job_id = str(job.get("job_id") or job_file.stem)
+    global ACTIVE_ENTRY_SIEVE_LOCK
+    ACTIVE_ENTRY_SIEVE_LOCK = EntrySieveRunLock(runtime_dir, job_id=job_id, owner="entry_sieve_runner")
+    ACTIVE_ENTRY_SIEVE_LOCK.__enter__()
+    atexit.register(ACTIVE_ENTRY_SIEVE_LOCK.__exit__, None, None, None)
     _initialize_result_batch(runtime_dir, job)
     split_venv_pipeline = bool(job.get("split_venv_pipeline"))
     target_sweep_enabled = bool(job.get("target_sweep_enabled"))
@@ -1280,7 +1517,6 @@ def main(argv: list[str] | None = None) -> int:
     backtest_worker_count = _effective_backtest_worker_count(
         requested_backtest_worker_count,
         split_venv_pipeline=split_venv_pipeline,
-        target_sweep_enabled=target_sweep_enabled,
     )
     backtest_lanes = _backtest_lanes(
         base_python_exe=base_python_exe,
@@ -1307,6 +1543,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Split-venv backtest lanes ({len(backtest_lanes)}/{requested_backtest_worker_count} requested, {backtest_worker_count} effective):")
         for lane_index, lane in enumerate(backtest_lanes, start=1):
             print(f"  lane {lane_index}: {lane}")
+        if not target_sweep_enabled:
+            print(
+                "Non-sweep backtest scheduler: "
+                f"{min(len(backtest_lanes), PIPELINED_BACKTEST_WORKER_CAP)} lane(s) during hyperopt, "
+                f"{_final_backtest_worker_limit(backtest_lane_count=len(backtest_lanes), base_preset=base_preset, split_venv_pipeline=split_venv_pipeline)} lane(s) during final drain"
+            )
     if bool(job.get("speed_run_mode")):
         print(f"Speed run mode enabled: first {_speed_pair_count(job)} manual pair(s), 1 auto window, 60 epochs, target sweep disabled")
     if target_sweep_enabled:
@@ -1427,14 +1669,35 @@ def main(argv: list[str] | None = None) -> int:
             total_backtests=total_backtests,
         )
     else:
-        queued_batches: list[PendingBacktests] = []
+        waiting_batches: list[PendingBacktests] = []
+        running_batches: list[PendingBacktests] = []
         completed_backtests = 0
         lane_cursor = 0
+        last_backtest_start_at: float | None = None
+        hyperopt_lane_limit = min(len(backtest_lanes), PIPELINED_BACKTEST_WORKER_CAP) if split_venv_pipeline else 1
+        drain_lane_limit = _final_backtest_worker_limit(
+            backtest_lane_count=len(backtest_lanes),
+            base_preset=base_preset,
+            split_venv_pipeline=split_venv_pipeline,
+        )
         with ThreadPoolExecutor(max_workers=max(1, len(backtest_lanes)), thread_name_prefix="entry-sieve-backtest") as executor:
             for strategy, training_window in training_plan:
                 strategy_name = strategy.get("name") or Path(str(strategy.get("strategy_file") or "")).stem
                 run_index += 1
                 print(f"\nEntry Sieve {run_index}/{total_runs}: {strategy_name} | train={window_label(training_window)}")
+                if split_venv_pipeline:
+                    completed_backtests += _finish_ready_backtests(
+                        runtime_dir,
+                        running_batches,
+                        job_id=job_id,
+                        completed_backtests=completed_backtests,
+                        total_backtests=total_backtests,
+                        run_index=run_index,
+                        total_hyperopts=total_runs,
+                        completed_hyperopts=run_index - 1,
+                        current_strategy=strategy_name,
+                        current_training_window=window_label(training_window),
+                    )
                 _write_run_status(
                     runtime_dir,
                     job_id,
@@ -1460,28 +1723,38 @@ def main(argv: list[str] | None = None) -> int:
                         validation_windows=validation_windows,
                     )
                     if split_venv_pipeline:
-                        while len(queued_batches) >= len(backtest_lanes):
-                            completed_backtests += _finish_one_pending(
-                                runtime_dir,
-                                queued_batches,
-                                job_id=job_id,
-                                completed_backtests=completed_backtests,
-                                total_backtests=total_backtests,
-                                run_index=run_index,
-                                total_hyperopts=total_runs,
-                                completed_hyperopts=run_index,
-                                current_strategy=strategy_name,
-                                current_training_window=window_label(training_window),
-                            )
-                        lane_index = lane_cursor % len(backtest_lanes)
-                        batch.future = executor.submit(
-                            _run_backtest_batch_on_lane,
-                            batch,
-                            backtest_lanes[lane_index],
-                            lane_index + 1,
+                        waiting_batches.append(batch)
+                        completed_backtests += _finish_ready_backtests(
+                            runtime_dir,
+                            running_batches,
+                            job_id=job_id,
+                            completed_backtests=completed_backtests,
+                            total_backtests=total_backtests,
+                            run_index=run_index,
+                            total_hyperopts=total_runs,
+                            completed_hyperopts=run_index,
+                            current_strategy=strategy_name,
+                            current_training_window=window_label(training_window),
                         )
-                        queued_batches.append(batch)
-                        lane_cursor += 1
+                        lane_cursor, last_backtest_start_at, _, _ = _start_available_backtests(
+                            runtime_dir,
+                            waiting_batches,
+                            running_batches,
+                            executor=executor,
+                            backtest_lanes=backtest_lanes,
+                            lane_limit=hyperopt_lane_limit,
+                            lane_cursor=lane_cursor,
+                            last_start_at=last_backtest_start_at,
+                            job_id=job_id,
+                            completed_backtests=completed_backtests,
+                            total_backtests=total_backtests,
+                            run_index=run_index,
+                            total_hyperopts=total_runs,
+                            completed_hyperopts=run_index,
+                            current_strategy=strategy_name,
+                            current_training_window=window_label(training_window),
+                            status_phase="backtest_wait",
+                        )
                     else:
                         rows = _run_backtest_batch(batch, backtest_lanes[0])
                         for row in rows:
@@ -1499,6 +1772,10 @@ def main(argv: list[str] | None = None) -> int:
                         completed_backtests=completed_backtests,
                         current_strategy=strategy_name,
                         current_training_window=window_label(training_window),
+                        queued_backtest_batches=len(waiting_batches) + len(running_batches) if split_venv_pipeline else 0,
+                        waiting_backtest_batches=len(waiting_batches) if split_venv_pipeline else 0,
+                        running_backtest_batches=len(running_batches) if split_venv_pipeline else 0,
+                        backtest_worker_limit=hyperopt_lane_limit if split_venv_pipeline else 1,
                         message=f"Run queued {run_index}/{total_runs}: {strategy_name}" if split_venv_pipeline else f"Run complete {run_index}/{total_runs}: {strategy_name}",
                     )
                 except Exception as exc:
@@ -1532,10 +1809,95 @@ def main(argv: list[str] | None = None) -> int:
                         current_training_window=window_label(training_window),
                         message=f"Run failed {run_index}/{total_runs}: {strategy_name}",
                     )
-            while queued_batches:
-                completed_backtests += _finish_one_pending(
+            while waiting_batches or running_batches:
+                completed_backtests += _finish_ready_backtests(
                     runtime_dir,
-                    queued_batches,
+                    running_batches,
+                    job_id=job_id,
+                    completed_backtests=completed_backtests,
+                    total_backtests=total_backtests,
+                    run_index=run_index,
+                    total_hyperopts=total_runs,
+                    completed_hyperopts=total_runs,
+                    current_strategy="final_backtest_drain",
+                    current_training_window="",
+                )
+                lane_cursor, last_backtest_start_at, started, block_reason = _start_available_backtests(
+                    runtime_dir,
+                    waiting_batches,
+                    running_batches,
+                    executor=executor,
+                    backtest_lanes=backtest_lanes,
+                    lane_limit=drain_lane_limit,
+                    lane_cursor=lane_cursor,
+                    last_start_at=last_backtest_start_at,
+                    job_id=job_id,
+                    completed_backtests=completed_backtests,
+                    total_backtests=total_backtests,
+                    run_index=run_index,
+                    total_hyperopts=total_runs,
+                    completed_hyperopts=total_runs,
+                    current_strategy="final_backtest_drain",
+                    current_training_window="",
+                    status_phase="backtest_wait",
+                )
+                if started:
+                    continue
+                if running_batches and waiting_batches:
+                    _write_backtest_queue_status(
+                        runtime_dir,
+                        job_id=job_id,
+                        phase="backtest_wait",
+                        run_index=run_index,
+                        total_hyperopts=total_runs,
+                        completed_hyperopts=total_runs,
+                        completed_backtests=completed_backtests,
+                        total_backtests=total_backtests,
+                        current_strategy="final_backtest_drain",
+                        current_training_window="",
+                        waiting_batches=waiting_batches,
+                        running_batches=running_batches,
+                        lane_limit=drain_lane_limit,
+                        message=block_reason or "Waiting to start more backtests",
+                    )
+                    time.sleep(5.0)
+                    continue
+                if running_batches:
+                    completed_backtests += _finish_one_pending(
+                        runtime_dir,
+                        running_batches,
+                        job_id=job_id,
+                        completed_backtests=completed_backtests,
+                        total_backtests=total_backtests,
+                        run_index=run_index,
+                        total_hyperopts=total_runs,
+                        completed_hyperopts=total_runs,
+                        current_strategy="final_backtest_drain",
+                        current_training_window="",
+                    )
+                    continue
+                if waiting_batches:
+                    _write_backtest_queue_status(
+                        runtime_dir,
+                        job_id=job_id,
+                        phase="backtest_wait",
+                        run_index=run_index,
+                        total_hyperopts=total_runs,
+                        completed_hyperopts=total_runs,
+                        completed_backtests=completed_backtests,
+                        total_backtests=total_backtests,
+                        current_strategy="final_backtest_drain",
+                        current_training_window="",
+                        waiting_batches=waiting_batches,
+                        running_batches=running_batches,
+                        lane_limit=drain_lane_limit,
+                        message=block_reason or "Waiting to start backtests",
+                    )
+                    time.sleep(5.0)
+            if split_venv_pipeline:
+                completed_backtests += _finish_ready_backtests(
+                    runtime_dir,
+                    running_batches,
                     job_id=job_id,
                     completed_backtests=completed_backtests,
                     total_backtests=total_backtests,
@@ -1560,6 +1922,9 @@ def main(argv: list[str] | None = None) -> int:
     state["updated_at"] = datetime.now().astimezone().isoformat()
     explorer_save_json(state_file, state)
     print(f"\nEntry Sieve results: {_result_file(runtime_dir, job_id)}")
+    if ACTIVE_ENTRY_SIEVE_LOCK is not None:
+        ACTIVE_ENTRY_SIEVE_LOCK.__exit__(None, None, None)
+        ACTIVE_ENTRY_SIEVE_LOCK = None
     return 0
 
 

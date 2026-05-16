@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import queue
+import subprocess
 import sys
 import tkinter as tk
 from tkinter import ttk
@@ -637,7 +639,81 @@ class LauncherV2(tk.Tk):
             self.shared.status.set("Stopping Freqtrade process tree")
             self.update_idletasks()
             self.process_runner.stop(timeout_seconds=8.0)
+        self._terminate_owned_entry_sieve_processes()
         self.destroy()
+
+    def _terminate_owned_entry_sieve_processes(self) -> None:
+        if sys.platform != "win32":
+            return
+        try:
+            completed = subprocess.run(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-Command",
+                    "Get-CimInstance Win32_Process -Filter \"name = 'python.exe'\" | "
+                    "Select-Object ProcessId,ParentProcessId,CommandLine | ConvertTo-Json -Depth 3",
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=5,
+            )
+        except Exception:
+            return
+        try:
+            data = json.loads(completed.stdout or "[]")
+        except json.JSONDecodeError:
+            return
+        processes = data if isinstance(data, list) else [data]
+        by_pid: dict[int, dict[str, Any]] = {}
+        for process in processes:
+            if not isinstance(process, dict):
+                continue
+            try:
+                pid = int(process.get("ProcessId") or 0)
+            except (TypeError, ValueError):
+                continue
+            if pid > 0:
+                by_pid[pid] = process
+        own_pid = os.getpid()
+        targets: list[int] = []
+        for pid, process in by_pid.items():
+            command = str(process.get("CommandLine") or "")
+            if "launcher_v2.services.entry_sieve" not in command:
+                continue
+            if self._process_has_ancestor(pid, own_pid, by_pid):
+                targets.append(pid)
+        for pid in targets:
+            try:
+                subprocess.run(
+                    ["taskkill", "/PID", str(pid), "/T", "/F"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=5,
+                )
+            except Exception:
+                continue
+
+    @staticmethod
+    def _process_has_ancestor(pid: int, ancestor_pid: int, processes: dict[int, dict[str, Any]]) -> bool:
+        seen: set[int] = set()
+        current = pid
+        while current and current not in seen:
+            seen.add(current)
+            process = processes.get(current)
+            if not process:
+                return False
+            try:
+                parent = int(process.get("ParentProcessId") or 0)
+            except (TypeError, ValueError):
+                return False
+            if parent == ancestor_pid:
+                return True
+            current = parent
+        return False
 
 
 def main() -> None:

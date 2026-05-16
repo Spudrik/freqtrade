@@ -41,6 +41,8 @@ from .explorer_support import flatten_params, metric_summary
 from .explorer_targets import choose_target, resolve_params, update_usage_counts
 from .explorer_windows import compact_window, load_window_manifest, resolve_windows, window_label
 
+MAX_BACKTEST_WORKERS = 20
+
 
 BACKTEST_LANE_START_STAGGER_SECONDS = 1.0
 
@@ -184,7 +186,7 @@ def _backtest_lanes(*, backtest_python_exe: str, backtest_python_exes_json: str,
         str(backtest_python_exe or ""),
         *_split_python_exes_json(backtest_python_exes_json),
     ])
-    count = min(9, max(1, int(worker_count or 1)))
+    count = min(MAX_BACKTEST_WORKERS, max(1, int(worker_count or 1)))
     return candidates[: max(1, min(count, len(candidates)))]
 
 
