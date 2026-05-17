@@ -8,6 +8,7 @@ from .explorer_tab import ExplorerTab, SIEVE_RESULT_COLUMNS, _split_list
 
 
 DEFAULT_BATCH_QUEUE = "volume_profile,structure_levels,continuation_patterns,reversal_patterns,market_state_pressure,multi_confluence,small_concepts,avwap,zones"
+FILTER_OPERATORS = (">=", ">", "<=", "<", "=", "!=")
 
 
 class EntrySieveTab(ExplorerTab):
@@ -103,34 +104,39 @@ class EntrySieveTab(ExplorerTab):
         self.validation_listbox = self._window_selector(windows, "Manual validation windows", 1)
 
     def _build_results_tab(self, parent: ttk.Frame) -> None:
-        filters = ttk.LabelFrame(parent, text="Result Selection and Filters")
-        filters.grid(row=0, column=0, sticky="ew", padx=8, pady=8)
-        for col in (1, 3, 5, 7):
-            filters.grid_columnconfigure(col, weight=1)
+        files = ttk.LabelFrame(parent, text="Result File Management")
+        files.grid(row=0, column=0, sticky="ew", padx=8, pady=8)
+        for col in (1, 3, 5):
+            files.grid_columnconfigure(col, weight=1)
 
-        ttk.Label(filters, text="Result batches").grid(row=0, column=0, sticky="w", padx=8, pady=4)
-        self.sieve_result_batch_combo = ttk.Combobox(filters, textvariable=self.sieve_result_batch_var, state="normal")
+        ttk.Label(files, text="Result batches").grid(row=0, column=0, sticky="w", padx=8, pady=4)
+        self.sieve_result_batch_combo = ttk.Combobox(files, textvariable=self.sieve_result_batch_var, state="normal")
         self.sieve_result_batch_combo.grid(row=0, column=1, sticky="ew", padx=8, pady=4)
-        self._editable_entry(filters, 0, 2, "Result file filter", self.sieve_result_batch_filter_var)
-        self._editable_entry(filters, 0, 4, "Row contains", self.sieve_filter_var)
-        ttk.Button(filters, text="Refresh results", command=self._refresh_sieve_results).grid(row=0, column=6, sticky="w", padx=8, pady=4)
+        self._editable_entry(files, 0, 2, "Result file filter", self.sieve_result_batch_filter_var)
+        ttk.Button(files, text="Refresh results", command=self._refresh_sieve_results).grid(row=0, column=4, sticky="w", padx=8, pady=4)
+        ttk.Button(files, text="Open results folder", command=self._open_sieve_results_folder).grid(row=0, column=5, sticky="w", padx=8, pady=4)
+        ttk.Button(files, text="Delete selected result", command=self._delete_selected_sieve_result_batches).grid(row=0, column=6, sticky="w", padx=8, pady=4)
 
-        self._editable_entry(filters, 1, 0, "Winrate >= %", self.sieve_filter_winrate_min_var)
-        self._editable_entry(filters, 1, 2, "Profit >= %", self.sieve_filter_profit_min_var)
-        self._editable_entry(filters, 1, 4, "Max DD <= %", self.sieve_filter_drawdown_max_var)
-        self._editable_entry(filters, 1, 6, "Trades >=", self.sieve_filter_trades_min_var)
+        table = ttk.LabelFrame(parent, text="Table Filters and Columns")
+        table.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 8))
+        for col in (1, 4, 7, 10):
+            table.grid_columnconfigure(col, weight=1)
 
-        self._editable_entry(filters, 2, 0, "TP % =", self.sieve_filter_tp_eq_var)
-        self._editable_entry(filters, 2, 2, "SL % =", self.sieve_filter_sl_eq_var)
-        ttk.Button(filters, text="Clear filters", command=self._clear_sieve_column_filters).grid(row=2, column=4, sticky="w", padx=8, pady=4)
-        ttk.Button(filters, text="Move column left", command=lambda: self._move_sieve_column(-1)).grid(row=2, column=5, sticky="w", padx=8, pady=4)
-        ttk.Button(filters, text="Move column right", command=lambda: self._move_sieve_column(1)).grid(row=2, column=6, sticky="w", padx=8, pady=4)
-        ttk.Button(filters, text="Reset columns", command=self._reset_sieve_columns).grid(row=2, column=7, sticky="w", padx=8, pady=4)
-        ttk.Button(filters, text="Open results folder", command=self._open_sieve_results_folder).grid(row=3, column=0, sticky="w", padx=8, pady=4)
-        ttk.Button(filters, text="Delete selected result", command=self._delete_selected_sieve_result_batches).grid(row=3, column=1, sticky="w", padx=8, pady=4)
+        self._editable_entry(table, 0, 0, "Row contains", self.sieve_filter_var)
+        self._filter_control(table, 0, 2, "Winrate %", self.sieve_filter_winrate_op_var, self.sieve_filter_winrate_min_var)
+        self._filter_control(table, 0, 5, "Profit %", self.sieve_filter_profit_op_var, self.sieve_filter_profit_min_var)
+        self._filter_control(table, 0, 8, "Max DD %", self.sieve_filter_drawdown_op_var, self.sieve_filter_drawdown_max_var)
+
+        self._filter_control(table, 1, 0, "Trades", self.sieve_filter_trades_op_var, self.sieve_filter_trades_min_var)
+        self._filter_control(table, 1, 3, "TP %", self.sieve_filter_tp_op_var, self.sieve_filter_tp_eq_var)
+        self._filter_control(table, 1, 6, "SL %", self.sieve_filter_sl_op_var, self.sieve_filter_sl_eq_var)
+        ttk.Button(table, text="Clear filters", command=self._clear_sieve_column_filters).grid(row=1, column=9, sticky="w", padx=8, pady=4)
+        ttk.Button(table, text="Move column left", command=lambda: self._move_sieve_column(-1)).grid(row=2, column=0, sticky="w", padx=8, pady=4)
+        ttk.Button(table, text="Move column right", command=lambda: self._move_sieve_column(1)).grid(row=2, column=1, sticky="w", padx=8, pady=4)
+        ttk.Button(table, text="Reset columns", command=self._reset_sieve_columns).grid(row=2, column=2, sticky="w", padx=8, pady=4)
 
         results = ttk.LabelFrame(parent, text="Runtime results")
-        results.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 8))
+        results.grid(row=2, column=0, sticky="nsew", padx=8, pady=(0, 8))
         results.grid_columnconfigure(0, weight=1)
         results.grid_rowconfigure(0, weight=1)
         columns = SIEVE_RESULT_COLUMNS
@@ -208,6 +214,13 @@ class EntrySieveTab(ExplorerTab):
         self.sieve_results_tree.configure(yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
         self._apply_sieve_column_order()
 
+    def _filter_control(self, parent: tk.Misc, row: int, column: int, label: str, operator_var: tk.StringVar, value_var: tk.StringVar) -> None:
+        ttk.Label(parent, text=label).grid(row=row, column=column, sticky="w", padx=8, pady=4)
+        ttk.Combobox(parent, textvariable=operator_var, values=FILTER_OPERATORS, state="readonly", width=4).grid(row=row, column=column + 1, sticky="w", padx=(0, 4), pady=4)
+        entry = ttk.Entry(parent, textvariable=value_var, width=10)
+        entry.grid(row=row, column=column + 2, sticky="ew", padx=(0, 8), pady=4)
+        self.editable_entries.append(entry)
+
     def _bind_events(self) -> None:
         self.auto_epochs_var.trace_add("write", lambda *_: self._update_epochs_mode_state())
         self.sieve_speed_run_var.trace_add("write", lambda *_: self._update_epochs_mode_state())
@@ -220,6 +233,12 @@ class EntrySieveTab(ExplorerTab):
             self.sieve_filter_trades_min_var,
             self.sieve_filter_tp_eq_var,
             self.sieve_filter_sl_eq_var,
+            self.sieve_filter_winrate_op_var,
+            self.sieve_filter_profit_op_var,
+            self.sieve_filter_drawdown_op_var,
+            self.sieve_filter_trades_op_var,
+            self.sieve_filter_tp_op_var,
+            self.sieve_filter_sl_op_var,
         ):
             variable.trace_add("write", lambda *_: self._refresh_sieve_results())
         if self.sieve_result_batch_combo is not None:
@@ -351,5 +370,11 @@ class EntrySieveTab(ExplorerTab):
             "sieve_filter_trades_min": self.sieve_filter_trades_min_var.get(),
             "sieve_filter_tp_eq": self.sieve_filter_tp_eq_var.get(),
             "sieve_filter_sl_eq": self.sieve_filter_sl_eq_var.get(),
+            "sieve_filter_winrate_op": self.sieve_filter_winrate_op_var.get(),
+            "sieve_filter_profit_op": self.sieve_filter_profit_op_var.get(),
+            "sieve_filter_drawdown_op": self.sieve_filter_drawdown_op_var.get(),
+            "sieve_filter_trades_op": self.sieve_filter_trades_op_var.get(),
+            "sieve_filter_tp_op": self.sieve_filter_tp_op_var.get(),
+            "sieve_filter_sl_op": self.sieve_filter_sl_op_var.get(),
             "sieve_column_order": list(self.sieve_column_order),
         }

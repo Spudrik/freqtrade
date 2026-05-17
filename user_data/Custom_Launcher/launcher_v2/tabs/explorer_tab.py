@@ -124,6 +124,12 @@ class ExplorerTab(BaseTab):
         self.sieve_filter_trades_min_var = tk.StringVar(value="")
         self.sieve_filter_tp_eq_var = tk.StringVar(value="")
         self.sieve_filter_sl_eq_var = tk.StringVar(value="")
+        self.sieve_filter_winrate_op_var = tk.StringVar(value=">=")
+        self.sieve_filter_profit_op_var = tk.StringVar(value=">=")
+        self.sieve_filter_drawdown_op_var = tk.StringVar(value="<=")
+        self.sieve_filter_trades_op_var = tk.StringVar(value=">=")
+        self.sieve_filter_tp_op_var = tk.StringVar(value="=")
+        self.sieve_filter_sl_op_var = tk.StringVar(value="=")
         self.sieve_status_var = tk.StringVar(value="Run status: idle")
         self._sieve_sort_column = "score"
         self._sieve_sort_reverse = True
@@ -935,12 +941,12 @@ class ExplorerTab(BaseTab):
     def _apply_sieve_column_filters(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         active_filters: list[tuple[str, str, float, float]] = []
         filter_specs = (
-            ("winrate", self.sieve_filter_winrate_min_var.get(), ">=", 100.0),
-            ("profit_total", self.sieve_filter_profit_min_var.get(), ">=", 100.0),
-            ("max_drawdown_pct", self.sieve_filter_drawdown_max_var.get(), "<=", 100.0),
-            ("trade_count", self.sieve_filter_trades_min_var.get(), ">=", 1.0),
-            ("take_profit_pct", self.sieve_filter_tp_eq_var.get(), "=", 1.0),
-            ("stoploss_pct", self.sieve_filter_sl_eq_var.get(), "=", 1.0),
+            ("winrate", self.sieve_filter_winrate_min_var.get(), self.sieve_filter_winrate_op_var.get(), 100.0),
+            ("profit_total", self.sieve_filter_profit_min_var.get(), self.sieve_filter_profit_op_var.get(), 100.0),
+            ("max_drawdown_pct", self.sieve_filter_drawdown_max_var.get(), self.sieve_filter_drawdown_op_var.get(), 100.0),
+            ("trade_count", self.sieve_filter_trades_min_var.get(), self.sieve_filter_trades_op_var.get(), 1.0),
+            ("take_profit_pct", self.sieve_filter_tp_eq_var.get(), self.sieve_filter_tp_op_var.get(), 1.0),
+            ("stoploss_pct", self.sieve_filter_sl_eq_var.get(), self.sieve_filter_sl_op_var.get(), 1.0),
         )
         for column, text, operator, multiplier in filter_specs:
             threshold = self._parse_filter_number(text)
@@ -962,10 +968,19 @@ class ExplorerTab(BaseTab):
                 if operator == ">=" and value < threshold:
                     keep = False
                     break
+                if operator == ">" and value <= threshold:
+                    keep = False
+                    break
                 if operator == "<=" and value > threshold:
                     keep = False
                     break
-                if operator == "=" and abs(value - threshold) > 1e-9:
+                if operator == "<" and value >= threshold:
+                    keep = False
+                    break
+                if operator in {"=", "=="} and abs(value - threshold) > 1e-9:
+                    keep = False
+                    break
+                if operator == "!=" and abs(value - threshold) <= 1e-9:
                     keep = False
                     break
             if keep:
@@ -1231,6 +1246,12 @@ class ExplorerTab(BaseTab):
             "sieve_filter_trades_min": self.sieve_filter_trades_min_var.get(),
             "sieve_filter_tp_eq": self.sieve_filter_tp_eq_var.get(),
             "sieve_filter_sl_eq": self.sieve_filter_sl_eq_var.get(),
+            "sieve_filter_winrate_op": self.sieve_filter_winrate_op_var.get(),
+            "sieve_filter_profit_op": self.sieve_filter_profit_op_var.get(),
+            "sieve_filter_drawdown_op": self.sieve_filter_drawdown_op_var.get(),
+            "sieve_filter_trades_op": self.sieve_filter_trades_op_var.get(),
+            "sieve_filter_tp_op": self.sieve_filter_tp_op_var.get(),
+            "sieve_filter_sl_op": self.sieve_filter_sl_op_var.get(),
             "sieve_column_order": list(self.sieve_column_order),
         }
 
@@ -1274,6 +1295,12 @@ class ExplorerTab(BaseTab):
         self.sieve_filter_trades_min_var.set(str(state.get("sieve_filter_trades_min") or ""))
         self.sieve_filter_tp_eq_var.set(str(state.get("sieve_filter_tp_eq") or ""))
         self.sieve_filter_sl_eq_var.set(str(state.get("sieve_filter_sl_eq") or ""))
+        self.sieve_filter_winrate_op_var.set(str(state.get("sieve_filter_winrate_op") or ">="))
+        self.sieve_filter_profit_op_var.set(str(state.get("sieve_filter_profit_op") or ">="))
+        self.sieve_filter_drawdown_op_var.set(str(state.get("sieve_filter_drawdown_op") or "<="))
+        self.sieve_filter_trades_op_var.set(str(state.get("sieve_filter_trades_op") or ">="))
+        self.sieve_filter_tp_op_var.set(str(state.get("sieve_filter_tp_op") or "="))
+        self.sieve_filter_sl_op_var.set(str(state.get("sieve_filter_sl_op") or "="))
         saved_order = state.get("sieve_column_order")
         if isinstance(saved_order, list):
             order = [str(column) for column in saved_order]
