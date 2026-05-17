@@ -104,8 +104,10 @@ class EntrySieveTab(ExplorerTab):
         self.validation_listbox = self._window_selector(windows, "Manual validation windows", 1)
 
     def _build_results_tab(self, parent: ttk.Frame) -> None:
+        ttk.Label(parent, textvariable=self.sieve_status_var).grid(row=0, column=0, sticky="w", padx=8, pady=(8, 0))
+
         files = ttk.LabelFrame(parent, text="Result File Management")
-        files.grid(row=0, column=0, sticky="ew", padx=8, pady=8)
+        files.grid(row=1, column=0, sticky="ew", padx=8, pady=8)
         for col in (1, 3):
             files.grid_columnconfigure(col, weight=1)
 
@@ -118,7 +120,7 @@ class EntrySieveTab(ExplorerTab):
         ttk.Button(files, text="Delete selected result", command=self._delete_selected_sieve_result_batches).grid(row=1, column=4, sticky="w", padx=8, pady=4)
 
         table = ttk.LabelFrame(parent, text="Table Filters and Columns")
-        table.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 8))
+        table.grid(row=2, column=0, sticky="ew", padx=8, pady=(0, 8))
         for col in (1, 4, 7, 10):
             table.grid_columnconfigure(col, weight=1)
 
@@ -136,7 +138,7 @@ class EntrySieveTab(ExplorerTab):
         ttk.Button(table, text="Reset columns", command=self._reset_sieve_columns).grid(row=2, column=2, sticky="w", padx=8, pady=4)
 
         results = ttk.LabelFrame(parent, text="Runtime results")
-        results.grid(row=2, column=0, sticky="nsew", padx=8, pady=(0, 8))
+        results.grid(row=3, column=0, sticky="nsew", padx=8, pady=(0, 8))
         results.grid_columnconfigure(0, weight=1)
         results.grid_rowconfigure(0, weight=1)
         columns = SIEVE_RESULT_COLUMNS
