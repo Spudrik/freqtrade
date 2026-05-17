@@ -106,16 +106,16 @@ class EntrySieveTab(ExplorerTab):
     def _build_results_tab(self, parent: ttk.Frame) -> None:
         files = ttk.LabelFrame(parent, text="Result File Management")
         files.grid(row=0, column=0, sticky="ew", padx=8, pady=8)
-        for col in (1, 3, 5):
+        for col in (1, 3):
             files.grid_columnconfigure(col, weight=1)
 
         ttk.Label(files, text="Result batches").grid(row=0, column=0, sticky="w", padx=8, pady=4)
-        self.sieve_result_batch_combo = ttk.Combobox(files, textvariable=self.sieve_result_batch_var, state="normal")
-        self.sieve_result_batch_combo.grid(row=0, column=1, sticky="ew", padx=8, pady=4)
-        self._editable_entry(files, 0, 2, "Result file filter", self.sieve_result_batch_filter_var)
-        ttk.Button(files, text="Refresh results", command=self._refresh_sieve_results).grid(row=0, column=4, sticky="w", padx=8, pady=4)
-        ttk.Button(files, text="Open results folder", command=self._open_sieve_results_folder).grid(row=0, column=5, sticky="w", padx=8, pady=4)
-        ttk.Button(files, text="Delete selected result", command=self._delete_selected_sieve_result_batches).grid(row=0, column=6, sticky="w", padx=8, pady=4)
+        self.sieve_result_batch_combo = ttk.Combobox(files, textvariable=self.sieve_result_batch_var, state="normal", width=96)
+        self.sieve_result_batch_combo.grid(row=0, column=1, columnspan=5, sticky="ew", padx=8, pady=4)
+        self._editable_entry(files, 1, 0, "Result file filter", self.sieve_result_batch_filter_var)
+        ttk.Button(files, text="Refresh results", command=self._refresh_sieve_results).grid(row=1, column=2, sticky="w", padx=8, pady=4)
+        ttk.Button(files, text="Open results folder", command=self._open_sieve_results_folder).grid(row=1, column=3, sticky="w", padx=8, pady=4)
+        ttk.Button(files, text="Delete selected result", command=self._delete_selected_sieve_result_batches).grid(row=1, column=4, sticky="w", padx=8, pady=4)
 
         table = ttk.LabelFrame(parent, text="Table Filters and Columns")
         table.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 8))
