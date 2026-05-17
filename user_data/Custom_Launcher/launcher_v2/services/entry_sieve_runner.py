@@ -1512,6 +1512,9 @@ def main(argv: list[str] | None = None) -> int:
     strategies = _annotate_strategies_with_job_metadata([strategy for strategy in job.get("strategies") or [] if isinstance(strategy, dict)], job)
     training_plan, configured_training_window_count = _build_training_plan(strategies, all_windows, job)
     base_preset = _speed_limited_preset(presets[preset_name], job)
+    hyperopt_jobs = str(job.get("hyperopt_jobs") or "").strip()
+    if hyperopt_jobs:
+        base_preset["hyperopt_jobs"] = hyperopt_jobs
     job_id = str(job.get("job_id") or job_file.stem)
     global ACTIVE_ENTRY_SIEVE_LOCK
     ACTIVE_ENTRY_SIEVE_LOCK = EntrySieveRunLock(runtime_dir, job_id=job_id, owner="entry_sieve_runner")

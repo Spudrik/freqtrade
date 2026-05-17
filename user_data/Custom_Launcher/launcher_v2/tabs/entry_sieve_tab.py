@@ -35,46 +35,71 @@ class EntrySieveTab(ExplorerTab):
 
         results_tab = ttk.Frame(notebook, style="App.TFrame", padding=4)
         results_tab.grid_columnconfigure(0, weight=1)
-        results_tab.grid_rowconfigure(1, weight=1)
+        results_tab.grid_rowconfigure(3, weight=1)
         notebook.add(results_tab, text="Results")
 
         self._build_config_tab(config_tab)
         self._build_results_tab(results_tab)
 
     def _build_config_tab(self, parent: ttk.Frame) -> None:
-        controls = ttk.LabelFrame(parent, text="Entry Sieve Run Config")
+        parent.grid_rowconfigure(1, weight=1)
+        parent.grid_rowconfigure(2, weight=1)
+
+        controls = ttk.Frame(parent, style="App.TFrame")
         controls.grid(row=0, column=0, sticky="ew", padx=8, pady=8)
-        for col in (1, 3, 5):
-            controls.grid_columnconfigure(col, weight=1)
+        controls.grid_columnconfigure(0, weight=1)
+        controls.grid_columnconfigure(1, weight=1)
 
-        ttk.Label(controls, text="Strategy batch").grid(row=0, column=0, sticky="w", padx=8, pady=4)
-        self.sieve_strategy_batch_combo = ttk.Combobox(controls, textvariable=self.sieve_strategy_batch_var, state="readonly")
+        strategy = ttk.LabelFrame(controls, text="Strategy Selection")
+        strategy.grid(row=0, column=0, sticky="nsew", padx=(0, 4), pady=(0, 8))
+        strategy.grid_columnconfigure(1, weight=1)
+        strategy.grid_columnconfigure(3, weight=1)
+        ttk.Label(strategy, text="Strategy batch").grid(row=0, column=0, sticky="w", padx=8, pady=4)
+        self.sieve_strategy_batch_combo = ttk.Combobox(strategy, textvariable=self.sieve_strategy_batch_var, state="readonly")
         self.sieve_strategy_batch_combo.grid(row=0, column=1, sticky="ew", padx=8, pady=4)
-        self._editable_entry(controls, 0, 2, "Strategy filter", self.sieve_strategy_filter_var)
-        ttk.Checkbutton(controls, text="Speed run", variable=self.sieve_speed_run_var).grid(row=0, column=4, sticky="w", padx=8, pady=4)
-        self._editable_entry(controls, 0, 5, "Speed pairs", self.sieve_speed_pair_count_var)
+        self._editable_entry(strategy, 0, 2, "Strategy filter", self.sieve_strategy_filter_var)
+        ttk.Label(strategy, text="Queue priority").grid(row=1, column=0, sticky="w", padx=8, pady=4)
+        ttk.Combobox(strategy, textvariable=self.sieve_batch_priority_var, values=("least_run_first", "configured"), state="readonly").grid(row=1, column=1, sticky="ew", padx=8, pady=4)
 
-        self._editable_entry(controls, 1, 0, "Take profit %", self.sieve_take_profit_var)
-        self._editable_entry(controls, 1, 2, "Stoploss %", self.sieve_stoploss_var)
-        ttk.Label(controls, text="Backtest workers").grid(row=1, column=4, sticky="w", padx=8, pady=4)
-        ttk.Combobox(controls, textvariable=self.backtest_worker_count_var, values=[str(index) for index in range(1, 21)], state="readonly").grid(row=1, column=5, sticky="ew", padx=8, pady=4)
+        speed = ttk.LabelFrame(controls, text="Speed Run")
+        speed.grid(row=0, column=1, sticky="nsew", padx=(4, 0), pady=(0, 8))
+        speed.grid_columnconfigure(1, weight=1)
+        speed.grid_columnconfigure(3, weight=1)
+        ttk.Checkbutton(speed, text="Speed run", variable=self.sieve_speed_run_var).grid(row=0, column=0, sticky="w", padx=8, pady=4)
+        self._editable_entry(speed, 0, 2, "Speed pairs", self.sieve_speed_pair_count_var)
+        ttk.Checkbutton(speed, text="Auto windows", variable=self.sieve_auto_windows_var).grid(row=1, column=0, sticky="w", padx=8, pady=4)
+        ttk.Label(speed, text="Windows/file").grid(row=1, column=2, sticky="w", padx=8, pady=4)
+        ttk.Combobox(speed, textvariable=self.sieve_auto_window_count_var, values=("1", "2", "3"), state="readonly", width=6).grid(row=1, column=3, sticky="w", padx=8, pady=4)
 
-        ttk.Checkbutton(controls, text="Auto windows", variable=self.sieve_auto_windows_var).grid(row=2, column=0, sticky="w", padx=8, pady=4)
-        ttk.Label(controls, text="Windows/file").grid(row=2, column=1, sticky="e", padx=8, pady=4)
-        ttk.Combobox(controls, textvariable=self.sieve_auto_window_count_var, values=("1", "2", "3"), state="readonly", width=6).grid(row=2, column=2, sticky="w", padx=8, pady=4)
-        ttk.Checkbutton(controls, text="Target sweep", variable=self.sieve_target_sweep_var).grid(row=2, column=3, sticky="w", padx=8, pady=4)
-        self._editable_entry(controls, 2, 4, "TP/SL grid", self.sieve_target_pairs_var)
+        hyperopt = ttk.LabelFrame(controls, text="Hyperopt")
+        hyperopt.grid(row=1, column=0, sticky="nsew", padx=(0, 4), pady=(0, 8))
+        hyperopt.grid_columnconfigure(1, weight=1)
+        hyperopt.grid_columnconfigure(3, weight=1)
+        self.epochs_entry = self._editable_entry(hyperopt, 0, 0, "Epochs", self.epochs_var)
+        self._editable_entry(hyperopt, 0, 2, "Hyperopt jobs", self.sieve_hyperopt_jobs_var)
+        ttk.Checkbutton(hyperopt, text="Auto epochs (20x params)", variable=self.auto_epochs_var).grid(row=1, column=0, columnspan=2, sticky="w", padx=8, pady=4)
+        self.auto_epochs_cap_entry = self._editable_entry(hyperopt, 1, 2, "Auto epoch cap", self.auto_epochs_cap_var)
 
-        ttk.Label(controls, text="Queue priority").grid(row=3, column=0, sticky="w", padx=8, pady=4)
-        ttk.Combobox(controls, textvariable=self.sieve_batch_priority_var, values=("least_run_first", "configured"), state="readonly").grid(row=3, column=1, sticky="ew", padx=8, pady=4)
-        self.epochs_entry = self._editable_entry(controls, 3, 2, "Epochs", self.epochs_var)
-        ttk.Checkbutton(controls, text="Auto epochs (20x params)", variable=self.auto_epochs_var).grid(row=3, column=4, sticky="w", padx=8, pady=4)
-        self.auto_epochs_cap_entry = self._editable_entry(controls, 3, 5, "Auto epoch cap", self.auto_epochs_cap_var)
+        targets = ttk.LabelFrame(controls, text="Targets")
+        targets.grid(row=1, column=1, sticky="nsew", padx=(4, 0), pady=(0, 8))
+        targets.grid_columnconfigure(1, weight=1)
+        targets.grid_columnconfigure(3, weight=1)
+        self._editable_entry(targets, 0, 0, "Take profit %", self.sieve_take_profit_var)
+        self._editable_entry(targets, 0, 2, "Stoploss %", self.sieve_stoploss_var)
+        ttk.Checkbutton(targets, text="Target sweep", variable=self.sieve_target_sweep_var).grid(row=1, column=0, sticky="w", padx=8, pady=4)
+        self._editable_entry(targets, 1, 2, "TP/SL grid", self.sieve_target_pairs_var)
 
-        ttk.Checkbutton(controls, text="Split-venv pipeline", variable=self.split_venv_pipeline_var).grid(row=4, column=0, columnspan=2, sticky="w", padx=8, pady=4)
-        self._editable_entry(controls, 4, 2, "Backtest Python", self.backtest_python_exe_var)
-        self._editable_entry(controls, 4, 4, "Handoff dir", self.pipeline_handoff_dir_var)
-        ttk.Label(controls, textvariable=self.sieve_status_var).grid(row=5, column=0, columnspan=6, sticky="w", padx=8, pady=4)
+        execution = ttk.LabelFrame(controls, text="Execution")
+        execution.grid(row=2, column=0, columnspan=2, sticky="ew")
+        execution.grid_columnconfigure(1, weight=1)
+        execution.grid_columnconfigure(3, weight=1)
+        execution.grid_columnconfigure(5, weight=1)
+        ttk.Checkbutton(execution, text="Split-venv pipeline", variable=self.split_venv_pipeline_var).grid(row=0, column=0, sticky="w", padx=8, pady=4)
+        ttk.Label(execution, text="Backtest workers").grid(row=0, column=2, sticky="w", padx=8, pady=4)
+        ttk.Combobox(execution, textvariable=self.backtest_worker_count_var, values=[str(index) for index in range(1, 21)], state="readonly", width=6).grid(row=0, column=3, sticky="w", padx=8, pady=4)
+        self._editable_entry(execution, 0, 4, "Backtest Python", self.backtest_python_exe_var)
+        self._editable_entry(execution, 1, 0, "Handoff dir", self.pipeline_handoff_dir_var)
+        ttk.Label(execution, textvariable=self.sieve_status_var).grid(row=2, column=0, columnspan=6, sticky="w", padx=8, pady=4)
 
         queue_frame = ttk.LabelFrame(parent, text="Batch Queue")
         queue_frame.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 8))
@@ -88,12 +113,12 @@ class EntrySieveTab(ExplorerTab):
 
         queue_buttons = ttk.Frame(queue_frame, style="App.TFrame")
         queue_buttons.grid(row=1, column=0, columnspan=2, sticky="ew", padx=8, pady=8)
-        ttk.Button(queue_buttons, text="Select all", command=self._select_all_sieve_batches).pack(side="left")
-        ttk.Button(queue_buttons, text="Clear queue", command=self._clear_sieve_batch_queue).pack(side="left", padx=(8, 0))
-        ttk.Button(queue_buttons, text="Run Entry Sieve", command=self._run_entry_sieve).pack(side="left", padx=(16, 0))
-        ttk.Button(queue_buttons, text="Run selected batch queue", command=self._run_entry_sieve_batch_queue).pack(side="left", padx=(8, 0))
+        ttk.Button(queue_buttons, text="Run selected batch queue", command=self._run_entry_sieve_batch_queue).pack(side="left")
+        ttk.Button(queue_buttons, text="Run single batch", command=self._run_entry_sieve).pack(side="left", padx=(8, 0))
         ttk.Button(queue_buttons, text="Stop", command=self._stop_entry_sieve).pack(side="left", padx=(8, 0))
         ttk.Button(queue_buttons, text="Refresh batches", command=self.refresh).pack(side="left", padx=(8, 0))
+        ttk.Button(queue_buttons, text="Select all", command=self._select_all_sieve_batches).pack(side="left", padx=(16, 0))
+        ttk.Button(queue_buttons, text="Clear queue", command=self._clear_sieve_batch_queue).pack(side="left", padx=(8, 0))
 
         windows = ttk.Frame(parent, style="App.TFrame")
         windows.grid(row=2, column=0, sticky="nsew", padx=8, pady=(0, 8))
@@ -344,6 +369,7 @@ class EntrySieveTab(ExplorerTab):
             "epochs": self.epochs_var.get(),
             "auto_epochs": self.auto_epochs_var.get(),
             "auto_epochs_cap": self.auto_epochs_cap_var.get(),
+            "sieve_hyperopt_jobs": self.sieve_hyperopt_jobs_var.get(),
             "random_state": self.random_state_var.get(),
             "sampling_seed": self.sampling_seed_var.get(),
             "split_venv_pipeline": self.split_venv_pipeline_var.get(),

@@ -96,6 +96,7 @@ class ExplorerTab(BaseTab):
         self.epochs_var = tk.StringVar(value="200")
         self.auto_epochs_var = tk.BooleanVar(value=False)
         self.auto_epochs_cap_var = tk.StringVar(value="")
+        self.sieve_hyperopt_jobs_var = tk.StringVar(value="")
         self.random_state_var = tk.StringVar(value="")
         self.sampling_seed_var = tk.StringVar(value="")
         default_settings = ExplorerRunSettings.from_state({}, context.app_dir)
@@ -728,6 +729,7 @@ class ExplorerTab(BaseTab):
             "epochs": self.epochs_var.get(),
             "auto_epochs": self.auto_epochs_var.get(),
             "auto_epochs_cap": self.auto_epochs_cap_var.get(),
+            "sieve_hyperopt_jobs": self.sieve_hyperopt_jobs_var.get(),
             "random_state": self.random_state_var.get(),
             "sampling_seed": self.sampling_seed_var.get(),
             "split_venv_pipeline": self.split_venv_pipeline_var.get(),
@@ -747,6 +749,7 @@ class ExplorerTab(BaseTab):
             epochs=self.epochs_var.get(),
             auto_epochs=self.auto_epochs_var.get(),
             auto_epochs_cap=self.auto_epochs_cap_var.get(),
+            hyperopt_jobs=self.sieve_hyperopt_jobs_var.get(),
             random_state=self.random_state_var.get(),
             sampling_seed=self.sampling_seed_var.get(),
             split_venv_pipeline=self.split_venv_pipeline_var.get(),
@@ -1266,6 +1269,7 @@ class ExplorerTab(BaseTab):
         self.epochs_var.set(settings.epochs)
         self.auto_epochs_var.set(bool(settings.auto_epochs))
         self.auto_epochs_cap_var.set(settings.auto_epochs_cap)
+        self.sieve_hyperopt_jobs_var.set(str(state.get("sieve_hyperopt_jobs") or ""))
         self.random_state_var.set(settings.random_state)
         self.sampling_seed_var.set(settings.sampling_seed)
         self.split_venv_pipeline_var.set(bool(settings.split_venv_pipeline))

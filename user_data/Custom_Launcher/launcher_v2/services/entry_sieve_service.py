@@ -93,6 +93,7 @@ class EntrySieveSettings:
     epochs: str = "200"
     auto_epochs: bool = False
     auto_epochs_cap: str = ""
+    hyperopt_jobs: str = ""
     random_state: str = ""
     sampling_seed: str = ""
     split_venv_pipeline: bool = False
@@ -258,6 +259,7 @@ class EntrySieveService:
             "epochs": str(settings.epochs),
             "auto_epochs": bool(settings.auto_epochs),
             "auto_epochs_cap": str(settings.auto_epochs_cap),
+            "hyperopt_jobs": str(settings.hyperopt_jobs),
             "speed_run_mode": bool(settings.speed_run_mode),
             "speed_pair_count": str(settings.speed_pair_count),
             "python_exe": str(self.python_exe),
