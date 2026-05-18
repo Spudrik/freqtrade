@@ -42,7 +42,7 @@ from .entry_sieve_lock import EntrySieveRunLock
 
 BACKTEST_LANE_START_STAGGER_SECONDS = 1.0
 MAX_BACKTEST_WORKERS = 20
-PIPELINED_BACKTEST_WORKER_CAP = 3
+RESERVED_SYSTEM_WORKERS = 2
 BACKTEST_WAIT_STATUS_SECONDS = 60.0
 BACKTEST_START_STAGGER_SECONDS = 15.0
 BACKTEST_START_RAM_LIMIT_PERCENT = 80.0
@@ -1364,8 +1364,25 @@ def _final_backtest_worker_limit(
 ) -> int:
     if not split_venv_pipeline:
         return 1
+    return _active_worker_capacity(backtest_lane_count)
+
+
+def _active_worker_capacity(backtest_lane_count: int) -> int:
+    cpu_total = max(1, int(os.cpu_count() or 1))
+    return max(1, min(backtest_lane_count, cpu_total - RESERVED_SYSTEM_WORKERS))
+
+
+def _pipelined_backtest_worker_limit(
+    *,
+    backtest_lane_count: int,
+    base_preset: dict[str, Any],
+    split_venv_pipeline: bool,
+) -> int:
+    if not split_venv_pipeline:
+        return 1
+    active_capacity = _active_worker_capacity(backtest_lane_count)
     hyperopt_workers = _hyperopt_job_count(base_preset)
-    return max(1, min(backtest_lane_count, hyperopt_workers + PIPELINED_BACKTEST_WORKER_CAP))
+    return max(1, min(backtest_lane_count, active_capacity - hyperopt_workers))
 
 
 def _effective_backtest_worker_count(
@@ -1562,7 +1579,7 @@ def main(argv: list[str] | None = None) -> int:
         if not target_sweep_enabled:
             print(
                 "Non-sweep backtest scheduler: "
-                f"{min(len(backtest_lanes), PIPELINED_BACKTEST_WORKER_CAP)} lane(s) during hyperopt, "
+                f"{_pipelined_backtest_worker_limit(backtest_lane_count=len(backtest_lanes), base_preset=base_preset, split_venv_pipeline=split_venv_pipeline)} lane(s) during hyperopt, "
                 f"{_final_backtest_worker_limit(backtest_lane_count=len(backtest_lanes), base_preset=base_preset, split_venv_pipeline=split_venv_pipeline)} lane(s) during final drain"
             )
     if bool(job.get("speed_run_mode")):
@@ -1690,7 +1707,11 @@ def main(argv: list[str] | None = None) -> int:
         completed_backtests = 0
         lane_cursor = 0
         last_backtest_start_at: float | None = None
-        hyperopt_lane_limit = min(len(backtest_lanes), PIPELINED_BACKTEST_WORKER_CAP) if split_venv_pipeline else 1
+        hyperopt_lane_limit = _pipelined_backtest_worker_limit(
+            backtest_lane_count=len(backtest_lanes),
+            base_preset=base_preset,
+            split_venv_pipeline=split_venv_pipeline,
+        )
         drain_lane_limit = _final_backtest_worker_limit(
             backtest_lane_count=len(backtest_lanes),
             base_preset=base_preset,

@@ -67,9 +67,12 @@ class EntrySieveTab(ExplorerTab):
         speed.grid_columnconfigure(3, weight=1)
         ttk.Checkbutton(speed, text="Speed run", variable=self.sieve_speed_run_var).grid(row=0, column=0, sticky="w", padx=8, pady=4)
         self._editable_entry(speed, 0, 2, "Speed pairs", self.sieve_speed_pair_count_var)
-        ttk.Checkbutton(speed, text="Auto windows", variable=self.sieve_auto_windows_var).grid(row=1, column=0, sticky="w", padx=8, pady=4)
+        self.sieve_auto_windows_check = ttk.Checkbutton(speed, text="Auto windows", variable=self.sieve_auto_windows_var)
+        self.sieve_auto_windows_check.grid(row=1, column=0, sticky="w", padx=8, pady=4)
         ttk.Label(speed, text="Windows/file").grid(row=1, column=2, sticky="w", padx=8, pady=4)
-        ttk.Combobox(speed, textvariable=self.sieve_auto_window_count_var, values=("1", "2", "3"), state="readonly", width=6).grid(row=1, column=3, sticky="w", padx=8, pady=4)
+        self.sieve_auto_window_count_combo = ttk.Combobox(speed, textvariable=self.sieve_auto_window_count_var, values=("1", "2", "3"), state="readonly", width=6)
+        self.sieve_auto_window_count_combo.grid(row=1, column=3, sticky="w", padx=8, pady=4)
+        ttk.Label(speed, text="Speed run forces 1 auto window, epoch cap 120, and no TP/SL sweep.").grid(row=2, column=0, columnspan=4, sticky="w", padx=8, pady=(0, 4))
 
         hyperopt = ttk.LabelFrame(controls, text="Hyperopt")
         hyperopt.grid(row=1, column=0, sticky="nsew", padx=(0, 4), pady=(0, 8))
@@ -77,7 +80,8 @@ class EntrySieveTab(ExplorerTab):
         hyperopt.grid_columnconfigure(3, weight=1)
         self.epochs_entry = self._editable_entry(hyperopt, 0, 0, "Epochs", self.epochs_var)
         self._editable_entry(hyperopt, 0, 2, "Hyperopt jobs", self.sieve_hyperopt_jobs_var)
-        ttk.Checkbutton(hyperopt, text="Auto epochs (20x params)", variable=self.auto_epochs_var).grid(row=1, column=0, columnspan=2, sticky="w", padx=8, pady=4)
+        self.auto_epochs_check = ttk.Checkbutton(hyperopt, text="Auto epochs (20x params)", variable=self.auto_epochs_var)
+        self.auto_epochs_check.grid(row=1, column=0, columnspan=2, sticky="w", padx=8, pady=4)
         self.auto_epochs_cap_entry = self._editable_entry(hyperopt, 1, 2, "Auto epoch cap", self.auto_epochs_cap_var)
 
         targets = ttk.LabelFrame(controls, text="Targets")
@@ -86,8 +90,9 @@ class EntrySieveTab(ExplorerTab):
         targets.grid_columnconfigure(3, weight=1)
         self._editable_entry(targets, 0, 0, "Take profit %", self.sieve_take_profit_var)
         self._editable_entry(targets, 0, 2, "Stoploss %", self.sieve_stoploss_var)
-        ttk.Checkbutton(targets, text="Target sweep", variable=self.sieve_target_sweep_var).grid(row=1, column=0, sticky="w", padx=8, pady=4)
-        self._editable_entry(targets, 1, 2, "TP/SL grid", self.sieve_target_pairs_var)
+        self.sieve_target_sweep_check = ttk.Checkbutton(targets, text="Target sweep", variable=self.sieve_target_sweep_var)
+        self.sieve_target_sweep_check.grid(row=1, column=0, sticky="w", padx=8, pady=4)
+        self.sieve_target_pairs_entry = self._editable_entry(targets, 1, 2, "TP/SL grid", self.sieve_target_pairs_var)
 
         execution = ttk.LabelFrame(controls, text="Execution")
         execution.grid(row=2, column=0, columnspan=2, sticky="ew")
@@ -274,6 +279,33 @@ class EntrySieveTab(ExplorerTab):
             self.sieve_batch_queue_listbox.bind("<<ListboxSelect>>", lambda event: self._sync_sieve_batch_queue_var(), add="+")
         self._update_epochs_mode_state()
         self._update_sieve_speed_run_state()
+
+    def _update_sieve_speed_run_state(self) -> None:
+        if not hasattr(self, "sieve_speed_run_var"):
+            return
+        speed_run = bool(self.sieve_speed_run_var.get())
+        disabled_state = "disabled" if speed_run else "normal"
+        readonly_state = "disabled" if speed_run else "readonly"
+
+        for widget_name in (
+            "sieve_auto_windows_check",
+            "auto_epochs_check",
+            "sieve_target_sweep_check",
+            "sieve_target_pairs_entry",
+        ):
+            widget = getattr(self, widget_name, None)
+            if widget is not None:
+                widget.configure(state=disabled_state)
+
+        auto_window_count_combo = getattr(self, "sieve_auto_window_count_combo", None)
+        if auto_window_count_combo is not None:
+            auto_window_count_combo.configure(state=readonly_state)
+
+        if speed_run:
+            if self.epochs_entry is not None:
+                self.epochs_entry.configure(state="disabled")
+            if self.auto_epochs_cap_entry is not None:
+                self.auto_epochs_cap_entry.configure(state="disabled")
 
     def refresh(self) -> None:
         self._load_windows()
