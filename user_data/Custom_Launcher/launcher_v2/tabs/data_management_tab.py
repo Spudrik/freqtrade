@@ -7,6 +7,12 @@ from tkinter import ttk
 from ..base_tab import BaseTab
 from .download_tab import DownloadTab
 from .global_context_tab import GlobalContextTab
+from .context_feature_builder_tab import ContextFeatureBuilderTab
+from .historical_data_sources_tab import HistoricalDataSourcesTab
+from .gdelt_backfill_tab import GdeltBackfillTab
+from .news_backfill_sources_tab import NewsBackfillSourcesTab
+from .market_context_sources_tab import MarketContextSourcesTab
+from .social_context_sources_tab import SocialContextSourcesTab
 from .news_tab import NewsTab
 from .web_tab import WebTab
 from .orderbook_tab import OrderBookTab
@@ -22,6 +28,12 @@ class DataManagementTab(BaseTab):
         NewsTab,
         WebTab,
         GlobalContextTab,
+        HistoricalDataSourcesTab,
+        GdeltBackfillTab,
+        NewsBackfillSourcesTab,
+        MarketContextSourcesTab,
+        SocialContextSourcesTab,
+        ContextFeatureBuilderTab,
         OrderBookTab,
         DataWatchdogTab,
     ]

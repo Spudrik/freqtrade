@@ -1,0 +1,75 @@
+{
+  "$schema": "https://schema.freqtrade.io/schema.json",
+  "dry_run": true,
+  "trading_mode": "spot",
+  "max_open_trades": 1,
+  "stake_currency": "USDT",
+  "stake_amount": 100,
+  "tradable_balance_ratio": 1,
+  "fiat_display_currency": "USD",
+  "timeframe": "1h",
+  "dry_run_wallet": 1000,
+  "cancel_open_orders_on_exit": true,
+  "exchange": {
+    "name": "binance",
+    "key": "",
+    "secret": "",
+    "ccxt_config": {},
+    "ccxt_async_config": {},
+    "pair_whitelist": [
+      "BTC/USDT"
+    ],
+    "pair_blacklist": []
+  },
+  "entry_pricing": {
+    "price_side": "same",
+    "use_order_book": false
+  },
+  "exit_pricing": {
+    "price_side": "same",
+    "use_order_book": false
+  },
+  "pairlists": [
+    {
+      "method": "StaticPairList"
+    }
+  ],
+  "freqai": {
+    "enabled": true,
+    "purge_old_models": 2,
+    "train_period_days": 2,
+    "backtest_period_days": 1,
+    "live_retrain_hours": 0,
+    "identifier": "context-freqai-research-v1",
+    "feature_parameters": {
+      "include_timeframes": [
+        "1h"
+      ],
+      "include_corr_pairlist": [],
+      "label_period_candles": 6,
+      "include_shifted_candles": 1,
+      "DI_threshold": 0,
+      "weight_factor": 0.9,
+      "principal_component_analysis": false,
+      "use_SVM_to_remove_outliers": false,
+      "indicator_periods_candles": [
+        6,
+        12,
+        24
+      ],
+      "plot_feature_importances": 10
+    },
+    "data_split_parameters": {
+      "test_size": 0.25,
+      "random_state": 1,
+      "shuffle": false
+    },
+    "model_training_parameters": {}
+  },
+  "bot_name": "context_freqai_research",
+  "force_entry_enable": true,
+  "initial_state": "stopped",
+  "internals": {
+    "process_throttle_secs": 5
+  }
+}

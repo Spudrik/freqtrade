@@ -47,6 +47,19 @@ Use simple tab modules and shared helpers to replace the monolithic launcher gra
 - Deprecated dataframe/pandas usage is not allowed in strategy code and must be cleaned when touched.
 - Revisit these notes when the research workflow changes materially.
 
+## Data Management Context Source Backlog
+
+- The Data Management tabs include TODO/catalog surfaces for historical context sources. These are reminders and planning surfaces, not proof that a source is ready.
+- Before adding any importer/downloader, check timestamp semantics, license/provenance, storage size, and no-lookahead safety.
+- Prefer extending existing systems instead of adding unique ingestion frameworks:
+  - article/news-like sources should merge into News Lab or Web Lab patterns where practical;
+  - numeric macro/market sources should extend Global Context patterns where practical;
+  - conditioned outputs should flow into `context_features`, not strategies;
+  - raw imports should stay under `user_data/research_news_data/<source_family>/`.
+- Sources that still need explicit review include GDELT, Common Crawl CC-NEWS, Guardian Open Platform, NYT Archive metadata, Media Cloud, Internet Archive TV News captions, Coin Metrics Community, FRED/ALFRED vintages, EIA/oil-energy data, Reddit archives, and timestamped crypto social datasets.
+- Random file-share datasets are not acceptable unless license, provenance, fields, and timestamps are clear.
+- Do not add orderbook data to this context-source backlog; orderbook remains a separate task.
+
 ## Preferred migration order
 
 1. Shell/helpers.
