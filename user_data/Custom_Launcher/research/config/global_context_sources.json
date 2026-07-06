@@ -8,6 +8,117 @@
   "fred_api_key_json_path": "fred.api_key",
   "sources": [
     {
+      "id": "google_trends_crypto_attention",
+      "type": "google_trends_interest",
+      "enabled": true,
+      "source_group": "attention",
+      "market_relevance": "high",
+      "keywords": [
+        "bitcoin",
+        "btc",
+        "crypto",
+        "bitcoin etf",
+        "ethereum"
+      ],
+      "metric_key": "google_trends_crypto_attention_composite",
+      "metric_prefix": "google_trends",
+      "timeframe": "now 7-d",
+      "geo": "",
+      "gprop": "",
+      "emit": "latest",
+      "availability_mode": "source_ts",
+      "min_interval_seconds": 43200,
+      "notes": "Primary live crypto-attention proxy from Google Trends. Stores only the latest point from each fetch to avoid retroactively backfilling rescaled historical values, and is spaced to reduce rate-limit pressure."
+    },
+    {
+      "id": "google_trends_macro_attention",
+      "type": "google_trends_interest",
+      "enabled": false,
+      "source_group": "attention",
+      "market_relevance": "medium",
+      "keywords": [
+        "recession",
+        "inflation",
+        "interest rates",
+        "bank crisis",
+        "war"
+      ],
+      "metric_key": "google_trends_macro_attention_composite",
+      "metric_prefix": "google_trends",
+      "timeframe": "now 7-d",
+      "geo": "",
+      "gprop": "",
+      "emit": "latest",
+      "availability_mode": "source_ts",
+      "min_interval_seconds": 43200,
+      "notes": "Secondary macro attention proxy from Google Trends. Disabled by default because FRED/Stooq already cover much of this information with lower rate-limit risk."
+    },
+    {
+      "id": "google_trends_market_stress_attention",
+      "type": "google_trends_interest",
+      "enabled": false,
+      "source_group": "attention",
+      "market_relevance": "medium",
+      "keywords": [
+        "stock market crash",
+        "vix",
+        "gold price",
+        "oil price",
+        "bond yields"
+      ],
+      "metric_key": "google_trends_market_stress_attention_composite",
+      "metric_prefix": "google_trends",
+      "timeframe": "now 7-d",
+      "geo": "",
+      "gprop": "",
+      "emit": "latest",
+      "availability_mode": "source_ts",
+      "min_interval_seconds": 43200,
+      "notes": "Secondary market-stress attention proxy from Google Trends. Disabled by default because Stooq/FRED already cover market-stress state with lower request cost."
+    },
+    {
+      "id": "google_trends_systemic_risk_attention",
+      "type": "google_trends_interest",
+      "enabled": false,
+      "source_group": "attention",
+      "market_relevance": "medium",
+      "keywords": [
+        "bank crisis",
+        "recession",
+        "china property crisis",
+        "war",
+        "ai bubble"
+      ],
+      "metric_key": "google_trends_systemic_risk_attention_composite",
+      "metric_prefix": "google_trends",
+      "timeframe": "now 7-d",
+      "geo": "",
+      "gprop": "",
+      "emit": "latest",
+      "availability_mode": "source_ts",
+      "min_interval_seconds": 43200,
+      "notes": "Medium-relevance systemic-risk attention proxy from Google Trends. Disabled to keep live Trends requests focused on the higher-value crypto basket and reduce 429 rate-limit pressure."
+    },
+    {
+      "id": "farside_btc_spot_etf_flows",
+      "type": "farside_btc_etf_flows",
+      "enabled": true,
+      "source_group": "institutional_flows",
+      "market_relevance": "high",
+      "url": "https://farside.co.uk/bitcoin-etf-flow-all-data/",
+      "metric_prefix": "btc_spot_etf",
+      "emit": "latest_reported",
+      "available_hour_utc": 0,
+      "min_interval_seconds": 86400,
+      "score_scale_musd": 500,
+      "fund_metrics": [
+        "IBIT",
+        "FBTC",
+        "GBTC"
+      ],
+      "notes": "Daily US spot BTC ETF flow table. Uses the latest non-empty reported row so placeholder all-zero current-day rows are ignored. Available timestamp is shifted to the day after the flow date to avoid intraday lookahead."
+    },
+    {
       "id": "alternative_fear_greed",
       "type": "alternative_fng",
       "enabled": true,
@@ -60,7 +171,7 @@
     {
       "id": "stooq_us_equity_risk",
       "type": "stooq_quotes",
-      "enabled": true,
+      "enabled": false,
       "source_group": "equity_indices",
       "market_relevance": "high",
       "url": "https://stooq.com/q/l/",
@@ -77,12 +188,12 @@
         "^DJI": "Dow",
         "IWM.US": "Russell 2000 ETF"
       },
-      "notes": "No-key Stooq headline basket for US equity risk."
+      "notes": "No-key Stooq headline basket for US equity risk. Disabled because the Stooq quote endpoint is currently returning HTTP 404 from the collector environment; FRED US equity context remains enabled."
     },
     {
       "id": "stooq_global_equity_risk",
       "type": "stooq_quotes",
-      "enabled": true,
+      "enabled": false,
       "source_group": "equity_indices",
       "market_relevance": "medium",
       "url": "https://stooq.com/q/l/",
@@ -103,12 +214,12 @@
         "^HSI": "Hang Seng",
         "^TSX": "TSX"
       },
-      "notes": "No-key Stooq headline basket for non-US equity risk."
+      "notes": "No-key Stooq headline basket for non-US equity risk. Disabled because the Stooq quote endpoint is currently returning HTTP 404 from the collector environment."
     },
     {
       "id": "stooq_safe_haven_risk",
       "type": "stooq_quotes",
-      "enabled": true,
+      "enabled": false,
       "source_group": "rates_fx",
       "market_relevance": "medium",
       "url": "https://stooq.com/q/l/",
@@ -126,7 +237,7 @@
         "GLD.US": "Gold",
         "UUP.US": "USD ETF"
       },
-      "notes": "No-key ETF proxies for volatility, bonds, gold, and dollar pressure."
+      "notes": "No-key ETF proxies for volatility, bonds, gold, and dollar pressure. Disabled because the Stooq quote endpoint is currently returning HTTP 404 from the collector environment; FRED rates/dollar context remains enabled."
     },
     {
       "id": "fred_us_equity_daily",

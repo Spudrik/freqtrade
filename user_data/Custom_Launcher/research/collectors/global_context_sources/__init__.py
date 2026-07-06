@@ -5,7 +5,9 @@ from typing import Any
 from .crypto import fetch_coingecko_markets, normalize_coingecko_global, normalize_coingecko_markets, normalize_fear_greed
 from .defi import normalize_defillama_chains, normalize_defillama_stablecoins
 from .equities import fetch_stooq_quotes, normalize_stooq_quotes
+from .etf_flows import fetch_farside_btc_etf_flows, normalize_farside_btc_etf_flows
 from .fred import fetch_fred_series_basket, normalize_fred_series_basket
+from .trends import fetch_google_trends_interest, normalize_google_trends_interest
 
 
 def fetch_source_payload(source: dict[str, Any], config: dict[str, Any]) -> Any:
@@ -16,6 +18,10 @@ def fetch_source_payload(source: dict[str, Any], config: dict[str, Any]) -> Any:
         return fetch_stooq_quotes(source, config)
     if source_type == "fred_series_basket":
         return fetch_fred_series_basket(source, config)
+    if source_type == "google_trends_interest":
+        return fetch_google_trends_interest(source, config)
+    if source_type == "farside_btc_etf_flows":
+        return fetch_farside_btc_etf_flows(source, config)
     return None
 
 
@@ -35,4 +41,8 @@ def normalize_source_payload(source: dict[str, Any], payload: Any, *, store_raw:
         return normalize_stooq_quotes(source, payload, store_raw=store_raw)
     if source_type == "fred_series_basket":
         return normalize_fred_series_basket(source, payload, store_raw=store_raw)
+    if source_type == "google_trends_interest":
+        return normalize_google_trends_interest(source, payload, store_raw=store_raw)
+    if source_type == "farside_btc_etf_flows":
+        return normalize_farside_btc_etf_flows(source, payload, store_raw=store_raw)
     raise ValueError(f"Unsupported global context source type: {source_type}")
