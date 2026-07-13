@@ -48,7 +48,7 @@ from freqtrade.util.dry_run_wallet import get_dry_run_wallet
 
 logger = logging.getLogger(__name__)
 
-INITIAL_POINTS = 30
+INITIAL_POINTS = 60
 
 MAX_LOSS = 100000  # just a big enough number to be bad result in loss optimization
 
