@@ -1,0 +1,7 @@
+source_group,status,default_use,required_checks,notes
+price_ohlcv,usable,yes,date range; gaps; duplicate timestamps,Base source for most tests.
+custom_indicators_sieve,usable,yes,file/class/column verification; no lookahead,Core source of existing entry families.
+structure_vp_tlv2_bos_patterns,usable_verify_freshness,yes_with_checks,coverage range; timeframe alignment; no future informative merge,Important for targets and entries.
+orderbook_bybit_historical,partial,validated_windows_only,present flags; coverage threshold; source timestamp <= feature hour; no gap carry,Use as targeted confluence/risk/target evidence. Raw ZIPs live on D: historical_bybit; do not infer from C raw folder.
+news_gdelt_gkg_web_global,parked_incomplete_with_validated_aggregate_windows,no_by_default,source-specific coverage; available_at <= feature hour; no zero-fill; parser/taxonomy version,Aggregate GDELT/GKG windows usable only with masks: 2020-01..2020-10, 2021-03..2022-07, GDELT-only 2022-08..2022-12, GDELT+Bybit 2023-01-18..2023-06. Silver/story-level historical news remains blocked. GDELT/GKG raw ZIPs live on D: gdelt/raw; SQLite stays on C.
+generic_ta_discovery,side_lane,optional,controls; baseline; no replacement of custom indicators,Track useful ideas for later merge.
