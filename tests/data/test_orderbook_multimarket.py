@@ -188,8 +188,16 @@ def test_comparison_rows_calculate_spot_perp_basis(tmp_path: Path) -> None:
     db_path = service.paths(state)["db"]
     init_db(db_path)
     with connect_db(db_path) as conn:
-        insert_metric_tick(conn, _metric_payload("binance_spot", "spot", 100.0, 101.0, 0.20, 4000.0))
-        insert_metric_tick(conn, _metric_payload("binance_usdm_futures", "futures", 101.0, 102.0, 0.35, 8000.0))
+        update_stream_status(
+            conn,
+            _stream_status_metric_payload("binance_spot", "spot", 100.0, 101.0, 0.20, 4000.0),
+        )
+        update_stream_status(
+            conn,
+            _stream_status_metric_payload(
+                "binance_usdm_futures", "futures", 101.0, 102.0, 0.35, 8000.0
+            ),
+        )
         conn.commit()
 
     rows = service.comparison_rows(state)
@@ -197,7 +205,7 @@ def test_comparison_rows_calculate_spot_perp_basis(tmp_path: Path) -> None:
     assert len(rows) == 1
     assert rows[0][0:3] == ("BTC/USDT", "binance_spot", "binance_usdm_futures")
     assert float(rows[0][5]) > 0
-    assert float(rows[0][7]) == 2.0
+    assert rows[0][7] == "-"
     assert rows[0][10] == "futures_bid_leads"
 
 
@@ -387,3 +395,25 @@ def _metric_payload(market_key: str, market_type: str, best_bid: float, best_ask
         "strong_bid_pressure": 1 if imbalance >= 0.35 else 0,
         "nearest_bid_wall_distance_bps": 10.0,
     }
+
+
+def _stream_status_metric_payload(
+    market_key: str,
+    market_type: str,
+    best_bid: float,
+    best_ask: float,
+    imbalance: float,
+    depth: float,
+) -> dict[str, object]:
+    payload = _metric_payload(market_key, market_type, best_bid, best_ask, imbalance, depth)
+    payload.update(
+        {
+            "stream_mode": "partial_depth",
+            "status": "running",
+            "last_metric_at": payload["ts"],
+            "bid_pressure_ratio_60s": float(payload["strong_bid_pressure"]),
+            "ask_pressure_ratio_60s": 0.0,
+            "updated_at": payload["ts"],
+        }
+    )
+    return payload

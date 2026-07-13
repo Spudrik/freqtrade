@@ -393,14 +393,10 @@ class OrderBookService:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 """
-                SELECT t.*
-                FROM orderbook_metric_ticks t
-                JOIN (
-                    SELECT stream_id, MAX(id) AS latest_id
-                    FROM orderbook_metric_ticks
-                    GROUP BY stream_id
-                ) latest ON latest.latest_id = t.id
-                ORDER BY t.canonical_pair, t.market_key
+                SELECT *
+                FROM stream_status
+                WHERE status IN ('running', 'stale/unknown', 'error')
+                ORDER BY canonical_pair, market_key
                 """
             ).fetchall()
         by_pair: dict[str, list[sqlite3.Row]] = {}
@@ -415,14 +411,9 @@ class OrderBookService:
                     spot_mid = _float_or_none(spot["mid_price"])
                     future_mid = _float_or_none(future["mid_price"])
                     basis = ((future_mid - spot_mid) / spot_mid * 10000.0) if spot_mid and future_mid else None
-                    spot_depth = _float_or_none(spot["bid_notional_top20"]) or 0.0
-                    spot_depth += _float_or_none(spot["ask_notional_top20"]) or 0.0
-                    future_depth = _float_or_none(future["bid_notional_top20"]) or 0.0
-                    future_depth += _float_or_none(future["ask_notional_top20"]) or 0.0
-                    depth_ratio = (future_depth / spot_depth) if spot_depth > 0 else None
                     spread_delta = _delta(future["spread_bps"], spot["spread_bps"])
                     imbalance_delta = _delta(future["imbalance_top20"], spot["imbalance_top20"])
-                    pressure_delta = _delta(future["strong_bid_pressure"], spot["strong_bid_pressure"])
+                    pressure_delta = _delta(future["bid_pressure_ratio_60s"], spot["bid_pressure_ratio_60s"])
                     pressure_lead_lag = _pressure_lead_lag(spot, future)
                     wall_delta = _delta(future["nearest_bid_wall_distance_bps"], spot["nearest_bid_wall_distance_bps"])
                     output.append(
@@ -434,12 +425,12 @@ class OrderBookService:
                             _fmt(future_mid),
                             _fmt(basis),
                             _fmt(spread_delta),
-                            _fmt(depth_ratio),
+                            "-",
                             _fmt(imbalance_delta),
                             _fmt(pressure_delta),
                             pressure_lead_lag,
                             _fmt(wall_delta),
-                            future["ts"],
+                            future["last_metric_at"],
                         )
                     )
         return output
@@ -666,6 +657,13 @@ def _pressure_lead_lag(spot: sqlite3.Row, future: sqlite3.Row) -> str:
 
 
 def _pressure_score(row: sqlite3.Row) -> int:
-    bid = int(_float_or_none(row["strong_bid_pressure"]) or 0)
-    ask = int(_float_or_none(row["strong_ask_pressure"]) or 0)
+    keys = set(row.keys())
+    if "strong_bid_pressure" in keys and "strong_ask_pressure" in keys:
+        bid = int(_float_or_none(row["strong_bid_pressure"]) or 0)
+        ask = int(_float_or_none(row["strong_ask_pressure"]) or 0)
+        return bid - ask
+    bid_ratio = _float_or_none(row["bid_pressure_ratio_60s"]) if "bid_pressure_ratio_60s" in keys else None
+    ask_ratio = _float_or_none(row["ask_pressure_ratio_60s"]) if "ask_pressure_ratio_60s" in keys else None
+    bid = 1 if bid_ratio is not None and bid_ratio >= 0.5 else 0
+    ask = 1 if ask_ratio is not None and ask_ratio >= 0.5 else 0
     return bid - ask

@@ -704,7 +704,11 @@ def _aggregate_market_to_candles(
     summary_delta_ns = int(summary_delta.value)
     summary_lag = pd.Timedelta(seconds=int(cfg.summary_lag_seconds))
     summary_lag_ns = int(summary_lag.value)
-    candle_index = pd.DatetimeIndex(candle_times)
+    # Pandas 3 preserves lower-resolution datetime dtypes (for example,
+    # datetime64[us]) instead of always normalizing them to nanoseconds.
+    # Timedelta.value remains nanosecond-based, so normalize every index used
+    # in this interval arithmetic before reading its integer representation.
+    candle_index = pd.DatetimeIndex(candle_times).as_unit("ns")
     target_ns = candle_index.asi8
 
     output = DataFrame(index=pd.RangeIndex(len(candle_index)))
@@ -722,8 +726,8 @@ def _aggregate_market_to_candles(
         output.index = output_index
         return output
 
-    starts = pd.DatetimeIndex(rows["ts_start"]).asi8
-    ends = pd.DatetimeIndex(rows["ts_end"]).asi8
+    starts = pd.DatetimeIndex(rows["ts_start"]).as_unit("ns").asi8
+    ends = pd.DatetimeIndex(rows["ts_end"]).as_unit("ns").asi8
     source_duration_ns = ends - starts
     target_positions: list[int] = []
     source_positions: list[int] = []
