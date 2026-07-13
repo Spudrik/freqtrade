@@ -1,2 +1,3 @@
 # Dependencies used by project research and collectors, not by upstream Freqtrade.
 pytrends==4.9.2
+pytest==9.0.2
