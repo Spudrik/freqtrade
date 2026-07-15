@@ -10,6 +10,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from freqtrade.persistence import Trade
+from freqtrade.persistence.usedb_context import FtNoDBContext
 from freqtrade.resolvers import StrategyResolver
 from freqtrade.strategy import IStrategy
 from user_data.strategies.sieve3_exit_breakeven_from_multi2_tlv2_vp_res_break_vp_bullctx_long_1h import (
@@ -90,6 +92,8 @@ class FakeOrder:
     order_date_utc: datetime = datetime(2024, 1, 1, 1, tzinfo=UTC)
     order_filled_utc: datetime | None = None
     ft_is_open: bool = False
+    safe_amount: float = 0.0
+    order_id: str = "fake-order"
 
 
 class FakeTrade:
@@ -206,6 +210,12 @@ def test_exit_plans_are_compact_unique_whole_policies() -> None:
         "dual_target",
         "progress_failure",
     }
+    pure_targets = [plan for plan in EXIT_PLANS.values() if plan.role == "target_full"]
+    assert pure_targets
+    assert all(
+        plan.invalidation == "none" and plan.invalidation_action == "hold"
+        for plan in pure_targets
+    )
 
 
 def test_every_declared_plan_action_is_reachable() -> None:
@@ -241,8 +251,8 @@ def test_pure_evaluator_priority_and_actions() -> None:
             partial_plan,
             pending,
             {"hard_invalidation": True, "target_1": True},
-        ).tag
-        == "s3v2_hard_invalidation"
+        ).action
+        == "hold"
     )
     assert (
         Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H.evaluate_policy(
@@ -331,6 +341,9 @@ def test_partial_state_changes_only_after_exact_positive_fill() -> None:
             "plan": "hvn_touch_p33_be_level2",
             "phase": "TARGET_ZONE",
             "partial_filled": False,
+            "partial_target_stake": 330.0,
+            "partial_realized_stake": 0.0,
+            "partial_fill_order_ids": [],
         },
     )
     for tag, filled in (("wrong", 1.0), ("s3v2_partial_target", 0.0)):
@@ -349,8 +362,10 @@ def test_partial_state_changes_only_after_exact_positive_fill() -> None:
         FakeOrder(
             "sell",
             "s3v2_partial_target",
-            safe_filled=1.0,
+            safe_filled=3.3,
             order_filled_utc=filled_at,
+            safe_amount=3.3,
+            order_id="partial-complete",
         ),
         datetime(2024, 1, 2, 5, tzinfo=UTC),
     )
@@ -366,12 +381,83 @@ def test_partial_state_changes_only_after_exact_positive_fill() -> None:
         FakeOrder(
             "sell",
             "s3v2_partial_target",
-            safe_filled=1.0,
+            safe_filled=3.3,
             order_filled_utc=datetime(2024, 1, 2, 6, tzinfo=UTC),
+            safe_amount=3.3,
+            order_id="partial-complete",
         ),
         datetime(2024, 1, 2, 7, tzinfo=UTC),
     )
     assert trade.get_custom_data(STATE_KEY)["partial_filled_at"] == filled_at.isoformat()
+
+
+def test_partial_fill_reconciles_quantity_before_remainder_transition() -> None:
+    strategy = _strategy()
+    trade = FakeTrade()
+    trade.set_custom_data(
+        STATE_KEY,
+        {
+            "version": STATE_VERSION,
+            "plan": "hvn_touch_p33_be_level2",
+            "phase": "TARGET_ZONE",
+            "partial_filled": False,
+            "partial_target_stake": 330.0,
+            "partial_realized_stake": 0.0,
+            "partial_fill_order_ids": [],
+        },
+    )
+    strategy.order_filled(
+        trade.pair,
+        trade,
+        FakeOrder(
+            "sell",
+            "s3v2_partial_target",
+            safe_filled=1.65,
+            safe_amount=3.3,
+            safe_price=100.0,
+            order_id="partial-half-1",
+        ),
+        datetime(2024, 1, 2, 3, tzinfo=UTC),
+    )
+    state = trade.get_custom_data(STATE_KEY)
+    assert state["partial_filled"] is False
+    assert state["partial_realized_stake"] == 165.0
+
+    trade.stake_amount = 835.0
+    strategy._decision_context = lambda *args, **kwargs: (  # type: ignore[method-assign]
+        EXIT_PLANS["hvn_touch_p33_be_level2"],
+        trade.get_custom_data(STATE_KEY),
+        {},
+        ExitDecision("partial", "s3v2_partial_target", 0.33),
+    )
+    request = strategy.adjust_trade_position(
+        trade,
+        datetime.now(UTC),
+        100.0,
+        0.0,
+        None,
+        1000.0,
+        100.0,
+        100.0,
+        0.0,
+        0.0,
+    )
+    assert request == (-165.0, "s3v2_partial_target")
+
+    strategy.order_filled(
+        trade.pair,
+        trade,
+        FakeOrder(
+            "sell",
+            "s3v2_partial_target",
+            safe_filled=1.65,
+            safe_amount=1.65,
+            safe_price=100.0,
+            order_id="partial-half-2",
+        ),
+        datetime(2024, 1, 2, 4, tzinfo=UTC),
+    )
+    assert trade.get_custom_data(STATE_KEY)["partial_filled"] is True
 
 
 def test_open_order_blocks_duplicate_partial_request() -> None:
@@ -407,6 +493,93 @@ def test_open_order_blocks_duplicate_partial_request() -> None:
     )
 
 
+def test_hard_invalidation_waits_for_partial_then_remains_sticky() -> None:
+    strategy = _strategy()
+    trade = FakeTrade()
+    trade.set_custom_data(
+        STATE_KEY,
+        {
+            "version": STATE_VERSION,
+            "plan": "hvn_touch_p33_be_level2",
+            "phase": "TARGET_ZONE",
+            "entry_rate": 100.0,
+            "entry_candle": "2024-01-01T00:00:00+00:00",
+            "entry_filled_at": "2024-01-01T01:00:00+00:00",
+            "broken_resistance": 99.0,
+            "structural_support": 95.0,
+            "targets": {"hvn": 110.0},
+            "target_1_touched_at": None,
+            "target_2_touched_at": None,
+            "partial_filled": False,
+            "partial_target_stake": 330.0,
+            "partial_realized_stake": 0.0,
+            "partial_fill_order_ids": [],
+            "terminal_exit_pending": False,
+            "stop_floor": 95.0,
+        },
+    )
+    trade.orders.append(
+        FakeOrder(
+            "sell",
+            "s3v2_partial_target",
+            status="open",
+            ft_is_open=True,
+            order_id="pending-partial",
+        )
+    )
+    strategy.dp = FakeDataProvider(
+        pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2024-01-01T01:00:00Z"], utc=True),
+                "open": [96.0],
+                "high": [97.0],
+                "low": [89.0],
+                "close": [90.0],
+                "vp_context_score_bull": [0.1],
+                "vp_context_score_bear": [0.5],
+                "vp_market_context": [-0.5],
+            }
+        )
+    )
+    assert (
+        strategy.custom_exit(
+            trade.pair,
+            trade,
+            datetime(2024, 1, 1, 2, tzinfo=UTC),
+            90.0,
+            -0.10,
+        )
+        is None
+    )
+    assert trade.get_custom_data(STATE_KEY)["terminal_exit_pending"] is True
+
+    trade.orders.clear()
+    strategy.dp = FakeDataProvider(
+        pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2024-01-01T02:00:00Z"], utc=True),
+                "open": [100.0],
+                "high": [101.0],
+                "low": [99.0],
+                "close": [100.0],
+                "vp_context_score_bull": [0.5],
+                "vp_context_score_bear": [0.1],
+                "vp_market_context": [0.5],
+            }
+        )
+    )
+    assert (
+        strategy.custom_exit(
+            trade.pair,
+            trade,
+            datetime(2024, 1, 1, 3, tzinfo=UTC),
+            100.0,
+            0.0,
+        )
+        == "s3v2_hard_invalidation"
+    )
+
+
 def test_target_confirmation_cannot_reuse_signal_candle_touch() -> None:
     strategy = _strategy()
     trade = FakeTrade()
@@ -416,6 +589,7 @@ def test_target_confirmation_cannot_reuse_signal_candle_touch() -> None:
         "phase": "ENTRY",
         "entry_rate": 100.0,
         "entry_candle": "2024-01-01T00:00:00+00:00",
+        "entry_filled_at": "2024-01-01T01:00:00+00:00",
         "broken_resistance": 99.0,
         "structural_support": 95.0,
         "targets": {"hvn": 110.0},
@@ -444,6 +618,49 @@ def test_target_confirmation_cannot_reuse_signal_candle_touch() -> None:
         0.07,
     )
     assert events["target_1"] is False
+
+
+def test_delayed_fill_excludes_prefill_target_and_progress_candles() -> None:
+    strategy = _strategy()
+    trade = FakeTrade()
+    trade.open_date_utc = datetime(2024, 1, 1, 1, tzinfo=UTC)
+    state = {
+        "version": STATE_VERSION,
+        "plan": "progress48_nearest",
+        "phase": "ENTRY",
+        "entry_rate": 100.0,
+        "entry_candle": "2024-01-01T00:00:00+00:00",
+        "entry_filled_at": "2024-01-01T05:00:00+00:00",
+        "broken_resistance": 99.0,
+        "structural_support": 95.0,
+        "targets": {"nearest": 110.0},
+        "target_1_touched_at": None,
+        "target_2_touched_at": None,
+        "partial_filled": False,
+    }
+    frame = pd.DataFrame(
+        {
+            "date": pd.date_range("2024-01-01T01:00:00Z", periods=8, freq="1h"),
+            "open": 100.0,
+            "high": [120.0, 120.0, 120.0, 120.0, 105.0, 105.0, 105.0, 105.0],
+            "low": 99.0,
+            "close": 100.0,
+            "vp_context_score_bull": 0.5,
+            "vp_context_score_bear": 0.1,
+            "vp_market_context": 0.5,
+        }
+    )
+    events, updated = strategy._events(
+        trade,
+        state,
+        frame,
+        datetime(2024, 1, 1, 9, tzinfo=UTC),
+        100.0,
+        0.0,
+    )
+    assert events["target_1"] is False
+    assert events["time_failure"] is False
+    assert updated["target_1_touched_at"] is None
 
 
 def test_target_band_requires_positive_progress_and_reversal_after_touch() -> None:
@@ -504,6 +721,7 @@ def test_progress_uses_closed_candle_high_not_mutable_trade_max_rate() -> None:
         "phase": "ENTRY",
         "entry_rate": 100.0,
         "entry_candle": "2024-01-01T00:00:00+00:00",
+        "entry_filled_at": "2024-01-01T01:00:00+00:00",
         "broken_resistance": 99.0,
         "structural_support": 95.0,
         "targets": {"nearest": 110.0},
@@ -534,6 +752,24 @@ def test_progress_uses_closed_candle_high_not_mutable_trade_max_rate() -> None:
     assert events["time_failure"] is True
 
 
+def test_mixed_partial_actions_use_profit_state() -> None:
+    target_plan = EXIT_PLANS["hvn_touch_p33_be_level2"]
+    decision = Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H.evaluate_policy(
+        target_plan,
+        {"partial_pending": False, "partial_filled": False},
+        {"target_1": True, "profit_bucket": "loss"},
+    )
+    assert decision == ExitDecision("full", "s3v2_target_reversal_loss")
+
+    reduce_plan = EXIT_PLANS["level1_reduce33_hvn"]
+    decision = Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H.evaluate_policy(
+        reduce_plan,
+        {"partial_pending": False, "partial_filled": False},
+        {"invalidation": True, "profit_bucket": "loss"},
+    )
+    assert decision == ExitDecision("full", "s3v2_invalidation_loss")
+
+
 def test_custom_stoploss_persists_monotonic_absolute_floor() -> None:
     strategy = _strategy()
     trade = FakeTrade()
@@ -545,6 +781,7 @@ def test_custom_stoploss_persists_monotonic_absolute_floor() -> None:
             "phase": "REMAINDER",
             "entry_rate": 100.0,
             "entry_candle": "2024-01-01T00:00:00+00:00",
+            "entry_filled_at": "2024-01-01T01:00:00+00:00",
             "broken_resistance": 99.0,
             "structural_support": 95.0,
             "targets": {"hvn": 110.0},
@@ -561,6 +798,113 @@ def test_custom_stoploss_persists_monotonic_absolute_floor() -> None:
 
     strategy.custom_stoploss(trade.pair, trade, datetime.now(UTC), 110.0, 0.10, True)
     assert trade.get_custom_data(STATE_KEY)["stop_floor"] == first_floor
+
+
+def test_tighten_floor_breach_becomes_explicit_exit() -> None:
+    strategy = _strategy()
+    trade = FakeTrade()
+    state = {
+        "version": STATE_VERSION,
+        "plan": "hvn_touch_tighten_level2",
+        "phase": "ENTRY",
+        "entry_rate": 100.0,
+        "entry_candle": "2024-01-01T00:00:00+00:00",
+        "entry_filled_at": "2024-01-01T01:00:00+00:00",
+        "broken_resistance": 99.0,
+        "structural_support": 95.0,
+        "targets": {"hvn": 110.0},
+        "target_1_touched_at": None,
+        "target_2_touched_at": None,
+        "partial_filled": False,
+        "terminal_exit_pending": False,
+        "stop_floor": None,
+    }
+    trade.set_custom_data(STATE_KEY, state)
+    strategy.dp = FakeDataProvider(
+        pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2024-01-01T01:00:00Z"], utc=True),
+                "open": [109.0],
+                "high": [111.0],
+                "low": [104.0],
+                "close": [105.0],
+                "vp_context_score_bull": [0.5],
+                "vp_context_score_bear": [0.1],
+                "vp_market_context": [0.5],
+            }
+        )
+    )
+    assert (
+        strategy.custom_exit(
+            trade.pair,
+            trade,
+            datetime(2024, 1, 1, 2, tzinfo=UTC),
+            105.0,
+            0.05,
+        )
+        == "s3v2_stop_floor_breached"
+    )
+    assert trade.get_custom_data(STATE_KEY)["stop_floor"] is None
+
+
+def test_freqtrade_applies_and_keeps_monotonic_stop_floor() -> None:
+    strategy = _strategy()
+    with FtNoDBContext("1h"):
+        trade = Trade(
+            id=930001,
+            pair="BTC/USDT:USDT",
+            stake_amount=1000.0,
+            amount=10.0,
+            open_date=datetime(2024, 1, 1, tzinfo=UTC),
+            fee_open=0.0,
+            fee_close=0.0,
+            exchange="binance",
+            open_rate=100.0,
+            price_precision=2,
+            precision_mode=2,
+            precision_mode_price=2,
+            leverage=1.0,
+            is_short=False,
+        )
+        trade.set_custom_data(
+            STATE_KEY,
+            {
+                "version": STATE_VERSION,
+                "plan": "hvn_rev1_p50_trail_level2",
+                "phase": "REMAINDER",
+                "entry_rate": 100.0,
+                "entry_candle": "2024-01-01T00:00:00+00:00",
+                "entry_filled_at": "2024-01-01T01:00:00+00:00",
+                "broken_resistance": 99.0,
+                "structural_support": 95.0,
+                "targets": {"hvn": 110.0},
+                "target_1_touched_at": "2024-01-01T10:00:00+00:00",
+                "target_2_touched_at": None,
+                "partial_filled": True,
+                "partial_filled_at": "2024-01-01T10:00:00+00:00",
+                "terminal_exit_pending": False,
+                "stop_floor": None,
+            },
+        )
+        strategy.ft_stoploss_adjust(
+            120.0,
+            trade,
+            datetime(2024, 1, 2, tzinfo=UTC),
+            0.20,
+            0,
+        )
+        assert trade.stop_loss == 118.2
+        assert trade.get_custom_data(STATE_KEY)["stop_floor"] == 118.2
+
+        strategy.ft_stoploss_adjust(
+            110.0,
+            trade,
+            datetime(2024, 1, 2, 1, tzinfo=UTC),
+            0.10,
+            0,
+            after_fill=True,
+        )
+        assert trade.stop_loss == 118.2
 
 
 def test_entry_driving_indicators_are_prefix_invariant() -> None:

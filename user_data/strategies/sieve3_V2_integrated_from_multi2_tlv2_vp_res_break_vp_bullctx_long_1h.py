@@ -68,7 +68,7 @@ from user_data.Indicators.complex_volume_profile import add_volume_profile
 
 ENTRY_TAG = "multi2_tlv2_vp_res_break_vp_bullctx_long_1h"
 STATE_KEY = "sieve3_v2_tlv2_vp_long"
-STATE_VERSION = 2
+STATE_VERSION = 3
 LEVEL_BAND = 0.005
 MIN_TARGET_MOVE = 0.002
 PARTIAL_TAGS = {"s3v2_partial_target", "s3v2_partial_invalidation"}
@@ -223,14 +223,25 @@ EXIT_PLANS: dict[str, ExitPlan] = {
         "hvn",
         confirmation="touch",
         target_action="full",
+        invalidation="none",
+        invalidation_action="hold",
         target_band=0.005,
     ),
-    "hvn_rev1_full": ExitPlan("target_full", "hvn", confirmation="reversal1", target_action="full"),
+    "hvn_rev1_full": ExitPlan(
+        "target_full",
+        "hvn",
+        confirmation="reversal1",
+        target_action="full",
+        invalidation="none",
+        invalidation_action="hold",
+    ),
     "vah_rev1_full": ExitPlan(
         "target_full",
         "vah",
         confirmation="reversal1",
         target_action="full",
+        invalidation="none",
+        invalidation_action="hold",
         target_band=0.015,
     ),
     "prior48_rev1_full": ExitPlan(
@@ -238,6 +249,8 @@ EXIT_PLANS: dict[str, ExitPlan] = {
         "prior48",
         confirmation="reversal1",
         target_action="full",
+        invalidation="none",
+        invalidation_action="hold",
         target_band=0.03,
     ),
     "prior96_rev2of3_full": ExitPlan(
@@ -245,6 +258,8 @@ EXIT_PLANS: dict[str, ExitPlan] = {
         "prior96",
         confirmation="reversal2of3",
         target_action="full",
+        invalidation="none",
+        invalidation_action="hold",
         target_band=0.03,
     ),
     "measured_half_touch_full": ExitPlan(
@@ -252,10 +267,17 @@ EXIT_PLANS: dict[str, ExitPlan] = {
         "measured_half",
         confirmation="touch",
         target_action="full",
+        invalidation="none",
+        invalidation_action="hold",
         target_band=0.005,
     ),
     "measured_full_rev1_full": ExitPlan(
-        "target_full", "measured_full", confirmation="reversal1", target_action="full"
+        "target_full",
+        "measured_full",
+        confirmation="reversal1",
+        target_action="full",
+        invalidation="none",
+        invalidation_action="hold",
     ),
     "level1_full": ExitPlan("invalidation_full", invalidation="level1", invalidation_action="full"),
     "level2_full": ExitPlan("invalidation_full", invalidation="level2", invalidation_action="full"),
@@ -1008,12 +1030,21 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
         if row is not None and "date" in row.index:
             timestamp = self._utc(row["date"])
             candle_date = timestamp.isoformat() if timestamp is not None else None
+        filled_at = (
+            getattr(order, "order_filled_utc", None)
+            or getattr(trade, "date_entry_fill_utc", None)
+            or current_time
+        )
+        filled_timestamp = self._utc(filled_at)
         return {
             "version": STATE_VERSION,
             "plan": str(self.exit_policy_plan.value),
             "phase": "ENTRY",
             "entry_rate": entry_rate,
             "entry_candle": candle_date,
+            "entry_filled_at": (
+                filled_timestamp.isoformat() if filled_timestamp is not None else None
+            ),
             "broken_resistance": broken,
             "structural_support": support,
             "targets": targets,
@@ -1023,6 +1054,10 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
             "partial_filled": False,
             "partial_filled_at": None,
             "partial_tag": None,
+            "partial_target_stake": None,
+            "partial_realized_stake": 0.0,
+            "partial_fill_order_ids": [],
+            "terminal_exit_pending": False,
             "stop_floor": None,
         }
 
@@ -1076,11 +1111,30 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
         ):
             state = self._state(trade)
             if state is not None and not state.get("partial_filled"):
-                filled_at = getattr(order, "order_filled_utc", None) or current_time
-                state["partial_filled"] = True
+                order_id = str(getattr(order, "order_id", "") or "")
+                processed = list(state.get("partial_fill_order_ids") or [])
+                if not order_id or order_id in processed:
+                    return None
+                plan = EXIT_PLANS[state["plan"]]
+                fill_price = float(getattr(order, "safe_price", 0.0) or 0.0)
+                fill_amount = float(getattr(order, "safe_filled", 0.0) or 0.0)
+                leverage = float(getattr(trade, "leverage", 1.0) or 1.0)
+                filled_stake = fill_amount * fill_price / leverage
+                target_stake = _finite_float(state.get("partial_target_stake"))
+                if target_stake is None:
+                    target_stake = (
+                        float(getattr(trade, "stake_amount", 0.0) or 0.0) + filled_stake
+                    ) * plan.partial_fraction
+                    state["partial_target_stake"] = target_stake
+                realized = float(state.get("partial_realized_stake") or 0.0) + filled_stake
+                state["partial_realized_stake"] = realized
+                state["partial_fill_order_ids"] = [*processed, order_id]
                 state["partial_tag"] = tag
-                state["partial_filled_at"] = self._utc(filled_at).isoformat()
-                state["phase"] = "REMAINDER"
+                if target_stake > 0.0 and realized >= target_stake * 0.995:
+                    filled_at = getattr(order, "order_filled_utc", None) or current_time
+                    state["partial_filled"] = True
+                    state["partial_filled_at"] = self._utc(filled_at).isoformat()
+                    state["phase"] = "REMAINDER"
                 self._save_state(trade, state)
         return None
 
@@ -1157,10 +1211,10 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
         plan = EXIT_PLANS[state["plan"]]
         targets = state.get("targets", {})
         target_frame = frame
-        entry_candle = self._utc(state.get("entry_candle"))
-        if entry_candle is not None and "date" in frame.columns:
+        entry_filled_at = self._utc(state.get("entry_filled_at"))
+        if entry_filled_at is not None and "date" in frame.columns:
             target_frame = frame.loc[
-                pd.to_datetime(frame["date"], utc=True, errors="coerce").gt(entry_candle)
+                pd.to_datetime(frame["date"], utc=True, errors="coerce").ge(entry_filled_at)
             ]
         entry_rate = float(state.get("entry_rate") or 0.0)
         touched_1_at, confirmed_1 = self._confirmation(
@@ -1219,12 +1273,7 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
             and float(close.iloc[-1]) < support * (1.0 - LEVEL_BAND)
         )
 
-        age_candles = 0
-        opened = self._utc(getattr(trade, "open_date_utc", None))
-        now = self._utc(current_time)
-        if opened is not None and now is not None:
-            age_minutes = max(0.0, (now - opened).total_seconds() / 60.0)
-            age_candles = int(age_minutes // timeframe_to_minutes(self.timeframe))
+        age_candles = len(target_frame)
         progress_high = _finite_float(_num(target_frame, "high").max())
         favorable = (
             progress_high / entry_rate - 1.0
@@ -1244,18 +1293,27 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
             "target_1": confirmed_1,
             "target_2": confirmed_2,
             "time_failure": time_failure,
+            "profit_bucket": (
+                "loss"
+                if current_profit < -0.005
+                else "flat"
+                if current_profit < 0.005
+                else "profit"
+                if current_profit < 0.02
+                else "strong_profit"
+            ),
         }, state
 
     @staticmethod
     def evaluate_policy(
         plan: ExitPlan,
         state: dict[str, Any],
-        events: dict[str, bool],
+        events: dict[str, Any],
     ) -> ExitDecision:
-        if events.get("hard_invalidation"):
-            return ExitDecision("full", "s3v2_hard_invalidation")
         if state.get("partial_pending"):
             return ExitDecision("hold")
+        if events.get("hard_invalidation") or state.get("terminal_exit_pending"):
+            return ExitDecision("full", "s3v2_hard_invalidation")
         if plan.invalidation_action == "full" and events.get("invalidation"):
             return ExitDecision("full", "s3v2_plan_invalidation")
         if events.get("time_failure"):
@@ -1269,6 +1327,8 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
             and events.get("target_1")
             and not state.get("partial_filled")
         ):
+            if events.get("profit_bucket") == "loss":
+                return ExitDecision("full", "s3v2_target_reversal_loss")
             return ExitDecision(
                 "partial",
                 "s3v2_partial_target",
@@ -1279,6 +1339,8 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
             and events.get("invalidation")
             and not state.get("partial_filled")
         ):
+            if events.get("profit_bucket") == "loss":
+                return ExitDecision("full", "s3v2_invalidation_loss")
             return ExitDecision(
                 "partial",
                 "s3v2_partial_invalidation",
@@ -1297,7 +1359,7 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
         current_time: datetime,
         current_rate: float,
         current_profit: float,
-    ) -> tuple[ExitPlan, dict[str, Any], dict[str, bool], ExitDecision] | None:
+    ) -> tuple[ExitPlan, dict[str, Any], dict[str, Any], ExitDecision] | None:
         state = self._state(trade)
         if state is None or state.get("plan") not in EXIT_PLANS:
             return None
@@ -1307,11 +1369,13 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
         events, state = self._events(
             trade, state, frame, current_time, current_rate, current_profit
         )
-        if state != previous:
-            self._save_state(trade, state)
         state["partial_pending"] = partial_pending
         if partial_pending:
             state["phase"] = "REALIZATION_PENDING"
+            if events.get("hard_invalidation"):
+                state["terminal_exit_pending"] = True
+        if state != previous:
+            self._save_state(trade, state)
         plan = EXIT_PLANS[state["plan"]]
         return plan, state, events, self.evaluate_policy(plan, state, events)
 
@@ -1328,8 +1392,16 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
         context = self._decision_context(pair, trade, current_time, current_rate, current_profit)
         if context is None:
             return None
-        decision = context[3]
-        return decision.tag if decision.action == "full" else None
+        plan, state, _, decision = context
+        if state.get("partial_pending"):
+            return None
+        if decision.action == "full":
+            return decision.tag
+        desired_floor = self._desired_stop_price(plan, state, decision, current_rate)
+        persisted_floor = _finite_float(state.get("stop_floor"))
+        if persisted_floor is not None:
+            desired_floor = max(desired_floor, persisted_floor)
+        return "s3v2_stop_floor_breached" if desired_floor >= current_rate else None
 
     def custom_roi(
         self,
@@ -1392,7 +1464,45 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
         stake = float(getattr(trade, "stake_amount", 0.0) or 0.0)
         if stake <= 0.0:
             return None
-        return -stake * decision.fraction, tag
+        target_stake = _finite_float(state.get("partial_target_stake"))
+        if target_stake is None:
+            target_stake = stake * decision.fraction
+            state["partial_target_stake"] = target_stake
+        realized = float(state.get("partial_realized_stake") or 0.0)
+        remaining = max(0.0, target_stake - realized)
+        if remaining <= max(1e-8, target_stake * 0.005):
+            return None
+        self._save_state(trade, state)
+        return -min(remaining, stake), tag
+
+    @staticmethod
+    def _desired_stop_price(
+        plan: ExitPlan,
+        state: dict[str, Any],
+        decision: ExitDecision,
+        current_rate: float,
+    ) -> float:
+        entry_rate = float(state.get("entry_rate") or current_rate)
+        stop_price = entry_rate * (1.0 - plan.hard_stop)
+        support = _finite_float(state.get("structural_support"))
+        if plan.role != "baseline" and support is not None and support < entry_rate:
+            stop_price = max(stop_price, support * (1.0 - LEVEL_BAND))
+        if state.get("partial_filled"):
+            if plan.remainder == "breakeven":
+                stop_price = max(stop_price, entry_rate * 1.001)
+            elif plan.remainder == "trail":
+                stop_price = max(stop_price, current_rate * 0.985)
+        if decision.action == "tighten" and decision.tighten == "target":
+            target = _finite_float(state.get("targets", {}).get(plan.target_1))
+            if target is not None:
+                stop_price = max(stop_price, target * 0.99)
+        if decision.action == "tighten" and decision.tighten == "invalidation":
+            broken = _finite_float(state.get("broken_resistance"))
+            if broken is not None:
+                stop_price = max(stop_price, broken * (1.0 - LEVEL_BAND))
+            if current_rate > entry_rate:
+                stop_price = max(stop_price, entry_rate * 1.001)
+        return stop_price
 
     def custom_stoploss(
         self,
@@ -1406,45 +1516,32 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
     ) -> float | None:
         _ = after_fill, kwargs
         state = self._state(trade)
-        entry_rate = float(
-            (state or {}).get("entry_rate")
-            or getattr(trade, "open_rate", current_rate)
-            or current_rate
-        )
         plan_name = (state or {}).get("plan")
         if plan_name not in EXIT_PLANS:
             plan_name = str(self.exit_policy_plan.value)
         selected_plan = EXIT_PLANS[plan_name]
-        stop_price = entry_rate * (1.0 - selected_plan.hard_stop)
-        support = _finite_float((state or {}).get("structural_support"))
-        if selected_plan.role != "baseline" and support is not None and support < entry_rate:
-            stop_price = max(stop_price, support * (1.0 - LEVEL_BAND))
-
+        decision = ExitDecision("hold")
         context = self._decision_context(pair, trade, current_time, current_rate, current_profit)
         if context is not None:
             plan, state, _, decision = context
             if state.get("partial_pending") or decision.action == "full":
                 return None
-            if state.get("partial_filled"):
-                if plan.remainder == "breakeven":
-                    stop_price = max(stop_price, entry_rate * 1.001)
-                elif plan.remainder == "trail":
-                    stop_price = max(stop_price, current_rate * 0.985)
-            if decision.action == "tighten":
-                if decision.tighten == "target":
-                    target = _finite_float(state.get("targets", {}).get(plan.target_1))
-                    if target is not None:
-                        stop_price = max(stop_price, target * 0.99)
-                if decision.tighten == "invalidation":
-                    broken = _finite_float(state.get("broken_resistance"))
-                    if broken is not None:
-                        stop_price = max(stop_price, broken * (1.0 - LEVEL_BAND))
-                    if current_rate > entry_rate:
-                        stop_price = max(stop_price, entry_rate * 1.001)
+            selected_plan = plan
+        working_state = state or {
+            "entry_rate": float(getattr(trade, "open_rate", current_rate) or current_rate)
+        }
+        stop_price = self._desired_stop_price(
+            selected_plan,
+            working_state,
+            decision,
+            current_rate,
+        )
 
-        persisted_floor = _finite_float((state or {}).get("stop_floor"))
+        persisted_floor = _finite_float(working_state.get("stop_floor"))
         if persisted_floor is not None:
             stop_price = max(stop_price, persisted_floor)
+        if stop_price >= current_rate:
+            return None
         if state is not None and (persisted_floor is None or stop_price > persisted_floor):
             state["stop_floor"] = stop_price
             self._save_state(trade, state)
