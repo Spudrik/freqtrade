@@ -1,47 +1,69 @@
-"""Sieve3 V2 integrated exits for the promoted TLV2/VP long entry.
+"""Sieve3 V2 integrated exits for the promoted prior-month-high breakout long.
 
 Preflight contract
 ------------------
 Canonical Sieve2 source:
-    sieve2_multi2_tlv2_vp_res_break_vp_bullctx_long_1h
+    sieve2_prior_month_high_breakout_long
 Promotion evidence:
-    20260521T012740_entry_all_resume, selected row 319
+    Job 20260521T012740_entry_all_resume, result row 668.
+    Result-row SHA256:
+    ca228736950864656aaab2a13b0d99e21a47ed741aa2d4f0cc2ce7008fcc4dac
 Promoted baseline:
-    TP/SL 2%/2%, 219 trades, 58.9041% win rate, 6.815958% return,
-    1.93344% maximum drawdown, 1.372107 profit factor.
+    TP/SL 2%/2%, 418 trades, 53.5885% win rate, 4.047944% return,
+    4.07119% maximum drawdown, 1.101507 profit factor.
+Archived lineage:
+    Backtest archive SHA256:
+    047b03671a3da2e8b3db83da731eb21034ddf6aaaa6550ba7e9001e34dee413c
+    Sieve2 source snapshot SHA256:
+    414c6fed7ab6e143fa04fe3d8b944fc9109a388bfe44237f3dfeadc5e6763af7
+    Sieve2 params snapshot SHA256:
+    bd41e40fe5234ea113dfe1788cfe443545189b16f7b2dc4c87000b29e5651a7e
+    Archived buy-default SHA256:
+    6c40a762abfe47263cc9f40829257501fc4172c7f79d804ae5cc51f74c5192fd
+    Selected sparse buy-param SHA256:
+    13bafcd62854d9e39a1cc4681f9a523f63981ff502f5983c53f0ff2136a68e55
 Entry lock:
-    The 45 promoted buy defaults below are immutable in Sieve3 V2
-    (``optimize=False, load=False``). Disabled Sieve2 optional guards remain
-    represented by their locked parameters but their dead indicator work is omitted.
-Tested legacy controls:
-    sieve3_exit_breakeven_from_multi2_tlv2_vp_res_break_vp_bullctx_long_1h.py
-    sieve3_exit_level_zone_reversal_from_multi2_tlv2_vp_res_break_vp_bullctx_long_1h.py
-    jobs 20260709T101515_entry_sieve3_exit_speed_batch_046 and
-    20260628T025333_entry_sieve3_exit_speed_batch_040.
+    The 57-value effective promoted buy lock is embedded below with
+    optimize=False and load=False. Effective-lock SHA256:
+    8aeb180d6a07431b365ad820e9537f4146c4f9c2ca7c8a7f781ee280ddf813d3
+    Baseline entry-signature SHA256:
+    27a42b4c7c3d98f4655503059914a481072517b3cf8f43fb633fb46fdfce07f3
+    Baseline entry-trend SHA256:
+    e6547d8fc120d82c172d59929a63f7c953e8d5e1bd08b1e7e1893991caf0e7e5
+Tested controls:
+    sieve3_exit_breakeven_from_prior_month_high_breakout_long.py
+    sieve3_exit_level_zone_reversal_from_prior_month_high_breakout_long.py
+    Jobs 20260710T061808_entry_sieve3_exit_speed_batch_048 and
+    20260704T092624_entry_sieve3_exit_speed_batch_042.
 Refined pilot controls:
-    sieve3_rework_exit_{invalidation,layered,target_zone}_from_multi2_*.py
-    job 20260711T230600_entry_sieve3_exit_rework_comparison_001.
+    sieve3_rework_exit_{invalidation,layered,target_zone}_from_prior_month_*.py
+    Job 20260711T230600_entry_sieve3_exit_rework_comparison_001.
 Consolidation:
-    The V2 plans retain the distinct target, invalidation, layered, runner,
-    and time/progress hypotheses. Generic legacy EMA/oscillator exit surfaces
-    and duplicate one-file-per-exit branches are intentionally not copied.
-Target semantics:
-    All TLV2, VP, prior-high, and measured-move targets are frozen from the
-    last closed signal candle when the entry fills. Provider chains are explicit
-    and may only move to a named, source-coherent fallback at initialization.
-    TLV2 rank-0 support is deliberately excluded because prefix testing found
-    its historical rank selection unstable; shifted 48-candle prior low is the
-    causal structural floor used for measured range and hard invalidation.
-Invalidation:
-    Broken-resistance loss, VP bull-context failure, their conjunction, and
-    frozen structural-support failure. Structural-support failure or a confirmed
-    broken-level loss plus VP failure is the universal hard thesis failure.
-Hyperopt surface:
-    One sell-space ``exit_policy_plan`` parameter. Each category is a complete,
-    trader-readable policy; no inactive branch thresholds are optimized.
+    The 36 policies retain fixed controls, pure target and invalidation
+    ablations, integrated partial/remainder plans, reduce-then-target plans,
+    target tightening, dual-target runners, and coherent follow-through tests.
+    Generic indicator exits and duplicate legacy numeric sweeps are discarded.
+Target provider hierarchy and semantics:
+    Every target is frozen_at_entry from the last candle closed when the entry
+    order was placed. Requested providers use explicit fallback chains over
+    prior-day/week highs, shifted rolling highs, VP HVN/VAH, and measured
+    prior-month range extensions. Wrong-side and trivial targets are rejected.
+    Targets never adapt farther away after entry.
+Breakout invalidation contract:
+    The source boundary is the frozen prior-month high. Named invalidations are
+    one or two confirmed closes back through it, or one/two closes back through
+    it after a prior closed-candle retest held. A deep boundary loss or loss of
+    the frozen prior-month low is the universal non-baseline hard failure.
+Policy groups:
+    baseline, target_full, invalidation_full, defensive_tighten,
+    target_partial, invalidation_reduce, target_tighten, dual_target,
+    and progress_failure.
+Active sell surface:
+    exit_policy_plan only. No buy parameter is loadable or optimized.
 Split decision:
-    One V2 file is sufficient because TLV2 structure and VP context form one
-    coherent target/invalidation ecosystem for this entry foundation.
+    One file is coherent because all plans share the same frozen monthly
+    breakout boundary, period/structure/VP obstacle hierarchy, and callback
+    lifecycle. A second target ecosystem would only duplicate state handling.
 """
 
 from __future__ import annotations
@@ -57,22 +79,42 @@ from freqtrade.exchange import timeframe_to_minutes
 from freqtrade.strategy import (
     BooleanParameter,
     CategoricalParameter,
+    DecimalParameter,
+    IntParameter,
     IStrategy,
     stoploss_from_absolute,
-)
-from user_data.Indicators.complex_trendline_projection_v2 import (
-    add_trendline_projection_v2,
 )
 from user_data.Indicators.complex_volume_profile import add_volume_profile
 
 
-ENTRY_TAG = "multi2_tlv2_vp_res_break_vp_bullctx_long_1h"
-STATE_KEY = "sieve3_v2_tlv2_vp_long"
-STATE_VERSION = 3
+SIEVE_STAGE = "sieve3"
+SOURCE_STRATEGY = "sieve2_prior_month_high_breakout_long"
+SOURCE_RESULT_BATCH = "20260521T012740_entry_all_resume"
+RESEARCH_PATH = "sieve3_V2_integrated"
+ENTRY_SOURCE_STAGE = "sieve2"
+EXIT_HYPOTHESIS = (
+    "Manage a prior-month-high breakout against frozen period, structure, and VP "
+    "obstacles while invalidating only on closed-candle boundary failure."
+)
+ENTRY_TAG = "prior_month_high_breakout_long"
+STATE_KEY = "sieve3_v2_prior_month_high_long"
+STATE_VERSION = 4
 LEVEL_BAND = 0.005
+RETEST_BAND = 0.004
+DEEP_FAILURE_BAND = 0.025
 MIN_TARGET_MOVE = 0.002
+FOLLOW_THROUGH_MOVE = 0.01
 PARTIAL_TAGS = {"s3v2_partial_target", "s3v2_partial_invalidation"}
 
+RESULT_ROW_SHA256 = "ca228736950864656aaab2a13b0d99e21a47ed741aa2d4f0cc2ce7008fcc4dac"
+BACKTEST_ARCHIVE_SHA256 = "047b03671a3da2e8b3db83da731eb21034ddf6aaaa6550ba7e9001e34dee413c"
+SNAPSHOT_STRATEGY_SHA256 = "414c6fed7ab6e143fa04fe3d8b944fc9109a388bfe44237f3dfeadc5e6763af7"
+SNAPSHOT_PARAMS_SHA256 = "bd41e40fe5234ea113dfe1788cfe443545189b16f7b2dc4c87000b29e5651a7e"
+LOCKED_BUY_PARAMS_SHA256 = "8aeb180d6a07431b365ad820e9537f4146c4f9c2ca7c8a7f781ee280ddf813d3"
+
+PERIOD_CHOICES = ("day", "week", "month")
+PRICE_SOURCE_CHOICES = ("close", "hl2", "hlc3", "ohlc4")
+VP_GUARD_MODES = ("direction", "score", "context", "score_or_context", "balance")
 SIEVE2_VP_GUARD_MODES = (
     "score_or_context",
     "node_confirm",
@@ -106,10 +148,6 @@ def _bool(frame: DataFrame, column: str) -> Series:
     return pd.Series(frame[column], index=frame.index).astype("boolean").fillna(False).astype(bool)
 
 
-def _cross_above(series: Series, level: Series) -> Series:
-    return series.gt(level) & series.shift(1).le(level.shift(1))
-
-
 def _finite_float(value: Any) -> float | None:
     numeric = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
     if pd.isna(numeric) or not np.isfinite(numeric):
@@ -141,7 +179,7 @@ class ExitPlan:
         target_2: str | None = None,
         confirmation: str = "touch",
         target_action: str = "hold",
-        invalidation: str = "combined1",
+        invalidation: str = "boundary2",
         invalidation_action: str = "full",
         partial_fraction: float = 0.0,
         remainder: str = "hold",
@@ -218,277 +256,316 @@ EXIT_PLANS: dict[str, ExitPlan] = {
         hard_stop=0.02,
         fixed_tp=0.02,
     ),
-    "hvn_touch_full": ExitPlan(
+    "period_nearest_touch_full": ExitPlan(
         "target_full",
-        "hvn",
+        "period_nearest",
         confirmation="touch",
         target_action="full",
         invalidation="none",
         invalidation_action="hold",
         target_band=0.005,
     ),
-    "hvn_rev1_full": ExitPlan(
+    "prior_week_rev1_full": ExitPlan(
         "target_full",
-        "hvn",
-        confirmation="reversal1",
-        target_action="full",
-        invalidation="none",
-        invalidation_action="hold",
-    ),
-    "vah_rev1_full": ExitPlan(
-        "target_full",
-        "vah",
+        "prior_week",
         confirmation="reversal1",
         target_action="full",
         invalidation="none",
         invalidation_action="hold",
         target_band=0.015,
     ),
-    "prior48_rev1_full": ExitPlan(
+    "swing48_touch_full": ExitPlan(
         "target_full",
-        "prior48",
-        confirmation="reversal1",
-        target_action="full",
-        invalidation="none",
-        invalidation_action="hold",
-        target_band=0.03,
-    ),
-    "prior96_rev2of3_full": ExitPlan(
-        "target_full",
-        "prior96",
-        confirmation="reversal2of3",
-        target_action="full",
-        invalidation="none",
-        invalidation_action="hold",
-        target_band=0.03,
-    ),
-    "measured_half_touch_full": ExitPlan(
-        "target_full",
-        "measured_half",
+        "swing48",
         confirmation="touch",
         target_action="full",
         invalidation="none",
         invalidation_action="hold",
         target_band=0.005,
     ),
-    "measured_full_rev1_full": ExitPlan(
+    "swing96_rev2of3_full": ExitPlan(
         "target_full",
-        "measured_full",
+        "swing96",
+        confirmation="reversal2of3",
+        target_action="full",
+        invalidation="none",
+        invalidation_action="hold",
+        target_band=0.02,
+    ),
+    "vp_hvn_rev1_full": ExitPlan(
+        "target_full",
+        "vp_hvn",
         confirmation="reversal1",
         target_action="full",
         invalidation="none",
         invalidation_action="hold",
     ),
-    "level1_full": ExitPlan("invalidation_full", invalidation="level1", invalidation_action="full"),
-    "level2_full": ExitPlan("invalidation_full", invalidation="level2", invalidation_action="full"),
-    "context2_full": ExitPlan(
-        "invalidation_full", invalidation="context2", invalidation_action="full"
+    "measured_half_rev1_full": ExitPlan(
+        "target_full",
+        "measured_half",
+        confirmation="reversal1",
+        target_action="full",
+        invalidation="none",
+        invalidation_action="hold",
+        target_band=0.015,
     ),
-    "combined1_full": ExitPlan(
-        "invalidation_full", invalidation="combined1", invalidation_action="full"
+    "boundary1_full": ExitPlan(
+        "invalidation_full", invalidation="boundary1", invalidation_action="full"
     ),
-    "level2_tighten": ExitPlan(
-        "defensive_tighten", invalidation="level2", invalidation_action="tighten"
+    "boundary2_full": ExitPlan(
+        "invalidation_full", invalidation="boundary2", invalidation_action="full"
     ),
-    "context2_tighten": ExitPlan(
-        "defensive_tighten", invalidation="context2", invalidation_action="tighten"
+    "retest1_full": ExitPlan(
+        "invalidation_full", invalidation="retest1", invalidation_action="full"
     ),
-    "hvn_touch_p33_be_level2": ExitPlan(
+    "retest2_full": ExitPlan(
+        "invalidation_full", invalidation="retest2", invalidation_action="full"
+    ),
+    "boundary1_tighten": ExitPlan(
+        "defensive_tighten",
+        invalidation="boundary1",
+        invalidation_action="tighten",
+    ),
+    "retest1_tighten": ExitPlan(
+        "defensive_tighten",
+        invalidation="retest1",
+        invalidation_action="tighten",
+    ),
+    "period_nearest_touch_p33_be_boundary2": ExitPlan(
         "target_partial",
-        "hvn",
+        "period_nearest",
         confirmation="touch",
         target_action="partial",
-        invalidation="level2",
+        invalidation="boundary2",
         partial_fraction=0.33,
         remainder="breakeven",
     ),
-    "hvn_rev1_p50_trail_level2": ExitPlan(
+    "period_nearest_rev1_p50_trail_retest1": ExitPlan(
         "target_partial",
-        "hvn",
+        "period_nearest",
         confirmation="reversal1",
         target_action="partial",
-        invalidation="level2",
+        invalidation="retest1",
         partial_fraction=0.50,
         remainder="trail",
     ),
-    "hvn_rev1_p33_be_combined": ExitPlan(
+    "prior_week_rev1_p33_be_boundary2": ExitPlan(
         "target_partial",
-        "hvn",
+        "prior_week",
         confirmation="reversal1",
         target_action="partial",
-        invalidation="combined1",
+        invalidation="boundary2",
         partial_fraction=0.33,
         remainder="breakeven",
     ),
-    "vah_rev1_p33_be_context2": ExitPlan(
+    "swing48_touch_p33_trail_boundary2": ExitPlan(
         "target_partial",
-        "vah",
-        confirmation="reversal1",
-        target_action="partial",
-        invalidation="context2",
-        partial_fraction=0.33,
-        remainder="breakeven",
-    ),
-    "prior48_touch_p33_trail_level2": ExitPlan(
-        "target_partial",
-        "prior48",
+        "swing48",
         confirmation="touch",
         target_action="partial",
-        invalidation="level2",
+        invalidation="boundary2",
         partial_fraction=0.33,
         remainder="trail",
     ),
-    "prior96_rev2of3_p50_trail_combined": ExitPlan(
+    "swing48_rev1_p50_be_retest1": ExitPlan(
         "target_partial",
-        "prior96",
+        "swing48",
+        confirmation="reversal1",
+        target_action="partial",
+        invalidation="retest1",
+        partial_fraction=0.50,
+        remainder="breakeven",
+    ),
+    "swing96_rev2of3_p33_trail_boundary2": ExitPlan(
+        "target_partial",
+        "swing96",
         confirmation="reversal2of3",
         target_action="partial",
-        invalidation="combined1",
-        partial_fraction=0.50,
+        invalidation="boundary2",
+        partial_fraction=0.33,
         remainder="trail",
     ),
-    "measured_half_touch_p33_be_level2": ExitPlan(
+    "vp_hvn_touch_p33_be_retest1": ExitPlan(
         "target_partial",
-        "measured_half",
+        "vp_hvn",
         confirmation="touch",
         target_action="partial",
-        invalidation="level2",
+        invalidation="retest1",
         partial_fraction=0.33,
         remainder="breakeven",
     ),
-    "measured_half_rev1_p50_trail_context2": ExitPlan(
+    "vp_hvn_rev1_p50_trail_boundary2": ExitPlan(
+        "target_partial",
+        "vp_hvn",
+        confirmation="reversal1",
+        target_action="partial",
+        invalidation="boundary2",
+        partial_fraction=0.50,
+        remainder="trail",
+    ),
+    "vp_vah_rev1_p33_trail_retest2": ExitPlan(
+        "target_partial",
+        "vp_vah",
+        confirmation="reversal1",
+        target_action="partial",
+        invalidation="retest2",
+        partial_fraction=0.33,
+        remainder="trail",
+    ),
+    "measured_half_touch_p33_be_boundary2": ExitPlan(
+        "target_partial",
+        "measured_half",
+        confirmation="touch",
+        target_action="partial",
+        invalidation="boundary2",
+        partial_fraction=0.33,
+        remainder="breakeven",
+    ),
+    "measured_half_rev1_p50_trail_retest1": ExitPlan(
         "target_partial",
         "measured_half",
         confirmation="reversal1",
         target_action="partial",
-        invalidation="context2",
+        invalidation="retest1",
         partial_fraction=0.50,
         remainder="trail",
     ),
-    "measured_full_rev1_p33_trail_combined": ExitPlan(
-        "target_partial",
-        "measured_full",
-        confirmation="reversal1",
-        target_action="partial",
-        invalidation="combined1",
-        partial_fraction=0.33,
-        remainder="trail",
-    ),
-    "nearest_rev1_p50_trail_combined": ExitPlan(
+    "nearest_rev1_p33_trail_boundary2": ExitPlan(
         "target_partial",
         "nearest",
         confirmation="reversal1",
         target_action="partial",
-        invalidation="combined1",
-        partial_fraction=0.50,
+        invalidation="boundary2",
+        partial_fraction=0.33,
         remainder="trail",
     ),
-    "level1_reduce33_hvn": ExitPlan(
+    "boundary1_reduce33_period_nearest": ExitPlan(
         "invalidation_reduce",
-        "hvn",
+        "period_nearest",
         confirmation="touch",
         target_action="full",
-        invalidation="level1",
+        invalidation="boundary1",
         invalidation_action="partial",
         partial_fraction=0.33,
         remainder="target",
     ),
-    "context2_reduce33_measured": ExitPlan(
+    "retest1_reduce50_vp_hvn": ExitPlan(
         "invalidation_reduce",
-        "measured_half",
+        "vp_hvn",
         confirmation="touch",
         target_action="full",
-        invalidation="context2",
-        invalidation_action="partial",
-        partial_fraction=0.33,
-        remainder="target",
-    ),
-    "combined1_reduce50_nearest": ExitPlan(
-        "invalidation_reduce",
-        "nearest",
-        confirmation="touch",
-        target_action="full",
-        invalidation="combined1",
+        invalidation="retest1",
         invalidation_action="partial",
         partial_fraction=0.50,
         remainder="target",
     ),
-    "hvn_touch_tighten_level2": ExitPlan(
+    "boundary2_reduce33_measured_half": ExitPlan(
+        "invalidation_reduce",
+        "measured_half",
+        confirmation="touch",
+        target_action="full",
+        invalidation="boundary2",
+        invalidation_action="partial",
+        partial_fraction=0.33,
+        remainder="target",
+    ),
+    "period_nearest_touch_tighten_boundary2": ExitPlan(
         "target_tighten",
-        "hvn",
+        "period_nearest",
         confirmation="touch",
         target_action="tighten",
-        invalidation="level2",
+        invalidation="boundary2",
         invalidation_action="full",
         remainder="tighten",
     ),
-    "measured_half_touch_tighten_combined": ExitPlan(
+    "vp_hvn_touch_tighten_retest1": ExitPlan(
+        "target_tighten",
+        "vp_hvn",
+        confirmation="touch",
+        target_action="tighten",
+        invalidation="retest1",
+        invalidation_action="full",
+        remainder="tighten",
+    ),
+    "measured_half_touch_tighten_boundary2": ExitPlan(
         "target_tighten",
         "measured_half",
         confirmation="touch",
         target_action="tighten",
-        invalidation="combined1",
+        invalidation="boundary2",
         invalidation_action="full",
         remainder="tighten",
     ),
-    "hvn_then_measured_runner": ExitPlan(
+    "period_nearest_then_swing96_runner": ExitPlan(
         "dual_target",
-        "hvn",
-        "measured_full",
+        "period_nearest",
+        "swing96",
         "touch",
         "partial",
-        "combined1",
+        "boundary2",
         "full",
         0.33,
         "trail",
     ),
-    "prior48_then_measured_runner": ExitPlan(
+    "vp_hvn_then_measured_runner": ExitPlan(
         "dual_target",
-        "prior48",
+        "vp_hvn",
         "measured_full",
         "touch",
         "partial",
-        "level2",
+        "retest2",
         "full",
         0.50,
         "trail",
     ),
-    "progress48_nearest": ExitPlan(
+    "progress24_nearest": ExitPlan(
         "progress_failure",
         "nearest",
         confirmation="touch",
         target_action="full",
-        invalidation="combined1",
+        invalidation="boundary2",
         invalidation_action="full",
-        progress_candles=48,
+        progress_candles=24,
     ),
-    "progress96_measured": ExitPlan(
+    "progress48_measured": ExitPlan(
         "progress_failure",
         "measured_full",
         confirmation="touch",
         target_action="full",
-        invalidation="combined1",
+        invalidation="retest2",
         invalidation_action="full",
-        progress_candles=96,
+        progress_candles=48,
     ),
 }
 
 
 TARGET_PROVIDER_CHAINS: dict[str, tuple[str, ...]] = {
-    "hvn": ("hvn", "vah", "prior48", "measured_half"),
-    "vah": ("vah", "hvn", "prior48", "measured_half"),
-    "prior48": ("prior48", "hvn", "measured_half"),
-    "prior96": ("prior96", "prior48", "hvn", "measured_half"),
-    "measured_half": ("measured_half", "prior48", "hvn"),
-    "measured_full": ("measured_full", "prior96", "hvn"),
-    "nearest": ("hvn", "vah", "prior48", "prior96", "measured_half", "measured_full"),
+    "period_nearest": ("prior_day", "prior_week", "swing48", "vp_hvn", "measured_half"),
+    "prior_week": ("prior_week", "swing48", "vp_hvn", "measured_half"),
+    "swing48": ("swing48", "swing96", "vp_hvn", "measured_half"),
+    "swing96": ("swing96", "swing168", "vp_hvn", "measured_full"),
+    "vp_hvn": ("vp_hvn", "vp_vah", "swing48", "measured_half"),
+    "vp_vah": ("vp_vah", "vp_hvn", "swing48", "measured_half"),
+    "measured_half": ("measured_half", "swing48", "vp_hvn"),
+    "measured_full": ("measured_full", "swing96", "vp_hvn"),
+    "nearest": (
+        "prior_day",
+        "prior_week",
+        "swing48",
+        "swing96",
+        "swing168",
+        "vp_hvn",
+        "vp_vah",
+        "measured_half",
+        "measured_full",
+    ),
 }
 
 
-class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
+class Sieve3V2IntegratedFromPriorMonthHighBreakoutLong(IStrategy):
     INTERFACE_VERSION = 3
     timeframe = "1h"
-    startup_candle_count = 220
+    startup_candle_count = 336
     process_only_new_candles = True
     can_short = False
 
@@ -503,7 +580,9 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
     exit_profit_only = False
     ignore_roi_if_entry_signal = False
 
-    use_sieve2_vp_guard = BooleanParameter(default=False, space="buy", optimize=False, load=False)
+    use_sieve2_vp_guard = BooleanParameter(
+        default=False, space="buy", optimize=False, load=False
+    )
     sieve2_vp_guard_mode = CategoricalParameter(
         list(SIEVE2_VP_GUARD_MODES),
         default="score_or_context",
@@ -518,10 +597,18 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
         [24, 36, 48], default=36, space="buy", optimize=False, load=False
     )
     sieve2_vp_score_min = CategoricalParameter(
-        [0.15, 0.25, 0.35, 0.50], default=0.25, space="buy", optimize=False, load=False
+        [0.15, 0.25, 0.35, 0.50],
+        default=0.25,
+        space="buy",
+        optimize=False,
+        load=False,
     )
     sieve2_vp_context_min = CategoricalParameter(
-        [0.18, 0.28, 0.38, 0.50], default=0.28, space="buy", optimize=False, load=False
+        [0.18, 0.28, 0.38, 0.50],
+        default=0.28,
+        space="buy",
+        optimize=False,
+        load=False,
     )
     use_sieve2_market_guard = BooleanParameter(
         default=False, space="buy", optimize=False, load=False
@@ -537,10 +624,18 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
         [12, 24, 48, 96], default=24, space="buy", optimize=False, load=False
     )
     sieve2_market_pressure_min = CategoricalParameter(
-        [0.03, 0.07, 0.12, 0.18, 0.25], default=0.07, space="buy", optimize=False, load=False
+        [0.03, 0.07, 0.12, 0.18, 0.25],
+        default=0.07,
+        space="buy",
+        optimize=False,
+        load=False,
     )
     sieve2_market_trend_min = CategoricalParameter(
-        [0.0, 0.25, 0.50, 0.80], default=0.25, space="buy", optimize=False, load=False
+        [0.0, 0.25, 0.50, 0.80],
+        default=0.25,
+        space="buy",
+        optimize=False,
+        load=False,
     )
     sieve2_rs_benchmark_pair = CategoricalParameter(
         ["BTC/USDT:USDT", "ETH/USDT:USDT"],
@@ -550,102 +645,262 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
         load=False,
     )
     sieve2_rs_score_min = CategoricalParameter(
-        [0.35, 0.45, 0.55, 0.65], default=0.45, space="buy", optimize=False, load=False
+        [0.35, 0.45, 0.55, 0.65],
+        default=0.45,
+        space="buy",
+        optimize=False,
+        load=False,
     )
 
-    use_volume_guard = BooleanParameter(default=True, space="buy", optimize=False, load=False)
-    volume_guard_window = CategoricalParameter(
+    breakout_buffer_pct = CategoricalParameter(
+        [0.0, 0.003, 0.004, 0.006, 0.012],
+        default=0.003,
+        space="buy",
+        optimize=False,
+        load=False,
+    )
+    reclaim_buffer_pct = CategoricalParameter(
+        [0.0, 0.006, 0.012, 0.02],
+        default=0.006,
+        space="buy",
+        optimize=False,
+        load=False,
+    )
+    sweep_buffer_pct = CategoricalParameter(
+        [0.0, 0.006, 0.012, 0.02],
+        default=0.006,
+        space="buy",
+        optimize=False,
+        load=False,
+    )
+    zone_near_pct = CategoricalParameter(
+        [0.005, 0.01, 0.02],
+        default=0.01,
+        space="buy",
+        optimize=False,
+        load=False,
+    )
+    rolling_level_lookback = CategoricalParameter(
+        [48, 72, 120, 168],
+        default=72,
+        space="buy",
+        optimize=False,
+        load=False,
+    )
+    equal_level_lookback = CategoricalParameter(
+        [48, 72, 120], default=72, space="buy", optimize=False, load=False
+    )
+    equal_level_tolerance_pct = CategoricalParameter(
+        [0.003, 0.006, 0.012],
+        default=0.006,
+        space="buy",
+        optimize=False,
+        load=False,
+    )
+    equal_level_min_touches = CategoricalParameter(
+        [2, 3, 4], default=2, space="buy", optimize=False, load=False
+    )
+    confluence_period = CategoricalParameter(
+        list(PERIOD_CHOICES),
+        default="day",
+        space="buy",
+        optimize=False,
+        load=False,
+    )
+    avwap_anchor_lookback = CategoricalParameter(
+        [72, 120, 240], default=120, space="buy", optimize=False, load=False
+    )
+    avwap_band_mult = CategoricalParameter(
+        [0.75, 1.25, 2.0],
+        default=1.25,
+        space="buy",
+        optimize=False,
+        load=False,
+    )
+    zone_impulse_window = IntParameter(
+        12, 96, default=36, space="buy", optimize=False, load=False
+    )
+    zone_impulse_atr_min = DecimalParameter(
+        0.20,
+        3.00,
+        decimals=2,
+        default=0.80,
+        space="buy",
+        optimize=False,
+        load=False,
+    )
+    zone_body_fraction_min = DecimalParameter(
+        0.30,
+        0.90,
+        decimals=2,
+        default=0.55,
+        space="buy",
+        optimize=False,
+        load=False,
+    )
+    zone_volume_ratio_min = DecimalParameter(
+        0.00,
+        3.00,
+        decimals=2,
+        default=1.10,
+        space="buy",
+        optimize=False,
+        load=False,
+    )
+    zone_max_age_bars = CategoricalParameter(
+        [24, 72, 168], default=72, space="buy", optimize=False, load=False
+    )
+    use_volume_guard = BooleanParameter(
+        default=True, space="buy", optimize=False, load=False
+    )
+    volume_window = CategoricalParameter(
         [12, 24, 48], default=24, space="buy", optimize=False, load=False
     )
     volume_ratio_min = CategoricalParameter(
-        [0.8, 1.0, 1.3, 1.6], default=1.6, space="buy", optimize=False, load=False
-    )
-    use_pressure_guard = BooleanParameter(default=True, space="buy", optimize=False, load=False)
-    pressure_window = CategoricalParameter(
-        [12, 24, 48], default=24, space="buy", optimize=False, load=False
+        [0.8, 1.0, 1.3, 1.6],
+        default=1.3,
+        space="buy",
+        optimize=False,
+        load=False,
     )
     pressure_min = CategoricalParameter(
-        [0.05, 0.1, 0.15, 0.2, 0.35], default=0.15, space="buy", optimize=False, load=False
-    )
-    use_accumulation_guard = BooleanParameter(
-        default=False, space="buy", optimize=False, load=False
-    )
-    use_body_direction_guard = BooleanParameter(
-        default=False, space="buy", optimize=False, load=False
+        [0.05, 0.1, 0.2, 0.35],
+        default=0.35,
+        space="buy",
+        optimize=False,
+        load=False,
     )
     use_close_direction_guard = BooleanParameter(
         default=False, space="buy", optimize=False, load=False
     )
-
-    vp_window = CategoricalParameter(
-        [48, 96, 144], default=96, space="buy", optimize=False, load=False
+    vp_window = IntParameter(
+        24, 168, default=96, space="buy", optimize=False, load=False
     )
-    vp_bins = CategoricalParameter(
-        [36, 48, 72], default=48, space="buy", optimize=False, load=False
-    )
-    vp_value_area_pct = CategoricalParameter(
-        [0.65, 0.70, 0.75], default=0.70, space="buy", optimize=False, load=False
+    vp_bins = IntParameter(24, 72, default=48, space="buy", optimize=False, load=False)
+    vp_value_area_pct = DecimalParameter(
+        0.55,
+        0.85,
+        decimals=2,
+        default=0.70,
+        space="buy",
+        optimize=False,
+        load=False,
     )
     vp_price_source = CategoricalParameter(
-        ["hlc3", "ohlc4"], default="hlc3", space="buy", optimize=False, load=False
+        list(PRICE_SOURCE_CHOICES),
+        default="hlc3",
+        space="buy",
+        optimize=False,
+        load=False,
     )
-    vp_smooth_bins = CategoricalParameter(
-        [2, 3, 4], default=3, space="buy", optimize=False, load=False
+    vp_smooth_bins = IntParameter(
+        1, 6, default=3, space="buy", optimize=False, load=False
     )
-    vp_hvn_threshold = CategoricalParameter(
-        [0.65, 0.70, 0.78], default=0.70, space="buy", optimize=False, load=False
+    vp_hvn_threshold = DecimalParameter(
+        0.50,
+        0.90,
+        decimals=2,
+        default=0.70,
+        space="buy",
+        optimize=False,
+        load=False,
     )
-    vp_lvn_threshold = CategoricalParameter(
-        [0.25, 0.35, 0.45], default=0.35, space="buy", optimize=False, load=False
+    vp_lvn_threshold = DecimalParameter(
+        0.10,
+        0.55,
+        decimals=2,
+        default=0.35,
+        space="buy",
+        optimize=False,
+        load=False,
     )
-    vp_pressure_delta_min = CategoricalParameter(
-        [0.0, 0.05, 0.1], default=0.05, space="buy", optimize=False, load=False
+    vp_pressure_delta_min = DecimalParameter(
+        0.00,
+        0.35,
+        decimals=2,
+        default=0.05,
+        space="buy",
+        optimize=False,
+        load=False,
     )
     vp_node_near_pct = CategoricalParameter(
-        [0.006, 0.010, 0.016], default=0.010, space="buy", optimize=False, load=False
+        [0.005, 0.01, 0.02],
+        default=0.01,
+        space="buy",
+        optimize=False,
+        load=False,
     )
-    vp_volume_percentile_min = CategoricalParameter(
-        [0.45, 0.55, 0.65], default=0.55, space="buy", optimize=False, load=False
+    vp_volume_percentile_min = DecimalParameter(
+        0.00,
+        0.90,
+        decimals=2,
+        default=0.55,
+        space="buy",
+        optimize=False,
+        load=False,
     )
-    vp_score_window = CategoricalParameter(
-        [24, 48, 72], default=48, space="buy", optimize=False, load=False
+    vp_score_window = IntParameter(
+        12, 120, default=48, space="buy", optimize=False, load=False
     )
     vp_fast_traverse_atr_mult = CategoricalParameter(
-        [0.9, 1.2, 1.6], default=1.2, space="buy", optimize=False, load=False
+        [0.8, 1.2, 1.8],
+        default=1.2,
+        space="buy",
+        optimize=False,
+        load=False,
     )
     vp_entry_score_margin = CategoricalParameter(
-        [0.0, 0.02, 0.05], default=0.02, space="buy", optimize=False, load=False
+        [0.0, 0.02, 0.05, 0.1],
+        default=0.02,
+        space="buy",
+        optimize=False,
+        load=False,
     )
-    vp_score_min = CategoricalParameter(
-        [0.15, 0.25, 0.4], default=0.4, space="buy", optimize=False, load=False
+    use_vp_1h_guard = BooleanParameter(
+        default=False, space="buy", optimize=False, load=False
     )
-    vp_context_min = CategoricalParameter(
-        [0.2, 0.28, 0.45], default=0.28, space="buy", optimize=False, load=False
+    vp_guard_mode = CategoricalParameter(
+        list(VP_GUARD_MODES),
+        default="score_or_context",
+        space="buy",
+        optimize=False,
+        load=False,
     )
-    vp_level_buffer_pct = CategoricalParameter(
-        [0.003, 0.006, 0.010, 0.016], default=0.016, space="buy", optimize=False, load=False
+    vp_score_min = DecimalParameter(
+        0.00,
+        1.00,
+        decimals=2,
+        default=0.25,
+        space="buy",
+        optimize=False,
+        load=False,
     )
-
-    pivot_strength = CategoricalParameter(
-        [2, 3, 4], default=2, space="buy", optimize=False, load=False
+    vp_context_min = DecimalParameter(
+        0.00,
+        1.00,
+        decimals=2,
+        default=0.28,
+        space="buy",
+        optimize=False,
+        load=False,
     )
-    min_line_score = CategoricalParameter(
-        [0.4, 0.5, 0.6], default=0.6, space="buy", optimize=False, load=False
+    use_vp_4h_guard = BooleanParameter(
+        default=False, space="buy", optimize=False, load=False
     )
-    min_active_bars = CategoricalParameter(
-        [4, 8, 16], default=8, space="buy", optimize=False, load=False
+    vp_4h_window = IntParameter(
+        12, 96, default=48, space="buy", optimize=False, load=False
     )
-    max_distance_atr = CategoricalParameter(
-        [3.0, 6.0, 10.0], default=3.0, space="buy", optimize=False, load=False
+    vp_4h_bins = IntParameter(
+        16, 64, default=36, space="buy", optimize=False, load=False
     )
-    proximity_rank_weight = CategoricalParameter(
-        [0.0, 0.05, 0.1], default=0.05, space="buy", optimize=False, load=False
+    use_vp_1d_guard = BooleanParameter(
+        default=False, space="buy", optimize=False, load=False
     )
-    line_buffer_pct = CategoricalParameter(
-        [0.0, 0.003, 0.006, 0.012], default=0.0, space="buy", optimize=False, load=False
+    vp_1d_window = IntParameter(
+        10, 84, default=30, space="buy", optimize=False, load=False
     )
-    line_slope_min_pct = CategoricalParameter(
-        [0.0, 0.0005, 0.0015], default=0.0005, space="buy", optimize=False, load=False
+    vp_1d_bins = IntParameter(
+        16, 64, default=36, space="buy", optimize=False, load=False
     )
 
     exit_policy_plan = CategoricalParameter(
@@ -683,42 +938,73 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
     def informative_pairs(self) -> list[tuple[str, str]]:
         return []
 
-    def _common_guards(self, dataframe: DataFrame) -> Series:
-        guard = pd.Series(True, index=dataframe.index, dtype="bool")
-        close = _num(dataframe, "close")
-        volume = _num(dataframe, "volume").clip(lower=0.0)
+    @staticmethod
+    def _period_key(dates: Series, period: str) -> Series:
+        if period == "week":
+            iso = dates.dt.isocalendar()
+            return iso["year"].astype("string").str.cat(
+                iso["week"].astype("string").str.zfill(2),
+                sep="-",
+            )
+        if period == "month":
+            return dates.dt.strftime("%Y-%m")
+        return dates.dt.strftime("%Y-%m-%d")
 
-        volume_window = int(self.volume_guard_window.value)
-        volume_baseline = (
-            volume.shift(1)
-            .rolling(volume_window, min_periods=max(2, volume_window // 3))
-            .mean()
-            .replace(0.0, np.nan)
+    def _add_volume_pressure(self, dataframe: DataFrame) -> DataFrame:
+        window = int(self.volume_window.value)
+        volume_mean = _num(dataframe, "volume").rolling(
+            window,
+            min_periods=max(2, window // 3),
+        ).mean()
+        candle_range = _num(dataframe, "high").sub(_num(dataframe, "low")).replace(
+            0.0,
+            np.nan,
         )
-        guard &= volume.ge(volume_baseline.mul(float(self.volume_ratio_min.value)))
+        close_location = (
+            _num(dataframe, "close")
+            .sub(_num(dataframe, "low"))
+            .div(candle_range)
+            .clip(0.0, 1.0)
+        )
+        dataframe["entry_close_location"] = close_location
+        dataframe["entry_volume_ratio"] = _num(dataframe, "volume").div(
+            volume_mean.replace(0.0, np.nan)
+        )
+        dataframe["entry_pressure"] = close_location.sub(0.5).mul(2.0)
+        return dataframe
 
-        open_ = _num(dataframe, "open")
+    def _add_prior_period_levels(self, dataframe: DataFrame) -> DataFrame:
+        dates = pd.to_datetime(dataframe["date"], utc=True, errors="coerce")
         high = _num(dataframe, "high")
         low = _num(dataframe, "low")
-        candle_range = (high - low).replace(0.0, np.nan)
-        body_pressure = ((close - open_) / candle_range).clip(-1.0, 1.0)
-        close_location = (((close - low) / candle_range) * 2.0 - 1.0).clip(-1.0, 1.0)
-        pressure = ((body_pressure.fillna(0.0) + close_location.fillna(0.0)) / 2.0).clip(-1.0, 1.0)
-        directional_volume = (pressure * volume.fillna(0.0)).fillna(0.0)
-        pressure_window = int(self.pressure_window.value)
-        pressure_baseline = (
-            volume.rolling(pressure_window, min_periods=max(2, pressure_window // 3))
-            .sum()
-            .replace(0.0, np.nan)
-        )
-        pressure_ratio = (
-            directional_volume.rolling(
-                pressure_window, min_periods=max(2, pressure_window // 3)
-            ).sum()
-            / pressure_baseline
-        )
-        guard &= pressure_ratio.ge(float(self.pressure_min.value))
-        return guard.fillna(False)
+        for period in PERIOD_CHOICES:
+            key = self._period_key(dates, period)
+            grouped = (
+                pd.DataFrame({"period": key, "high": high, "low": low})
+                .groupby("period", sort=True)
+                .agg(period_high=("high", "max"), period_low=("low", "min"))
+            )
+            grouped["prior_high"] = grouped["period_high"].shift(1)
+            grouped["prior_low"] = grouped["period_low"].shift(1)
+            dataframe[f"prior_{period}_high"] = key.map(grouped["prior_high"]).astype(
+                "float64"
+            )
+            dataframe[f"prior_{period}_low"] = key.map(grouped["prior_low"]).astype(
+                "float64"
+            )
+        return dataframe
+
+    @staticmethod
+    def _add_structural_targets(dataframe: DataFrame) -> DataFrame:
+        high = _num(dataframe, "high").shift(1)
+        low = _num(dataframe, "low").shift(1)
+        for lookback in (48, 96, 168):
+            dataframe[f"s3v2_swing_high_{lookback}"] = high.rolling(
+                lookback,
+                min_periods=max(4, lookback // 4),
+            ).max()
+        dataframe["s3v2_swing_low_48"] = low.rolling(48, min_periods=12).min()
+        return dataframe
 
     def _add_vp(self, dataframe: DataFrame) -> DataFrame:
         return add_volume_profile(
@@ -749,25 +1035,37 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
         candle_range = (high - low).replace(0.0, np.nan)
         body_pressure = ((close - open_) / candle_range).clip(-1.0, 1.0)
         close_location = (((close - low) / candle_range) * 2.0 - 1.0).clip(-1.0, 1.0)
-        pressure = ((body_pressure.fillna(0.0) + close_location.fillna(0.0)) / 2.0).clip(-1.0, 1.0)
+        pressure = (
+            (body_pressure.fillna(0.0) + close_location.fillna(0.0)) / 2.0
+        ).clip(-1.0, 1.0)
         directional_volume = (pressure * volume).fillna(0.0)
         baseline = (
-            volume.rolling(window, min_periods=max(2, window // 3)).sum().replace(0.0, np.nan)
+            volume.rolling(window, min_periods=max(2, window // 3))
+            .sum()
+            .replace(0.0, np.nan)
         )
         returns = close.pct_change(fill_method=None)
         window_return = close.pct_change(window, fill_method=None)
-        volatility = returns.rolling(window, min_periods=max(3, window // 3)).std() * np.sqrt(
-            float(window)
-        )
+        volatility = returns.rolling(
+            window,
+            min_periods=max(3, window // 3),
+        ).std() * np.sqrt(float(window))
         frame["s2m_pressure_ratio"] = (
-            directional_volume.rolling(window, min_periods=max(2, window // 3)).sum() / baseline
+            directional_volume.rolling(
+                window,
+                min_periods=max(2, window // 3),
+            ).sum()
+            / baseline
         )
         frame["s2m_trend_z"] = window_return / volatility.replace(0.0, np.nan)
         frame["s2m_close_location"] = close_location
         return frame
 
     def _add_sieve2_guard_indicators(self, dataframe: DataFrame) -> DataFrame:
-        frame = self._add_market_state(dataframe.copy(), int(self.sieve2_market_window.value))
+        frame = self._add_market_state(
+            dataframe.copy(),
+            int(self.sieve2_market_window.value),
+        )
         return add_volume_profile(
             frame,
             window=int(self.sieve2_vp_window.value),
@@ -810,7 +1108,9 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
             ).fillna(False)
         if mode == "rejection_confirm":
             rejection = low.le(prior_val) & close.gt(prior_val) & close.le(prior_vah)
-            return (rejection & (base_score | base_context | node_entry | node_hold)).fillna(False)
+            return (
+                rejection & (base_score | base_context | node_entry | node_hold)
+            ).fillna(False)
         if mode == "poc_hvn_reject":
             return (node_entry | (base_score & base_context)).fillna(False)
         if mode == "prior_level_confirm":
@@ -839,10 +1139,16 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
         if mode == "avoid_adverse_pressure":
             return (avoids_adverse_pressure & avoids_adverse_trend).fillna(False)
         if mode == "avoid_chop":
-            return (pressure.abs().ge(pressure_min) | trend.abs().ge(trend_min)).fillna(False)
+            return (pressure.abs().ge(pressure_min) | trend.abs().ge(trend_min)).fillna(
+                False
+            )
         return (directional_pressure | trend_state).fillna(False)
 
-    def _apply_sieve2_optional_guards(self, dataframe: DataFrame, condition: Series) -> Series:
+    def _apply_sieve2_optional_guards(
+        self,
+        dataframe: DataFrame,
+        condition: Series,
+    ) -> Series:
         guarded = pd.Series(condition, index=dataframe.index).fillna(False).astype(bool)
         if bool(self.use_sieve2_vp_guard.value):
             guarded &= self._sieve2_vp_guard(
@@ -860,62 +1166,90 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
             )
         return guarded.fillna(False)
 
-    def _vp_confirm(self, dataframe: DataFrame) -> Series:
-        score_long = _num(dataframe, "vp_score_long")
-        bull_context = _num(dataframe, "vp_context_score_bull")
-        bear_context = _num(dataframe, "vp_context_score_bear")
-        market = _num(dataframe, "vp_market_context")
-        return (
-            score_long.ge(float(self.vp_score_min.value))
-            & bull_context.ge(float(self.vp_context_min.value))
-            & bull_context.ge(bear_context)
-            & market.ge(0.0)
-        )
+    @staticmethod
+    def _score_guard(
+        dataframe: DataFrame,
+        prefix: str,
+        score_min: float,
+    ) -> Series:
+        score = _num(dataframe, f"{prefix}_score_long")
+        opposite = _num(dataframe, f"{prefix}_score_short")
+        return score.ge(score_min) & score.ge(opposite)
 
-    def _add_tlv2(self, dataframe: DataFrame) -> DataFrame:
-        return add_trendline_projection_v2(
-            dataframe,
-            timeframe=self.timeframe,
-            pivot_strength=int(self.pivot_strength.value),
-            raw_line_output_count=1,
-            min_output_line_score=float(self.min_line_score.value),
-            min_output_active_bars=int(self.min_active_bars.value),
-            max_active_line_distance_atr_mult=float(self.max_distance_atr.value),
-            proximity_rank_weight=float(self.proximity_rank_weight.value),
-            output_prefix="tlv2",
-        )
+    @staticmethod
+    def _context_guard(
+        dataframe: DataFrame,
+        prefix: str,
+        context_min: float,
+    ) -> Series:
+        context = _num(dataframe, f"{prefix}_context_score_bull")
+        opposite = _num(dataframe, f"{prefix}_context_score_bear")
+        market_ok = _num(dataframe, f"{prefix}_market_context").ge(0)
+        return context.ge(context_min) & context.ge(opposite) & market_ok
 
-    def _tlv2_trigger(self, dataframe: DataFrame) -> Series:
-        close = _num(dataframe, "close")
-        line = _num(dataframe, "tlv2_resistance_line_rank0", np.nan)
-        score = _num(dataframe, "tlv2_resistance_score_rank0")
-        distance = _num(dataframe, "tlv2_resistance_distance_atr_rank0", np.nan)
-        active = score.ge(float(self.min_line_score.value)) & distance.le(
-            float(self.max_distance_atr.value)
-        )
-        return active & _cross_above(close, line.mul(1.0 + float(self.line_buffer_pct.value)))
+    def _vp_guard(
+        self,
+        dataframe: DataFrame,
+        prefix: str,
+        mode: str,
+        score_min: float,
+        context_min: float,
+    ) -> Series:
+        score_ok = self._score_guard(dataframe, prefix, score_min)
+        context_ok = self._context_guard(dataframe, prefix, context_min)
+        balance_ok = _num(dataframe, f"{prefix}_context_score_balance").ge(context_min)
+        if mode == "score":
+            return score_ok
+        if mode == "context":
+            return context_ok
+        if mode == "score_or_context":
+            return score_ok | context_ok
+        if mode == "balance":
+            return balance_ok
+        return _num(dataframe, f"{prefix}_market_context").ge(0)
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         _ = metadata
-        frame = self._add_tlv2(dataframe)
+        frame = self._add_volume_pressure(dataframe)
+        frame = self._add_prior_period_levels(frame)
+        frame = self._add_structural_targets(frame)
         frame = self._add_vp(frame)
-        frame = self._add_sieve2_guard_indicators(frame)
-        high = _num(frame, "high")
-        low = _num(frame, "low")
-        frame["s3v2_prior_high_48"] = high.shift(1).rolling(48, min_periods=12).max()
-        frame["s3v2_prior_high_96"] = high.shift(1).rolling(96, min_periods=24).max()
-        frame["s3v2_prior_low_48"] = low.shift(1).rolling(48, min_periods=12).min()
-        return frame
+        return self._add_sieve2_guard_indicators(frame)
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         _ = metadata
         dataframe["enter_long"] = 0
         dataframe["enter_short"] = 0
         dataframe["enter_tag"] = None
-        condition = self._tlv2_trigger(dataframe) & self._vp_confirm(dataframe)
-        condition &= self._common_guards(dataframe)
+
+        close = _num(dataframe, "close")
+        level = _num(dataframe, "prior_month_high", np.nan)
+        trigger = level.mul(1.0 + float(self.breakout_buffer_pct.value))
+        condition = close.ge(trigger) & close.shift(1).lt(trigger.shift(1))
+        if bool(self.use_volume_guard.value):
+            condition &= _num(dataframe, "entry_volume_ratio").ge(
+                float(self.volume_ratio_min.value)
+            )
+            condition &= _num(dataframe, "entry_pressure").ge(
+                float(self.pressure_min.value)
+            )
+        if bool(self.use_close_direction_guard.value):
+            condition &= close.gt(close.shift(1))
+        if bool(self.use_vp_1h_guard.value):
+            condition &= self._vp_guard(
+                dataframe,
+                "vp",
+                str(self.vp_guard_mode.value),
+                float(self.vp_score_min.value),
+                float(self.vp_context_min.value),
+            )
         condition = self._apply_sieve2_optional_guards(dataframe, condition)
-        valid = condition.fillna(False) & dataframe["volume"].gt(0.0) & dataframe["close"].notna()
+
+        valid = (
+            condition.fillna(False)
+            & dataframe["volume"].gt(0.0)
+            & dataframe["close"].notna()
+        )
         dataframe.loc[valid, "enter_long"] = 1
         dataframe.loc[valid, "enter_tag"] = ENTRY_TAG
         return dataframe
@@ -943,7 +1277,10 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
             return frame
         now = self._utc(current_time)
         dates = pd.to_datetime(frame["date"], utc=True, errors="coerce")
-        close_times = dates + pd.to_timedelta(timeframe_to_minutes(self.timeframe), unit="m")
+        close_times = dates + pd.to_timedelta(
+            timeframe_to_minutes(self.timeframe),
+            unit="m",
+        )
         return frame.loc[close_times.le(now)]
 
     def _analyzed_frame(self, pair: str, current_time: Any) -> DataFrame:
@@ -960,41 +1297,92 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
         return target
 
     def _frozen_targets(
-        self, row: Series | None, entry_rate: float
-    ) -> tuple[dict[str, float | None], dict[str, str | None], float | None, float | None]:
-        broken = _finite_float(row.get("tlv2_resistance_line_rank0")) if row is not None else None
-        support = _finite_float(row.get("s3v2_prior_low_48")) if row is not None else None
-        if support is not None and support >= entry_rate:
-            support = None
+        self,
+        row: Series | None,
+        entry_rate: float,
+    ) -> tuple[
+        dict[str, float | None],
+        dict[str, str | None],
+        float | None,
+        float | None,
+    ]:
+        boundary = _finite_float(row.get("prior_month_high")) if row is not None else None
+        if boundary is not None and boundary <= 0.0:
+            boundary = None
+        period_floor = _finite_float(row.get("prior_month_low")) if row is not None else None
+        if (
+            period_floor is not None
+            and (
+                period_floor <= 0.0
+                or period_floor >= entry_rate
+                or (boundary is not None and period_floor >= boundary)
+            )
+        ):
+            period_floor = None
 
         raw: dict[str, float | None] = {
-            "hvn": self._directional_target(row.get("vp_hvn_above"), entry_rate)
+            "prior_day": self._directional_target(
+                row.get("prior_day_high"),
+                entry_rate,
+            )
             if row is not None
             else None,
-            "vah": self._directional_target(row.get("vp_vah"), entry_rate)
+            "prior_week": self._directional_target(
+                row.get("prior_week_high"),
+                entry_rate,
+            )
             if row is not None
             else None,
-            "prior48": self._directional_target(row.get("s3v2_prior_high_48"), entry_rate)
+            "swing48": self._directional_target(
+                row.get("s3v2_swing_high_48"),
+                entry_rate,
+            )
             if row is not None
             else None,
-            "prior96": self._directional_target(row.get("s3v2_prior_high_96"), entry_rate)
+            "swing96": self._directional_target(
+                row.get("s3v2_swing_high_96"),
+                entry_rate,
+            )
+            if row is not None
+            else None,
+            "swing168": self._directional_target(
+                row.get("s3v2_swing_high_168"),
+                entry_rate,
+            )
+            if row is not None
+            else None,
+            "vp_hvn": self._directional_target(row.get("vp_hvn_above"), entry_rate)
+            if row is not None
+            else None,
+            "vp_vah": self._directional_target(row.get("vp_vah"), entry_rate)
             if row is not None
             else None,
             "measured_half": None,
             "measured_full": None,
         }
-        if broken is not None and support is not None and broken > support:
-            measured_range = broken - support
+        if boundary is not None and period_floor is not None:
+            monthly_range = boundary - period_floor
             raw["measured_half"] = self._directional_target(
-                broken + measured_range * 0.5, entry_rate
+                boundary + monthly_range * 0.5,
+                entry_rate,
             )
-            raw["measured_full"] = self._directional_target(broken + measured_range, entry_rate)
+            raw["measured_full"] = self._directional_target(
+                boundary + monthly_range,
+                entry_rate,
+            )
 
         targets: dict[str, float | None] = {}
         providers: dict[str, str | None] = {}
         for requested, chain in TARGET_PROVIDER_CHAINS.items():
             choices = [(name, raw.get(name)) for name in chain if raw.get(name) is not None]
-            if requested == "nearest" and choices:
+            period_choices = [
+                (name, raw.get(name))
+                for name in ("prior_day", "prior_week")
+                if raw.get(name) is not None
+            ]
+            if requested == "period_nearest" and period_choices:
+                provider, target = min(period_choices, key=lambda item: float(item[1]))
+            elif requested == "nearest" and choices:
                 provider, target = min(choices, key=lambda item: float(item[1]))
             elif choices:
                 provider, target = choices[0]
@@ -1002,7 +1390,7 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
                 provider, target = None, None
             targets[requested] = float(target) if target is not None else None
             providers[requested] = provider
-        return targets, providers, broken, support
+        return targets, providers, boundary, period_floor
 
     def _new_state(
         self,
@@ -1018,14 +1406,17 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
             placement_time = getattr(order, "order_date", None)
         frame = self._analyzed_frame(pair, placement_time or current_time)
         row = frame.iloc[-1] if not frame.empty else None
-        targets, providers, broken, support = self._frozen_targets(row, entry_rate)
+        targets, providers, boundary, period_floor = self._frozen_targets(row, entry_rate)
         plan = EXIT_PLANS[str(self.exit_policy_plan.value)]
         if plan.target_1 and plan.target_2:
             first = _finite_float(targets.get(plan.target_1))
             second = _finite_float(targets.get(plan.target_2))
-            if first is not None and (second is None or second <= first * (1.0 + MIN_TARGET_MOVE)):
+            if first is not None and (
+                second is None or second <= first * (1.0 + MIN_TARGET_MOVE)
+            ):
                 targets[plan.target_2] = None
                 providers[plan.target_2] = None
+
         candle_date = None
         if row is not None and "date" in row.index:
             timestamp = self._utc(row["date"])
@@ -1045,12 +1436,13 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
             "entry_filled_at": (
                 filled_timestamp.isoformat() if filled_timestamp is not None else None
             ),
-            "broken_resistance": broken,
-            "structural_support": support,
+            "breakout_boundary": boundary,
+            "period_floor": period_floor,
             "targets": targets,
             "target_providers": providers,
             "target_1_touched_at": None,
             "target_2_touched_at": None,
+            "retest_held_at": None,
             "partial_filled": False,
             "partial_filled_at": None,
             "partial_tag": None,
@@ -1187,17 +1579,17 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
     @staticmethod
     def _invalidation_event(
         mode: str,
-        level_1: bool,
-        level_2: bool,
-        context_2: bool,
-        combined_1: bool,
+        boundary_1: bool,
+        boundary_2: bool,
+        retest_1: bool,
+        retest_2: bool,
     ) -> bool:
         return {
             "none": False,
-            "level1": level_1,
-            "level2": level_2,
-            "context2": context_2,
-            "combined1": combined_1,
+            "boundary1": boundary_1,
+            "boundary2": boundary_2,
+            "retest1": retest_1,
+            "retest2": retest_2,
         }.get(mode, False)
 
     def _events(
@@ -1208,14 +1600,17 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
         current_time: datetime,
         current_rate: float,
         current_profit: float,
-    ) -> tuple[dict[str, bool], dict[str, Any]]:
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        _ = trade, current_time, current_rate
         plan = EXIT_PLANS[state["plan"]]
         targets = state.get("targets", {})
         target_frame = frame
         entry_filled_at = self._utc(state.get("entry_filled_at"))
         if entry_filled_at is not None and "date" in frame.columns:
             target_frame = frame.loc[
-                pd.to_datetime(frame["date"], utc=True, errors="coerce").ge(entry_filled_at)
+                pd.to_datetime(frame["date"], utc=True, errors="coerce").ge(
+                    entry_filled_at
+                )
             ]
         entry_rate = float(state.get("entry_rate") or 0.0)
         touched_1_at, confirmed_1 = self._confirmation(
@@ -1230,9 +1625,11 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
         partial_filled_at = self._utc(state.get("partial_filled_at"))
         if partial_filled_at is not None and "date" in target_frame.columns:
             target_2_frame = target_frame.loc[
-                pd.to_datetime(target_frame["date"], utc=True, errors="coerce").ge(
-                    partial_filled_at
-                )
+                pd.to_datetime(
+                    target_frame["date"],
+                    utc=True,
+                    errors="coerce",
+                ).ge(partial_filled_at)
             ]
         if state.get("partial_filled"):
             touched_2_at, confirmed_2 = self._confirmation(
@@ -1253,25 +1650,58 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
         }:
             state["phase"] = "TARGET_ZONE"
 
-        close = _num(frame, "close")
-        broken = _finite_float(state.get("broken_resistance"))
-        support = _finite_float(state.get("structural_support"))
-        if broken is None or frame.empty:
-            level_condition = pd.Series(False, index=frame.index, dtype="bool")
+        close = _num(target_frame, "close")
+        low = _num(target_frame, "low")
+        boundary = _finite_float(state.get("breakout_boundary"))
+        period_floor = _finite_float(state.get("period_floor"))
+        if boundary is None or target_frame.empty:
+            boundary_condition = pd.Series(False, index=target_frame.index, dtype="bool")
+            held_retest = pd.Series(False, index=target_frame.index, dtype="bool")
         else:
-            level_condition = close.lt(broken * (1.0 - LEVEL_BAND))
-        context_condition = _num(frame, "vp_context_score_bear").gt(
-            _num(frame, "vp_context_score_bull")
-        ) & _num(frame, "vp_market_context").lt(0.0)
-        level_1 = self._last_n(level_condition, 1)
-        level_2 = self._last_n(level_condition, 2)
-        context_1 = self._last_n(context_condition, 1)
-        context_2 = self._last_n(context_condition, 2)
-        combined_1 = level_1 and context_1
-        support_failure = bool(
-            support is not None
-            and not frame.empty
-            and float(close.iloc[-1]) < support * (1.0 - LEVEL_BAND)
+            boundary_condition = close.lt(boundary * (1.0 - LEVEL_BAND))
+            held_retest = low.le(boundary * (1.0 + RETEST_BAND)) & close.ge(
+                boundary * (1.0 - LEVEL_BAND)
+            )
+        dates = pd.to_datetime(
+            target_frame.get("date", pd.Series(index=target_frame.index, dtype="object")),
+            utc=True,
+            errors="coerce",
+        )
+        persisted_held_at = self._utc(state.get("retest_held_at"))
+        held_positions = np.flatnonzero((held_retest & dates.notna()).to_numpy())
+        observed_held_at = (
+            self._utc(dates.iloc[int(held_positions[0])])
+            if held_positions.size
+            else None
+        )
+        held_timestamps = [
+            timestamp
+            for timestamp in (persisted_held_at, observed_held_at)
+            if timestamp is not None
+        ]
+        if held_timestamps:
+            state["retest_held_at"] = min(held_timestamps).isoformat()
+        prior_hold_seen = pd.Series(False, index=target_frame.index, dtype="bool")
+        if persisted_held_at is not None:
+            prior_hold_seen |= dates.gt(persisted_held_at)
+        if observed_held_at is not None:
+            prior_hold_seen |= dates.gt(observed_held_at)
+        failed_retest = boundary_condition & prior_hold_seen
+
+        boundary_1 = self._last_n(boundary_condition, 1)
+        boundary_2 = self._last_n(boundary_condition, 2)
+        retest_1 = self._last_n(failed_retest, 1)
+        retest_2 = self._last_n(failed_retest, 2)
+        last_close = _finite_float(close.iloc[-1]) if not close.empty else None
+        floor_failure = bool(
+            period_floor is not None
+            and last_close is not None
+            and last_close < period_floor * (1.0 - LEVEL_BAND)
+        )
+        deep_boundary_failure = bool(
+            boundary is not None
+            and last_close is not None
+            and last_close < boundary * (1.0 - DEEP_FAILURE_BAND)
         )
 
         age_candles = len(target_frame)
@@ -1281,15 +1711,29 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
             if progress_high is not None and entry_rate > 0.0
             else 0.0
         )
+        stalled_near_boundary = bool(
+            boundary is not None
+            and last_close is not None
+            and last_close <= boundary * (1.0 + FOLLOW_THROUGH_MOVE)
+        )
         time_failure = bool(
-            plan.progress_candles and age_candles >= plan.progress_candles and favorable < 0.01
+            plan.progress_candles
+            and age_candles >= plan.progress_candles
+            and favorable < FOLLOW_THROUGH_MOVE
+            and stalled_near_boundary
         )
         return {
             "hard_invalidation": (
-                False if plan.role == "baseline" else support_failure or (level_2 and context_1)
+                False
+                if plan.role == "baseline"
+                else floor_failure or deep_boundary_failure
             ),
             "invalidation": self._invalidation_event(
-                plan.invalidation, level_1, level_2, context_2, combined_1
+                plan.invalidation,
+                boundary_1,
+                boundary_2,
+                retest_1,
+                retest_2,
             ),
             "target_1": confirmed_1,
             "target_2": confirmed_2,
@@ -1311,8 +1755,6 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
         state: dict[str, Any],
         events: dict[str, Any],
     ) -> ExitDecision:
-        if state.get("partial_pending"):
-            return ExitDecision("hold")
         if state.get("terminal_exit_pending"):
             return ExitDecision(
                 "full",
@@ -1328,6 +1770,27 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
             return ExitDecision("full", "s3v2_second_target")
         if plan.target_action == "full" and events.get("target_1"):
             return ExitDecision("full", "s3v2_target_full")
+        partial_decision = (
+            Sieve3V2IntegratedFromPriorMonthHighBreakoutLong._partial_decision(
+                plan,
+                state,
+                events,
+            )
+        )
+        if partial_decision is not None:
+            return partial_decision
+        if plan.target_action == "tighten" and events.get("target_1"):
+            return ExitDecision("tighten", tighten="target")
+        if plan.invalidation_action == "tighten" and events.get("invalidation"):
+            return ExitDecision("tighten", tighten="invalidation")
+        return ExitDecision("hold")
+
+    @staticmethod
+    def _partial_decision(
+        plan: ExitPlan,
+        state: dict[str, Any],
+        events: dict[str, Any],
+    ) -> ExitDecision | None:
         if (
             plan.target_action == "partial"
             and events.get("target_1")
@@ -1352,11 +1815,7 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
                 "s3v2_partial_invalidation",
                 plan.partial_fraction,
             )
-        if plan.target_action == "tighten" and events.get("target_1"):
-            return ExitDecision("tighten", tighten="target")
-        if plan.invalidation_action == "tighten" and events.get("invalidation"):
-            return ExitDecision("tighten", tighten="invalidation")
-        return ExitDecision("hold")
+        return None
 
     def _decision_context(
         self,
@@ -1373,23 +1832,26 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
         frame = self._analyzed_frame(pair, current_time)
         partial_pending = self._has_pending_partial(trade)
         events, state = self._events(
-            trade, state, frame, current_time, current_rate, current_profit
+            trade,
+            state,
+            frame,
+            current_time,
+            current_rate,
+            current_profit,
         )
-        plan = EXIT_PLANS[state["plan"]]
         state["partial_pending"] = partial_pending
+        plan = EXIT_PLANS[state["plan"]]
+        decision = self.evaluate_policy(plan, state, events)
         if partial_pending:
             state["phase"] = "REALIZATION_PENDING"
-            evaluable_state = dict(state)
-            evaluable_state["partial_pending"] = False
-            deferred = self.evaluate_policy(plan, evaluable_state, events)
-            if deferred.action == "full":
+            if decision.action == "full" and not state.get("terminal_exit_pending"):
                 state["terminal_exit_pending"] = True
-                state["terminal_exit_tag"] = (
-                    deferred.tag or "s3v2_deferred_full_exit"
-                )
+                state["terminal_exit_tag"] = decision.tag or "s3v2_deferred_full_exit"
+            elif state.get("terminal_exit_pending") and not state.get("terminal_exit_tag"):
+                state["terminal_exit_tag"] = decision.tag or "s3v2_hard_invalidation"
         if state != previous:
             self._save_state(trade, state)
-        return plan, state, events, self.evaluate_policy(plan, state, events)
+        return plan, state, events, decision
 
     def custom_exit(
         self,
@@ -1401,7 +1863,13 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
         **kwargs: Any,
     ) -> str | bool | None:
         _ = kwargs
-        context = self._decision_context(pair, trade, current_time, current_rate, current_profit)
+        context = self._decision_context(
+            pair,
+            trade,
+            current_time,
+            current_rate,
+            current_profit,
+        )
         if context is None:
             return None
         plan, state, _, decision = context
@@ -1445,8 +1913,6 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
         **kwargs: Any,
     ) -> float | None | tuple[float | None, str | None]:
         _ = (
-            current_profit,
-            min_stake,
             max_stake,
             current_entry_rate,
             current_exit_rate,
@@ -1481,8 +1947,13 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
         remaining = max(0.0, target_stake - realized)
         if remaining <= max(1e-8, target_stake * 0.005):
             return None
+        request = min(remaining, stake)
+        if min_stake is not None and 0.0 < stake - request < float(min_stake):
+            request = max(0.0, stake - float(min_stake))
+        if request <= 0.0 or request >= stake:
+            return None
         self._save_state(trade, state)
-        return -min(remaining, stake), tag
+        return -request, tag
 
     @staticmethod
     def _desired_stop_price(
@@ -1493,9 +1964,9 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
     ) -> float:
         entry_rate = float(state.get("entry_rate") or current_rate)
         stop_price = entry_rate * (1.0 - plan.hard_stop)
-        support = _finite_float(state.get("structural_support"))
-        if plan.role != "baseline" and support is not None and support < entry_rate:
-            stop_price = max(stop_price, support * (1.0 - LEVEL_BAND))
+        period_floor = _finite_float(state.get("period_floor"))
+        if plan.role != "baseline" and period_floor is not None and period_floor < entry_rate:
+            stop_price = max(stop_price, period_floor * (1.0 - LEVEL_BAND))
         if state.get("partial_filled"):
             if plan.remainder == "breakeven":
                 stop_price = max(stop_price, entry_rate * 1.001)
@@ -1506,9 +1977,9 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
             if target is not None:
                 stop_price = max(stop_price, target * 0.99)
         if decision.action == "tighten" and decision.tighten == "invalidation":
-            broken = _finite_float(state.get("broken_resistance"))
-            if broken is not None:
-                stop_price = max(stop_price, broken * (1.0 - LEVEL_BAND))
+            boundary = _finite_float(state.get("breakout_boundary"))
+            if boundary is not None:
+                stop_price = max(stop_price, boundary * (1.0 - LEVEL_BAND))
             if current_rate > entry_rate:
                 stop_price = max(stop_price, entry_rate * 1.001)
         return stop_price
@@ -1530,7 +2001,13 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
             plan_name = str(self.exit_policy_plan.value)
         selected_plan = EXIT_PLANS[plan_name]
         decision = ExitDecision("hold")
-        context = self._decision_context(pair, trade, current_time, current_rate, current_profit)
+        context = self._decision_context(
+            pair,
+            trade,
+            current_time,
+            current_rate,
+            current_profit,
+        )
         if context is not None:
             plan, state, _, decision = context
             if state.get("partial_pending") or decision.action == "full":
@@ -1545,7 +2022,6 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
             decision,
             current_rate,
         )
-
         persisted_floor = _finite_float(working_state.get("stop_floor"))
         if persisted_floor is not None:
             stop_price = max(stop_price, persisted_floor)

@@ -1,47 +1,61 @@
-"""Sieve3 V2 integrated exits for the promoted TLV2/VP long entry.
+"""Sieve3 V2 integrated exits for the promoted MTF MACD-volume long entry.
 
 Preflight contract
 ------------------
 Canonical Sieve2 source:
-    sieve2_multi2_tlv2_vp_res_break_vp_bullctx_long_1h
+    sieve2_mtf_std_daily_macd_volume_breakout_long_1h
 Promotion evidence:
-    20260521T012740_entry_all_resume, selected row 319
-Promoted baseline:
-    TP/SL 2%/2%, 219 trades, 58.9041% win rate, 6.815958% return,
-    1.93344% maximum drawdown, 1.372107 profit factor.
+    20260612T071622_entry_sieve2_top_level_clear100_cores8_20260612_01_retry01,
+    result row 33 and its backtest-result-2026-06-12_08-38-35.zip archive.
+Oracle hashes:
+    Executed source SHA-256:
+    c8e78309683f277548e9ac9e3a929ae475a6daa4c197d6060eed4eaf7455b18f
+    Result ZIP SHA-256:
+    ea1713135c6646f6db870cc7fa3e3e673310ec70061eb31f627e49d1d1960f09
+    Locked params-member SHA-256:
+    932d20bed431b8f58d4b8bc0309fa9f289fdc9ea66e3a1fdf2df503932b15e02
+    Effective 14-value buy-lock SHA-256 (sorted compact JSON):
+    e97f93bfde27c64de9ffa158a06ce4f9017363dcddcd9fabea71071cdbcf0a58
+Promotion-oracle correction:
+    The baseline lookup and JSONL labels say TP/SL 3%/3%. The authoritative
+    executed source embedded in the result ZIP is byte-identical to the run
+    snapshot and resolves ROI/stoploss to 3%/4%. ``promotion_oracle_3_4``
+    preserves that historical fact; ``baseline_3_3`` remains the required V2
+    comparison control. Entry logic and promoted buy values are unchanged.
 Entry lock:
-    The 45 promoted buy defaults below are immutable in Sieve3 V2
-    (``optimize=False, load=False``). Disabled Sieve2 optional guards remain
-    represented by their locked parameters but their dead indicator work is omitted.
+    The 14 promoted buy values below are immutable in Sieve3 V2
+    (``optimize=False, load=False``). The lock includes parameters that are
+    inactive for this fixed entry mode because they are part of the oracle;
+    their dead RSI/Bollinger/ATR calculation paths are not reproduced.
 Tested legacy controls:
-    sieve3_exit_breakeven_from_multi2_tlv2_vp_res_break_vp_bullctx_long_1h.py
-    sieve3_exit_level_zone_reversal_from_multi2_tlv2_vp_res_break_vp_bullctx_long_1h.py
-    jobs 20260709T101515_entry_sieve3_exit_speed_batch_046 and
-    20260628T025333_entry_sieve3_exit_speed_batch_040.
+    sieve3_exit_breakeven_from_mtf_std_daily_macd_volume_breakout_long_1h.py,
+    job 20260708T190447_entry_sieve3_exit_speed_batch_045;
+    sieve3_exit_level_zone_reversal_from_mtf_std_daily_macd_volume_breakout_long_1h.py,
+    job 20260624T185245_entry_sieve3_exit_speed_batch_024.
 Refined pilot controls:
-    sieve3_rework_exit_{invalidation,layered,target_zone}_from_multi2_*.py
+    sieve3_rework_exit_{invalidation,layered,target_zone}_from_mtf_std_daily_*.py,
     job 20260711T230600_entry_sieve3_exit_rework_comparison_001.
 Consolidation:
-    The V2 plans retain the distinct target, invalidation, layered, runner,
-    and time/progress hypotheses. Generic legacy EMA/oscillator exit surfaces
-    and duplicate one-file-per-exit branches are intentionally not copied.
+    Thirty-two plans retain fixed controls, source-native MTF and causal OHLCV
+    targets, multi-source invalidation, layered realization, runners, and
+    bounded progress failure. Twenty are integrated/layered policies and twelve
+    isolate baseline or full-exit controls. The authoritative source contains no
+    Volume Profile subsystem, so V2 does not import, compute, or test one.
 Target semantics:
-    All TLV2, VP, prior-high, and measured-move targets are frozen from the
-    last closed signal candle when the entry fills. Provider chains are explicit
-    and may only move to a named, source-coherent fallback at initialization.
-    TLV2 rank-0 support is deliberately excluded because prefix testing found
-    its historical rank selection unstable; shifted 48-candle prior low is the
-    causal structural floor used for measured range and hard invalidation.
+    Daily/4h prior highs, causal 1h prior-48/prior-96 highs, and measured
+    breakout objectives are frozen from the last closed placement candle when
+    the entry fill is confirmed. Named providers remain exact; ``nearest``
+    selects the closest valid frozen objective across those families.
 Invalidation:
-    Broken-resistance loss, VP bull-context failure, their conjunction, and
-    frozen structural-support failure. Structural-support failure or a confirmed
-    broken-level loss plus VP failure is the universal hard thesis failure.
+    Full thesis exits require coherent combinations of source-breakout loss,
+    LTF momentum/participation failure, 4h context failure, and daily context
+    failure. No one-bar MACD, EMA, or volume flip can be a sole full exit.
 Hyperopt surface:
     One sell-space ``exit_policy_plan`` parameter. Each category is a complete,
     trader-readable policy; no inactive branch thresholds are optimized.
 Split decision:
-    One V2 file is sufficient because TLV2 structure and VP context form one
-    coherent target/invalidation ecosystem for this entry foundation.
+    One V2 file is sufficient because the daily MACD-volume breakout, its
+    1h/4h/1d context, and causal structural objectives form one policy ecosystem.
 """
 
 from __future__ import annotations
@@ -55,41 +69,45 @@ from pandas import DataFrame, Series
 
 from freqtrade.exchange import timeframe_to_minutes
 from freqtrade.strategy import (
-    BooleanParameter,
     CategoricalParameter,
+    DecimalParameter,
+    IntParameter,
     IStrategy,
+    merge_informative_pair,
     stoploss_from_absolute,
 )
-from user_data.Indicators.complex_trendline_projection_v2 import (
-    add_trendline_projection_v2,
+
+
+SIEVE_STAGE = "sieve3"
+SOURCE_STRATEGY = "sieve2_mtf_std_daily_macd_volume_breakout_long_1h"
+SOURCE_RESULT_BATCH = "20260612T071622_entry_sieve2_top_level_clear100_cores8_20260612_01_retry01"
+RESEARCH_PATH = "sieve3_v2_integrated_mtf_structure_exit"
+ENTRY_SOURCE_STAGE = "sieve2"
+EXIT_HYPOTHESIS = (
+    "Frozen MTF prior highs, causal structural highs, and measured-range targets "
+    "interact with multi-source invalidation through complete layered long-management "
+    "policies."
 )
-from user_data.Indicators.complex_volume_profile import add_volume_profile
-
-
-ENTRY_TAG = "multi2_tlv2_vp_res_break_vp_bullctx_long_1h"
-STATE_KEY = "sieve3_v2_tlv2_vp_long"
+ENTRY_MODE = "daily_macd_volume_breakout"
+ENTRY_TAG = "mtf_std_daily_macd_volume_breakout_long_1h"
+STATE_KEY = "sieve3_v2_mtf_macd_volume_long"
 STATE_VERSION = 3
 LEVEL_BAND = 0.005
 MIN_TARGET_MOVE = 0.002
 PARTIAL_TAGS = {"s3v2_partial_target", "s3v2_partial_invalidation"}
 
-SIEVE2_VP_GUARD_MODES = (
-    "score_or_context",
-    "node_confirm",
-    "value_area_confirm",
-    "breakout_acceptance",
-    "rejection_confirm",
-    "poc_hvn_reject",
-    "prior_level_confirm",
-)
-SIEVE2_MARKET_GUARD_MODES = (
-    "pressure_or_trend",
-    "pressure_and_trend",
-    "directional_pressure",
-    "trend_state",
-    "avoid_adverse_pressure",
-    "avoid_chop",
-)
+
+def _safe_div(numerator: Series, denominator: Series) -> Series:
+    return numerator / denominator.replace(0.0, np.nan)
+
+
+def _ema(close: Series, length: int) -> Series:
+    return close.ewm(span=length, adjust=False, min_periods=max(2, length // 2)).mean()
+
+
+def _macd_hist(close: Series, fast: int = 12, slow: int = 26, signal: int = 9) -> Series:
+    macd = _ema(close, fast) - _ema(close, slow)
+    return macd - _ema(macd, signal)
 
 
 def _num(frame: DataFrame, column: str, default: float | Series = 0.0) -> Series:
@@ -98,16 +116,6 @@ def _num(frame: DataFrame, column: str, default: float | Series = 0.0) -> Series
             return pd.to_numeric(default, errors="coerce")
         return pd.Series(float(default), index=frame.index, dtype="float64")
     return pd.to_numeric(frame[column], errors="coerce").replace([np.inf, -np.inf], np.nan)
-
-
-def _bool(frame: DataFrame, column: str) -> Series:
-    if column not in frame.columns:
-        return pd.Series(False, index=frame.index, dtype="bool")
-    return pd.Series(frame[column], index=frame.index).astype("boolean").fillna(False).astype(bool)
-
-
-def _cross_above(series: Series, level: Series) -> Series:
-    return series.gt(level) & series.shift(1).le(level.shift(1))
 
 
 def _finite_float(value: Any) -> float | None:
@@ -141,7 +149,7 @@ class ExitPlan:
         target_2: str | None = None,
         confirmation: str = "touch",
         target_action: str = "hold",
-        invalidation: str = "combined1",
+        invalidation: str = "any_two",
         invalidation_action: str = "full",
         partial_fraction: float = 0.0,
         remainder: str = "hold",
@@ -211,263 +219,255 @@ EXIT_PLANS: dict[str, ExitPlan] = {
         hard_stop=0.03,
         fixed_tp=0.03,
     ),
-    "promotion_2_2": ExitPlan(
+    "promotion_oracle_3_4": ExitPlan(
         "baseline",
         invalidation="none",
         invalidation_action="hold",
-        hard_stop=0.02,
-        fixed_tp=0.02,
+        hard_stop=0.04,
+        fixed_tp=0.03,
     ),
-    "hvn_touch_full": ExitPlan(
+    "d1_high_touch_full": ExitPlan(
         "target_full",
-        "hvn",
+        "d1_high",
         confirmation="touch",
         target_action="full",
         invalidation="none",
         invalidation_action="hold",
         target_band=0.005,
     ),
-    "hvn_rev1_full": ExitPlan(
+    "d1_high_reversal_full": ExitPlan(
         "target_full",
-        "hvn",
+        "d1_high",
         confirmation="reversal1",
         target_action="full",
         invalidation="none",
         invalidation_action="hold",
     ),
-    "vah_rev1_full": ExitPlan(
+    "h4_high_reversal_full": ExitPlan(
         "target_full",
-        "vah",
+        "h4_high",
         confirmation="reversal1",
         target_action="full",
         invalidation="none",
         invalidation_action="hold",
-        target_band=0.015,
     ),
-    "prior48_rev1_full": ExitPlan(
+    "prior48_touch_full": ExitPlan(
         "target_full",
         "prior48",
-        confirmation="reversal1",
-        target_action="full",
-        invalidation="none",
-        invalidation_action="hold",
-        target_band=0.03,
-    ),
-    "prior96_rev2of3_full": ExitPlan(
-        "target_full",
-        "prior96",
-        confirmation="reversal2of3",
-        target_action="full",
-        invalidation="none",
-        invalidation_action="hold",
-        target_band=0.03,
-    ),
-    "measured_half_touch_full": ExitPlan(
-        "target_full",
-        "measured_half",
         confirmation="touch",
         target_action="full",
         invalidation="none",
         invalidation_action="hold",
         target_band=0.005,
     ),
-    "measured_full_rev1_full": ExitPlan(
+    "prior96_reversal_full": ExitPlan(
         "target_full",
-        "measured_full",
+        "prior96",
         confirmation="reversal1",
         target_action="full",
         invalidation="none",
         invalidation_action="hold",
     ),
-    "level1_full": ExitPlan("invalidation_full", invalidation="level1", invalidation_action="full"),
-    "level2_full": ExitPlan("invalidation_full", invalidation="level2", invalidation_action="full"),
-    "context2_full": ExitPlan(
-        "invalidation_full", invalidation="context2", invalidation_action="full"
+    "range_full_reversal_full": ExitPlan(
+        "target_full",
+        "range_full",
+        confirmation="reversal1",
+        target_action="full",
+        invalidation="none",
+        invalidation_action="hold",
     ),
-    "combined1_full": ExitPlan(
-        "invalidation_full", invalidation="combined1", invalidation_action="full"
+    "source_ltf_full": ExitPlan(
+        "invalidation_full", invalidation="source_ltf", invalidation_action="full"
     ),
-    "level2_tighten": ExitPlan(
-        "defensive_tighten", invalidation="level2", invalidation_action="tighten"
+    "ltf_h4_full": ExitPlan("invalidation_full", invalidation="ltf_h4", invalidation_action="full"),
+    "h4_d1_full": ExitPlan("invalidation_full", invalidation="h4_d1", invalidation_action="full"),
+    "any_two_full": ExitPlan(
+        "invalidation_full", invalidation="any_two", invalidation_action="full"
     ),
-    "context2_tighten": ExitPlan(
-        "defensive_tighten", invalidation="context2", invalidation_action="tighten"
-    ),
-    "hvn_touch_p33_be_level2": ExitPlan(
+    "d1_touch_p33_be_any_two": ExitPlan(
         "target_partial",
-        "hvn",
+        "d1_high",
         confirmation="touch",
         target_action="partial",
-        invalidation="level2",
+        invalidation="any_two",
         partial_fraction=0.33,
         remainder="breakeven",
     ),
-    "hvn_rev1_p50_trail_level2": ExitPlan(
+    "d1_reversal_p50_trail_any_two": ExitPlan(
         "target_partial",
-        "hvn",
+        "d1_high",
         confirmation="reversal1",
         target_action="partial",
-        invalidation="level2",
+        invalidation="any_two",
         partial_fraction=0.50,
         remainder="trail",
     ),
-    "hvn_rev1_p33_be_combined": ExitPlan(
+    "h4_reversal_p33_be_ltf_h4": ExitPlan(
         "target_partial",
-        "hvn",
+        "h4_high",
         confirmation="reversal1",
         target_action="partial",
-        invalidation="combined1",
+        invalidation="ltf_h4",
         partial_fraction=0.33,
         remainder="breakeven",
     ),
-    "vah_rev1_p33_be_context2": ExitPlan(
-        "target_partial",
-        "vah",
-        confirmation="reversal1",
-        target_action="partial",
-        invalidation="context2",
-        partial_fraction=0.33,
-        remainder="breakeven",
-    ),
-    "prior48_touch_p33_trail_level2": ExitPlan(
+    "prior48_touch_p33_be_any_two": ExitPlan(
         "target_partial",
         "prior48",
         confirmation="touch",
         target_action="partial",
-        invalidation="level2",
-        partial_fraction=0.33,
-        remainder="trail",
-    ),
-    "prior96_rev2of3_p50_trail_combined": ExitPlan(
-        "target_partial",
-        "prior96",
-        confirmation="reversal2of3",
-        target_action="partial",
-        invalidation="combined1",
-        partial_fraction=0.50,
-        remainder="trail",
-    ),
-    "measured_half_touch_p33_be_level2": ExitPlan(
-        "target_partial",
-        "measured_half",
-        confirmation="touch",
-        target_action="partial",
-        invalidation="level2",
+        invalidation="any_two",
         partial_fraction=0.33,
         remainder="breakeven",
     ),
-    "measured_half_rev1_p50_trail_context2": ExitPlan(
+    "prior48_reversal_p50_trail_any_two": ExitPlan(
         "target_partial",
-        "measured_half",
+        "prior48",
         confirmation="reversal1",
         target_action="partial",
-        invalidation="context2",
+        invalidation="any_two",
         partial_fraction=0.50,
         remainder="trail",
     ),
-    "measured_full_rev1_p33_trail_combined": ExitPlan(
+    "prior96_reversal_p33_trail_h4_d1": ExitPlan(
         "target_partial",
-        "measured_full",
+        "prior96",
         confirmation="reversal1",
         target_action="partial",
-        invalidation="combined1",
+        invalidation="h4_d1",
         partial_fraction=0.33,
         remainder="trail",
     ),
-    "nearest_rev1_p50_trail_combined": ExitPlan(
+    "range_half_touch_p33_be_source_ltf": ExitPlan(
+        "target_partial",
+        "range_half",
+        confirmation="touch",
+        target_action="partial",
+        invalidation="source_ltf",
+        partial_fraction=0.33,
+        remainder="breakeven",
+    ),
+    "range_half_reversal_p50_trail_any_two": ExitPlan(
+        "target_partial",
+        "range_half",
+        confirmation="reversal1",
+        target_action="partial",
+        invalidation="any_two",
+        partial_fraction=0.50,
+        remainder="trail",
+    ),
+    "range_full_reversal_p33_trail_any_two": ExitPlan(
+        "target_partial",
+        "range_full",
+        confirmation="reversal1",
+        target_action="partial",
+        invalidation="any_two",
+        partial_fraction=0.33,
+        remainder="trail",
+    ),
+    "nearest_reversal_p50_trail_any_two": ExitPlan(
         "target_partial",
         "nearest",
         confirmation="reversal1",
         target_action="partial",
-        invalidation="combined1",
+        invalidation="any_two",
         partial_fraction=0.50,
         remainder="trail",
     ),
-    "level1_reduce33_hvn": ExitPlan(
+    "any_two_reduce33_d1": ExitPlan(
         "invalidation_reduce",
-        "hvn",
+        "d1_high",
         confirmation="touch",
         target_action="full",
-        invalidation="level1",
+        invalidation="any_two",
         invalidation_action="partial",
         partial_fraction=0.33,
         remainder="target",
     ),
-    "context2_reduce33_measured": ExitPlan(
+    "source_ltf_reduce33_prior48": ExitPlan(
         "invalidation_reduce",
-        "measured_half",
+        "prior48",
         confirmation="touch",
         target_action="full",
-        invalidation="context2",
+        invalidation="source_ltf",
         invalidation_action="partial",
         partial_fraction=0.33,
         remainder="target",
     ),
-    "combined1_reduce50_nearest": ExitPlan(
+    "h4_d1_reduce50_nearest": ExitPlan(
         "invalidation_reduce",
         "nearest",
         confirmation="touch",
         target_action="full",
-        invalidation="combined1",
+        invalidation="h4_d1",
         invalidation_action="partial",
         partial_fraction=0.50,
         remainder="target",
     ),
-    "hvn_touch_tighten_level2": ExitPlan(
+    "d1_touch_tighten_any_two": ExitPlan(
         "target_tighten",
-        "hvn",
+        "d1_high",
         confirmation="touch",
         target_action="tighten",
-        invalidation="level2",
+        invalidation="any_two",
         invalidation_action="full",
         remainder="tighten",
     ),
-    "measured_half_touch_tighten_combined": ExitPlan(
+    "prior48_touch_tighten_source_ltf": ExitPlan(
         "target_tighten",
-        "measured_half",
+        "prior48",
         confirmation="touch",
         target_action="tighten",
-        invalidation="combined1",
+        invalidation="source_ltf",
         invalidation_action="full",
         remainder="tighten",
     ),
-    "hvn_then_measured_runner": ExitPlan(
+    "range_half_touch_tighten_h4_d1": ExitPlan(
+        "target_tighten",
+        "range_half",
+        confirmation="touch",
+        target_action="tighten",
+        invalidation="h4_d1",
+        invalidation_action="full",
+        remainder="tighten",
+    ),
+    "h4_then_d1_runner_any_two": ExitPlan(
         "dual_target",
-        "hvn",
-        "measured_full",
+        "h4_high",
+        "d1_high",
         "touch",
         "partial",
-        "combined1",
+        "any_two",
         "full",
         0.33,
         "trail",
     ),
-    "prior48_then_measured_runner": ExitPlan(
+    "prior48_then_d1_runner_any_two": ExitPlan(
         "dual_target",
         "prior48",
-        "measured_full",
+        "d1_high",
         "touch",
         "partial",
-        "level2",
+        "any_two",
         "full",
         0.50,
         "trail",
     ),
-    "progress48_nearest": ExitPlan(
+    "progress48_nearest_any_two": ExitPlan(
         "progress_failure",
         "nearest",
         confirmation="touch",
         target_action="full",
-        invalidation="combined1",
+        invalidation="any_two",
         invalidation_action="full",
         progress_candles=48,
     ),
-    "progress96_measured": ExitPlan(
+    "progress96_d1_any_two": ExitPlan(
         "progress_failure",
-        "measured_full",
+        "d1_high",
         confirmation="touch",
         target_action="full",
-        invalidation="combined1",
+        invalidation="any_two",
         invalidation_action="full",
         progress_candles=96,
     ),
@@ -475,20 +475,34 @@ EXIT_PLANS: dict[str, ExitPlan] = {
 
 
 TARGET_PROVIDER_CHAINS: dict[str, tuple[str, ...]] = {
-    "hvn": ("hvn", "vah", "prior48", "measured_half"),
-    "vah": ("vah", "hvn", "prior48", "measured_half"),
-    "prior48": ("prior48", "hvn", "measured_half"),
-    "prior96": ("prior96", "prior48", "hvn", "measured_half"),
-    "measured_half": ("measured_half", "prior48", "hvn"),
-    "measured_full": ("measured_full", "prior96", "hvn"),
-    "nearest": ("hvn", "vah", "prior48", "prior96", "measured_half", "measured_full"),
+    "d1_high": ("d1_high",),
+    "h4_high": ("h4_high",),
+    "prior48": ("prior48",),
+    "prior96": ("prior96",),
+    "range_half": ("range_half",),
+    "range_full": ("range_full",),
+    "nearest": (
+        "h4_high",
+        "d1_high",
+        "prior48",
+        "prior96",
+        "range_half",
+        "range_full",
+    ),
 }
 
 
-class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
+class Sieve3V2IntegratedFromMtfStdDailyMacdVolumeBreakoutLong1H(IStrategy):
+    SIEVE_STAGE = SIEVE_STAGE
+    SOURCE_STRATEGY = SOURCE_STRATEGY
+    SOURCE_RESULT_BATCH = SOURCE_RESULT_BATCH
+    RESEARCH_PATH = RESEARCH_PATH
+    ENTRY_SOURCE_STAGE = ENTRY_SOURCE_STAGE
+    EXIT_HYPOTHESIS = EXIT_HYPOTHESIS
+
     INTERFACE_VERSION = 3
     timeframe = "1h"
-    startup_candle_count = 220
+    startup_candle_count = 400
     process_only_new_candles = True
     can_short = False
 
@@ -503,149 +517,41 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
     exit_profit_only = False
     ignore_roi_if_entry_signal = False
 
-    use_sieve2_vp_guard = BooleanParameter(default=False, space="buy", optimize=False, load=False)
-    sieve2_vp_guard_mode = CategoricalParameter(
-        list(SIEVE2_VP_GUARD_MODES),
-        default="score_or_context",
+    ema_fast_len = IntParameter(8, 48, default=43, space="buy", optimize=False, load=False)
+    ema_slow_len = IntParameter(20, 240, default=139, space="buy", optimize=False, load=False)
+    bb_len = IntParameter(10, 60, default=52, space="buy", optimize=False, load=False)
+    bb_width_max = DecimalParameter(
+        0.02, 0.35, default=0.13, decimals=2, space="buy", optimize=False, load=False
+    )
+    volume_ratio_min = DecimalParameter(
+        0.70, 3.50, default=1.67, decimals=2, space="buy", optimize=False, load=False
+    )
+    retest_buffer_pct = DecimalParameter(
+        0.001,
+        0.03,
+        default=0.026,
+        decimals=3,
         space="buy",
         optimize=False,
         load=False,
     )
-    sieve2_vp_window = CategoricalParameter(
-        [48, 96, 168], default=96, space="buy", optimize=False, load=False
+    rsi_len = IntParameter(7, 28, default=23, space="buy", optimize=False, load=False)
+    rsi_long_min = IntParameter(40, 70, default=42, space="buy", optimize=False, load=False)
+    rsi_short_max = IntParameter(30, 60, default=41, space="buy", optimize=False, load=False)
+    use_daily_trend = CategoricalParameter(
+        [False, True], default=False, space="buy", optimize=False, load=False
     )
-    sieve2_vp_bins = CategoricalParameter(
-        [24, 36, 48], default=36, space="buy", optimize=False, load=False
+    use_h4_compression = CategoricalParameter(
+        [False, True], default=False, space="buy", optimize=False, load=False
     )
-    sieve2_vp_score_min = CategoricalParameter(
-        [0.15, 0.25, 0.35, 0.50], default=0.25, space="buy", optimize=False, load=False
+    use_volume_filter = CategoricalParameter(
+        [False, True], default=True, space="buy", optimize=False, load=False
     )
-    sieve2_vp_context_min = CategoricalParameter(
-        [0.18, 0.28, 0.38, 0.50], default=0.28, space="buy", optimize=False, load=False
+    use_retest = CategoricalParameter(
+        [False, True], default=True, space="buy", optimize=False, load=False
     )
-    use_sieve2_market_guard = BooleanParameter(
-        default=False, space="buy", optimize=False, load=False
-    )
-    sieve2_market_guard_mode = CategoricalParameter(
-        list(SIEVE2_MARKET_GUARD_MODES),
-        default="pressure_or_trend",
-        space="buy",
-        optimize=False,
-        load=False,
-    )
-    sieve2_market_window = CategoricalParameter(
-        [12, 24, 48, 96], default=24, space="buy", optimize=False, load=False
-    )
-    sieve2_market_pressure_min = CategoricalParameter(
-        [0.03, 0.07, 0.12, 0.18, 0.25], default=0.07, space="buy", optimize=False, load=False
-    )
-    sieve2_market_trend_min = CategoricalParameter(
-        [0.0, 0.25, 0.50, 0.80], default=0.25, space="buy", optimize=False, load=False
-    )
-    sieve2_rs_benchmark_pair = CategoricalParameter(
-        ["BTC/USDT:USDT", "ETH/USDT:USDT"],
-        default="BTC/USDT:USDT",
-        space="buy",
-        optimize=False,
-        load=False,
-    )
-    sieve2_rs_score_min = CategoricalParameter(
-        [0.35, 0.45, 0.55, 0.65], default=0.45, space="buy", optimize=False, load=False
-    )
-
-    use_volume_guard = BooleanParameter(default=True, space="buy", optimize=False, load=False)
-    volume_guard_window = CategoricalParameter(
-        [12, 24, 48], default=24, space="buy", optimize=False, load=False
-    )
-    volume_ratio_min = CategoricalParameter(
-        [0.8, 1.0, 1.3, 1.6], default=1.6, space="buy", optimize=False, load=False
-    )
-    use_pressure_guard = BooleanParameter(default=True, space="buy", optimize=False, load=False)
-    pressure_window = CategoricalParameter(
-        [12, 24, 48], default=24, space="buy", optimize=False, load=False
-    )
-    pressure_min = CategoricalParameter(
-        [0.05, 0.1, 0.15, 0.2, 0.35], default=0.15, space="buy", optimize=False, load=False
-    )
-    use_accumulation_guard = BooleanParameter(
-        default=False, space="buy", optimize=False, load=False
-    )
-    use_body_direction_guard = BooleanParameter(
-        default=False, space="buy", optimize=False, load=False
-    )
-    use_close_direction_guard = BooleanParameter(
-        default=False, space="buy", optimize=False, load=False
-    )
-
-    vp_window = CategoricalParameter(
-        [48, 96, 144], default=96, space="buy", optimize=False, load=False
-    )
-    vp_bins = CategoricalParameter(
-        [36, 48, 72], default=48, space="buy", optimize=False, load=False
-    )
-    vp_value_area_pct = CategoricalParameter(
-        [0.65, 0.70, 0.75], default=0.70, space="buy", optimize=False, load=False
-    )
-    vp_price_source = CategoricalParameter(
-        ["hlc3", "ohlc4"], default="hlc3", space="buy", optimize=False, load=False
-    )
-    vp_smooth_bins = CategoricalParameter(
-        [2, 3, 4], default=3, space="buy", optimize=False, load=False
-    )
-    vp_hvn_threshold = CategoricalParameter(
-        [0.65, 0.70, 0.78], default=0.70, space="buy", optimize=False, load=False
-    )
-    vp_lvn_threshold = CategoricalParameter(
-        [0.25, 0.35, 0.45], default=0.35, space="buy", optimize=False, load=False
-    )
-    vp_pressure_delta_min = CategoricalParameter(
-        [0.0, 0.05, 0.1], default=0.05, space="buy", optimize=False, load=False
-    )
-    vp_node_near_pct = CategoricalParameter(
-        [0.006, 0.010, 0.016], default=0.010, space="buy", optimize=False, load=False
-    )
-    vp_volume_percentile_min = CategoricalParameter(
-        [0.45, 0.55, 0.65], default=0.55, space="buy", optimize=False, load=False
-    )
-    vp_score_window = CategoricalParameter(
-        [24, 48, 72], default=48, space="buy", optimize=False, load=False
-    )
-    vp_fast_traverse_atr_mult = CategoricalParameter(
-        [0.9, 1.2, 1.6], default=1.2, space="buy", optimize=False, load=False
-    )
-    vp_entry_score_margin = CategoricalParameter(
-        [0.0, 0.02, 0.05], default=0.02, space="buy", optimize=False, load=False
-    )
-    vp_score_min = CategoricalParameter(
-        [0.15, 0.25, 0.4], default=0.4, space="buy", optimize=False, load=False
-    )
-    vp_context_min = CategoricalParameter(
-        [0.2, 0.28, 0.45], default=0.28, space="buy", optimize=False, load=False
-    )
-    vp_level_buffer_pct = CategoricalParameter(
-        [0.003, 0.006, 0.010, 0.016], default=0.016, space="buy", optimize=False, load=False
-    )
-
-    pivot_strength = CategoricalParameter(
-        [2, 3, 4], default=2, space="buy", optimize=False, load=False
-    )
-    min_line_score = CategoricalParameter(
-        [0.4, 0.5, 0.6], default=0.6, space="buy", optimize=False, load=False
-    )
-    min_active_bars = CategoricalParameter(
-        [4, 8, 16], default=8, space="buy", optimize=False, load=False
-    )
-    max_distance_atr = CategoricalParameter(
-        [3.0, 6.0, 10.0], default=3.0, space="buy", optimize=False, load=False
-    )
-    proximity_rank_weight = CategoricalParameter(
-        [0.0, 0.05, 0.1], default=0.05, space="buy", optimize=False, load=False
-    )
-    line_buffer_pct = CategoricalParameter(
-        [0.0, 0.003, 0.006, 0.012], default=0.0, space="buy", optimize=False, load=False
-    )
-    line_slope_min_pct = CategoricalParameter(
-        [0.0, 0.0005, 0.0015], default=0.0005, space="buy", optimize=False, load=False
+    use_momentum_filter = CategoricalParameter(
+        [False, True], default=True, space="buy", optimize=False, load=False
     )
 
     exit_policy_plan = CategoricalParameter(
@@ -681,225 +587,45 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
         return 1.0
 
     def informative_pairs(self) -> list[tuple[str, str]]:
-        return []
+        dp = getattr(self, "dp", None)
+        if dp is None:
+            return []
+        pairs = dp.current_whitelist()
+        return [(pair, "4h") for pair in pairs] + [(pair, "1d") for pair in pairs]
 
-    def _common_guards(self, dataframe: DataFrame) -> Series:
-        guard = pd.Series(True, index=dataframe.index, dtype="bool")
-        close = _num(dataframe, "close")
-        volume = _num(dataframe, "volume").clip(lower=0.0)
-
-        volume_window = int(self.volume_guard_window.value)
-        volume_baseline = (
-            volume.shift(1)
-            .rolling(volume_window, min_periods=max(2, volume_window // 3))
-            .mean()
-            .replace(0.0, np.nan)
-        )
-        guard &= volume.ge(volume_baseline.mul(float(self.volume_ratio_min.value)))
-
-        open_ = _num(dataframe, "open")
-        high = _num(dataframe, "high")
-        low = _num(dataframe, "low")
-        candle_range = (high - low).replace(0.0, np.nan)
-        body_pressure = ((close - open_) / candle_range).clip(-1.0, 1.0)
-        close_location = (((close - low) / candle_range) * 2.0 - 1.0).clip(-1.0, 1.0)
-        pressure = ((body_pressure.fillna(0.0) + close_location.fillna(0.0)) / 2.0).clip(-1.0, 1.0)
-        directional_volume = (pressure * volume.fillna(0.0)).fillna(0.0)
-        pressure_window = int(self.pressure_window.value)
-        pressure_baseline = (
-            volume.rolling(pressure_window, min_periods=max(2, pressure_window // 3))
-            .sum()
-            .replace(0.0, np.nan)
-        )
-        pressure_ratio = (
-            directional_volume.rolling(
-                pressure_window, min_periods=max(2, pressure_window // 3)
-            ).sum()
-            / pressure_baseline
-        )
-        guard &= pressure_ratio.ge(float(self.pressure_min.value))
-        return guard.fillna(False)
-
-    def _add_vp(self, dataframe: DataFrame) -> DataFrame:
-        return add_volume_profile(
-            dataframe,
-            window=int(self.vp_window.value),
-            bins=int(self.vp_bins.value),
-            value_area_pct=float(self.vp_value_area_pct.value),
-            price_source=str(self.vp_price_source.value),
-            smooth_bins=int(self.vp_smooth_bins.value),
-            hvn_threshold=float(self.vp_hvn_threshold.value),
-            lvn_threshold=float(self.vp_lvn_threshold.value),
-            pressure_delta_min=float(self.vp_pressure_delta_min.value),
-            node_near_pct=float(self.vp_node_near_pct.value),
-            volume_percentile_min=float(self.vp_volume_percentile_min.value),
-            score_window=int(self.vp_score_window.value),
-            fast_traverse_atr_mult=float(self.vp_fast_traverse_atr_mult.value),
-            entry_score_margin=float(self.vp_entry_score_margin.value),
-            prefix="vp",
-        )
-
-    @staticmethod
-    def _add_market_state(frame: DataFrame, window: int) -> DataFrame:
+    def _features(self, frame: DataFrame, timeframe: str) -> DataFrame:
         close = _num(frame, "close")
-        open_ = _num(frame, "open")
         high = _num(frame, "high")
         low = _num(frame, "low")
-        volume = _num(frame, "volume").clip(lower=0.0).fillna(0.0)
-        candle_range = (high - low).replace(0.0, np.nan)
-        body_pressure = ((close - open_) / candle_range).clip(-1.0, 1.0)
-        close_location = (((close - low) / candle_range) * 2.0 - 1.0).clip(-1.0, 1.0)
-        pressure = ((body_pressure.fillna(0.0) + close_location.fillna(0.0)) / 2.0).clip(-1.0, 1.0)
-        directional_volume = (pressure * volume).fillna(0.0)
-        baseline = (
-            volume.rolling(window, min_periods=max(2, window // 3)).sum().replace(0.0, np.nan)
-        )
-        returns = close.pct_change(fill_method=None)
-        window_return = close.pct_change(window, fill_method=None)
-        volatility = returns.rolling(window, min_periods=max(3, window // 3)).std() * np.sqrt(
-            float(window)
-        )
-        frame["s2m_pressure_ratio"] = (
-            directional_volume.rolling(window, min_periods=max(2, window // 3)).sum() / baseline
-        )
-        frame["s2m_trend_z"] = window_return / volatility.replace(0.0, np.nan)
-        frame["s2m_close_location"] = close_location
+        volume = _num(frame, "volume").fillna(0.0)
+        ema_fast = int(self.ema_fast_len.value)
+        ema_slow = int(self.ema_slow_len.value)
+        frame[f"ema_fast_{timeframe}"] = _ema(close, ema_fast)
+        frame[f"ema_slow_{timeframe}"] = _ema(close, ema_slow)
+        frame[f"macd_hist_{timeframe}"] = _macd_hist(close).fillna(0.0)
+        frame[f"volume_ratio_{timeframe}"] = _safe_div(
+            volume, volume.rolling(20, min_periods=5).mean()
+        ).fillna(0.0)
+        frame[f"prior_high_{timeframe}"] = high.shift(1).rolling(20, min_periods=5).max()
+        frame[f"prior_low_{timeframe}"] = low.shift(1).rolling(20, min_periods=5).min()
         return frame
 
-    def _add_sieve2_guard_indicators(self, dataframe: DataFrame) -> DataFrame:
-        frame = self._add_market_state(dataframe.copy(), int(self.sieve2_market_window.value))
-        return add_volume_profile(
-            frame,
-            window=int(self.sieve2_vp_window.value),
-            bins=int(self.sieve2_vp_bins.value),
-            value_area_pct=0.70,
-            price_source="hlc3",
-            smooth_bins=3,
-            pressure_delta_min=0.05,
-            node_near_pct=0.01,
-            prefix="s2vp",
-        )
-
-    @staticmethod
-    def _sieve2_vp_guard(
-        frame: DataFrame,
-        mode: str,
-        score_min: float,
-        context_min: float,
-    ) -> Series:
-        close = _num(frame, "close")
-        low = _num(frame, "low")
-        score = _num(frame, "s2vp_score_long")
-        other = _num(frame, "s2vp_score_short")
-        context = _num(frame, "s2vp_context_score_bull")
-        in_value = _bool(frame, "s2vp_in_value_area")
-        above_value = _bool(frame, "s2vp_above_value_area")
-        node_entry = _bool(frame, "s2vp_node_entry_long")
-        node_hold = _bool(frame, "s2vp_node_hold_long")
-        prior_vah = _num(frame, "s2vp_prior_vah", np.nan)
-        prior_val = _num(frame, "s2vp_prior_val", np.nan)
-        base_score = score.ge(score_min) & score.gt(other)
-        base_context = context.ge(context_min)
-        if mode == "node_confirm":
-            return (node_entry | node_hold | (base_score & base_context)).fillna(False)
-        if mode == "value_area_confirm":
-            return (above_value | (in_value & base_context)).fillna(False)
-        if mode == "breakout_acceptance":
-            return (
-                close.gt(prior_vah) & (base_score | base_context | node_entry | node_hold)
-            ).fillna(False)
-        if mode == "rejection_confirm":
-            rejection = low.le(prior_val) & close.gt(prior_val) & close.le(prior_vah)
-            return (rejection & (base_score | base_context | node_entry | node_hold)).fillna(False)
-        if mode == "poc_hvn_reject":
-            return (node_entry | (base_score & base_context)).fillna(False)
-        if mode == "prior_level_confirm":
-            return (close.gt(prior_vah) & (base_score | base_context)).fillna(False)
-        return (base_score | base_context).fillna(False)
-
-    @staticmethod
-    def _sieve2_market_guard(
-        frame: DataFrame,
-        mode: str,
-        pressure_min: float,
-        trend_min: float,
-    ) -> Series:
-        pressure = _num(frame, "s2m_pressure_ratio")
-        trend = _num(frame, "s2m_trend_z")
-        directional_pressure = pressure.ge(pressure_min)
-        trend_state = trend.ge(trend_min)
-        avoids_adverse_pressure = pressure.ge(-pressure_min)
-        avoids_adverse_trend = trend.ge(-trend_min)
-        if mode == "pressure_and_trend":
-            return (directional_pressure & trend_state).fillna(False)
-        if mode == "directional_pressure":
-            return directional_pressure.fillna(False)
-        if mode == "trend_state":
-            return trend_state.fillna(False)
-        if mode == "avoid_adverse_pressure":
-            return (avoids_adverse_pressure & avoids_adverse_trend).fillna(False)
-        if mode == "avoid_chop":
-            return (pressure.abs().ge(pressure_min) | trend.abs().ge(trend_min)).fillna(False)
-        return (directional_pressure | trend_state).fillna(False)
-
-    def _apply_sieve2_optional_guards(self, dataframe: DataFrame, condition: Series) -> Series:
-        guarded = pd.Series(condition, index=dataframe.index).fillna(False).astype(bool)
-        if bool(self.use_sieve2_vp_guard.value):
-            guarded &= self._sieve2_vp_guard(
-                dataframe,
-                str(self.sieve2_vp_guard_mode.value),
-                float(self.sieve2_vp_score_min.value),
-                float(self.sieve2_vp_context_min.value),
-            )
-        if bool(self.use_sieve2_market_guard.value):
-            guarded &= self._sieve2_market_guard(
-                dataframe,
-                str(self.sieve2_market_guard_mode.value),
-                float(self.sieve2_market_pressure_min.value),
-                float(self.sieve2_market_trend_min.value),
-            )
-        return guarded.fillna(False)
-
-    def _vp_confirm(self, dataframe: DataFrame) -> Series:
-        score_long = _num(dataframe, "vp_score_long")
-        bull_context = _num(dataframe, "vp_context_score_bull")
-        bear_context = _num(dataframe, "vp_context_score_bear")
-        market = _num(dataframe, "vp_market_context")
-        return (
-            score_long.ge(float(self.vp_score_min.value))
-            & bull_context.ge(float(self.vp_context_min.value))
-            & bull_context.ge(bear_context)
-            & market.ge(0.0)
-        )
-
-    def _add_tlv2(self, dataframe: DataFrame) -> DataFrame:
-        return add_trendline_projection_v2(
-            dataframe,
-            timeframe=self.timeframe,
-            pivot_strength=int(self.pivot_strength.value),
-            raw_line_output_count=1,
-            min_output_line_score=float(self.min_line_score.value),
-            min_output_active_bars=int(self.min_active_bars.value),
-            max_active_line_distance_atr_mult=float(self.max_distance_atr.value),
-            proximity_rank_weight=float(self.proximity_rank_weight.value),
-            output_prefix="tlv2",
-        )
-
-    def _tlv2_trigger(self, dataframe: DataFrame) -> Series:
-        close = _num(dataframe, "close")
-        line = _num(dataframe, "tlv2_resistance_line_rank0", np.nan)
-        score = _num(dataframe, "tlv2_resistance_score_rank0")
-        distance = _num(dataframe, "tlv2_resistance_distance_atr_rank0", np.nan)
-        active = score.ge(float(self.min_line_score.value)) & distance.le(
-            float(self.max_distance_atr.value)
-        )
-        return active & _cross_above(close, line.mul(1.0 + float(self.line_buffer_pct.value)))
-
-    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        _ = metadata
-        frame = self._add_tlv2(dataframe)
-        frame = self._add_vp(frame)
-        frame = self._add_sieve2_guard_indicators(frame)
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict[str, object]) -> DataFrame:
+        frame = dataframe.copy()
+        dp = getattr(self, "dp", None)
+        if dp is not None and metadata and metadata.get("pair"):
+            pair = str(metadata["pair"])
+            for timeframe in ("4h", "1d"):
+                informative = dp.get_pair_dataframe(pair=pair, timeframe=timeframe)
+                if informative is not None and not informative.empty:
+                    informative = self._features(informative.copy(), timeframe)
+                    frame = merge_informative_pair(
+                        frame, informative, self.timeframe, timeframe, ffill=True
+                    )
+                    frame = frame.rename(
+                        columns=lambda column, tf=timeframe: column.replace(f"_{tf}_{tf}", f"_{tf}")
+                    )
+        frame = self._features(frame, "1h")
         high = _num(frame, "high")
         low = _num(frame, "low")
         frame["s3v2_prior_high_48"] = high.shift(1).rolling(48, min_periods=12).max()
@@ -907,20 +633,41 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
         frame["s3v2_prior_low_48"] = low.shift(1).rolling(48, min_periods=12).min()
         return frame
 
-    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+    def _daily_trend_ok(self, frame: DataFrame) -> Series:
+        if not bool(self.use_daily_trend.value):
+            return pd.Series(True, index=frame.index, dtype="bool")
+        return _num(frame, "ema_fast_1d").gt(_num(frame, "ema_slow_1d"))
+
+    def _h4_compression_ok(self, frame: DataFrame) -> Series:
+        if not bool(self.use_h4_compression.value):
+            return pd.Series(True, index=frame.index, dtype="bool")
+        return _num(frame, "bb_width_4h").le(float(self.bb_width_max.value))
+
+    def _volume_ok(self, frame: DataFrame) -> Series:
+        if not bool(self.use_volume_filter.value):
+            return pd.Series(True, index=frame.index, dtype="bool")
+        return _num(frame, "volume_ratio_1h").ge(float(self.volume_ratio_min.value))
+
+    def _entry_condition(self, frame: DataFrame) -> Series:
+        close = _num(frame, "close")
+        breakout = close.gt(_num(frame, "high").shift(1).rolling(20, min_periods=5).max())
+        return (
+            self._daily_trend_ok(frame)
+            & self._h4_compression_ok(frame)
+            & self._volume_ok(frame)
+            & _num(frame, "macd_hist_1d").gt(0.0)
+            & breakout
+        ).fillna(False)
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict[str, object]) -> DataFrame:
         _ = metadata
-        dataframe["enter_long"] = 0
-        dataframe["enter_short"] = 0
-        dataframe["enter_tag"] = None
-        condition = self._tlv2_trigger(dataframe) & self._vp_confirm(dataframe)
-        condition &= self._common_guards(dataframe)
-        condition = self._apply_sieve2_optional_guards(dataframe, condition)
-        valid = condition.fillna(False) & dataframe["volume"].gt(0.0) & dataframe["close"].notna()
-        dataframe.loc[valid, "enter_long"] = 1
-        dataframe.loc[valid, "enter_tag"] = ENTRY_TAG
+        dataframe.loc[self._entry_condition(dataframe), ["enter_long", "enter_tag"]] = (
+            1,
+            ENTRY_TAG,
+        )
         return dataframe
 
-    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict[str, object]) -> DataFrame:
         _ = metadata
         dataframe["exit_long"] = 0
         dataframe["exit_short"] = 0
@@ -962,16 +709,16 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
     def _frozen_targets(
         self, row: Series | None, entry_rate: float
     ) -> tuple[dict[str, float | None], dict[str, str | None], float | None, float | None]:
-        broken = _finite_float(row.get("tlv2_resistance_line_rank0")) if row is not None else None
+        broken = _finite_float(row.get("prior_high_1h")) if row is not None else None
         support = _finite_float(row.get("s3v2_prior_low_48")) if row is not None else None
         if support is not None and support >= entry_rate:
             support = None
 
         raw: dict[str, float | None] = {
-            "hvn": self._directional_target(row.get("vp_hvn_above"), entry_rate)
+            "d1_high": self._directional_target(row.get("prior_high_1d"), entry_rate)
             if row is not None
             else None,
-            "vah": self._directional_target(row.get("vp_vah"), entry_rate)
+            "h4_high": self._directional_target(row.get("prior_high_4h"), entry_rate)
             if row is not None
             else None,
             "prior48": self._directional_target(row.get("s3v2_prior_high_48"), entry_rate)
@@ -980,15 +727,13 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
             "prior96": self._directional_target(row.get("s3v2_prior_high_96"), entry_rate)
             if row is not None
             else None,
-            "measured_half": None,
-            "measured_full": None,
+            "range_half": None,
+            "range_full": None,
         }
         if broken is not None and support is not None and broken > support:
             measured_range = broken - support
-            raw["measured_half"] = self._directional_target(
-                broken + measured_range * 0.5, entry_rate
-            )
-            raw["measured_full"] = self._directional_target(broken + measured_range, entry_rate)
+            raw["range_half"] = self._directional_target(broken + measured_range * 0.5, entry_rate)
+            raw["range_full"] = self._directional_target(broken + measured_range, entry_rate)
 
         targets: dict[str, float | None] = {}
         providers: dict[str, str | None] = {}
@@ -1187,17 +932,17 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
     @staticmethod
     def _invalidation_event(
         mode: str,
-        level_1: bool,
-        level_2: bool,
-        context_2: bool,
-        combined_1: bool,
+        source_ltf: bool,
+        ltf_h4: bool,
+        h4_d1: bool,
+        any_two: bool,
     ) -> bool:
         return {
             "none": False,
-            "level1": level_1,
-            "level2": level_2,
-            "context2": context_2,
-            "combined1": combined_1,
+            "source_ltf": source_ltf,
+            "ltf_h4": ltf_h4,
+            "h4_d1": h4_d1,
+            "any_two": any_two,
         }.get(mode, False)
 
     def _events(
@@ -1208,7 +953,7 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
         current_time: datetime,
         current_rate: float,
         current_profit: float,
-    ) -> tuple[dict[str, bool], dict[str, Any]]:
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         plan = EXIT_PLANS[state["plan"]]
         targets = state.get("targets", {})
         target_frame = frame
@@ -1253,25 +998,37 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
         }:
             state["phase"] = "TARGET_ZONE"
 
-        close = _num(frame, "close")
+        decision_frame = target_frame
+        close = _num(decision_frame, "close")
         broken = _finite_float(state.get("broken_resistance"))
-        support = _finite_float(state.get("structural_support"))
-        if broken is None or frame.empty:
-            level_condition = pd.Series(False, index=frame.index, dtype="bool")
+        if broken is None or decision_frame.empty:
+            source_condition = pd.Series(False, index=decision_frame.index, dtype="bool")
         else:
-            level_condition = close.lt(broken * (1.0 - LEVEL_BAND))
-        context_condition = _num(frame, "vp_context_score_bear").gt(
-            _num(frame, "vp_context_score_bull")
-        ) & _num(frame, "vp_market_context").lt(0.0)
-        level_1 = self._last_n(level_condition, 1)
-        level_2 = self._last_n(level_condition, 2)
-        context_1 = self._last_n(context_condition, 1)
-        context_2 = self._last_n(context_condition, 2)
-        combined_1 = level_1 and context_1
-        support_failure = bool(
-            support is not None
-            and not frame.empty
-            and float(close.iloc[-1]) < support * (1.0 - LEVEL_BAND)
+            source_condition = close.lt(broken * (1.0 - LEVEL_BAND))
+
+        ltf_condition = (
+            close.lt(_num(decision_frame, "ema_fast_1h", np.nan))
+            & _num(decision_frame, "macd_hist_1h", np.nan).le(0.0)
+            & _num(decision_frame, "volume_ratio_1h", np.nan).lt(1.0)
+        )
+        h4_condition = _num(decision_frame, "ema_fast_4h", np.nan).le(
+            _num(decision_frame, "ema_slow_4h", np.nan)
+        ) & _num(decision_frame, "macd_hist_4h", np.nan).le(0.0)
+        d1_condition = _num(decision_frame, "macd_hist_1d", np.nan).le(0.0) & _num(
+            decision_frame, "ema_fast_1d", np.nan
+        ).le(_num(decision_frame, "ema_slow_1d", np.nan))
+
+        source_failure = self._last_n(source_condition, 2)
+        ltf_failure = self._last_n(ltf_condition, 2)
+        h4_failure = self._last_n(h4_condition, 1)
+        d1_failure = self._last_n(d1_condition, 1)
+        source_ltf = source_failure and ltf_failure
+        ltf_h4 = ltf_failure and h4_failure
+        h4_d1 = h4_failure and d1_failure
+        failure_count = sum((source_failure, ltf_failure, h4_failure, d1_failure))
+        any_two = failure_count >= 2
+        hard_failure = (source_failure and d1_failure) or (
+            source_failure and ltf_failure and h4_failure
         )
 
         age_candles = len(target_frame)
@@ -1285,12 +1042,15 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
             plan.progress_candles and age_candles >= plan.progress_candles and favorable < 0.01
         )
         return {
-            "hard_invalidation": (
-                False if plan.role == "baseline" else support_failure or (level_2 and context_1)
-            ),
+            "hard_invalidation": False if plan.role == "baseline" else hard_failure,
             "invalidation": self._invalidation_event(
-                plan.invalidation, level_1, level_2, context_2, combined_1
+                plan.invalidation, source_ltf, ltf_h4, h4_d1, any_two
             ),
+            "source_failure": source_failure,
+            "ltf_failure": ltf_failure,
+            "h4_failure": h4_failure,
+            "d1_failure": d1_failure,
+            "failure_count": failure_count,
             "target_1": confirmed_1,
             "target_2": confirmed_2,
             "time_failure": time_failure,
@@ -1306,20 +1066,23 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
         }, state
 
     @staticmethod
+    def _priority_full_exit_tag(state: dict[str, Any], events: dict[str, Any]) -> str | None:
+        if state.get("terminal_exit_pending"):
+            return str(state.get("terminal_exit_tag") or "s3v2_hard_invalidation")
+        if events.get("hard_invalidation"):
+            return "s3v2_hard_invalidation"
+        return None
+
+    @classmethod
     def evaluate_policy(
+        cls,
         plan: ExitPlan,
         state: dict[str, Any],
         events: dict[str, Any],
     ) -> ExitDecision:
-        if state.get("partial_pending"):
-            return ExitDecision("hold")
-        if state.get("terminal_exit_pending"):
-            return ExitDecision(
-                "full",
-                str(state.get("terminal_exit_tag") or "s3v2_hard_invalidation"),
-            )
-        if events.get("hard_invalidation"):
-            return ExitDecision("full", "s3v2_hard_invalidation")
+        priority_tag = cls._priority_full_exit_tag(state, events)
+        if priority_tag is not None:
+            return ExitDecision("full", priority_tag)
         if plan.invalidation_action == "full" and events.get("invalidation"):
             return ExitDecision("full", "s3v2_plan_invalidation")
         if events.get("time_failure"):
@@ -1376,20 +1139,16 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
             trade, state, frame, current_time, current_rate, current_profit
         )
         plan = EXIT_PLANS[state["plan"]]
+        decision = self.evaluate_policy(plan, state, events)
         state["partial_pending"] = partial_pending
         if partial_pending:
             state["phase"] = "REALIZATION_PENDING"
-            evaluable_state = dict(state)
-            evaluable_state["partial_pending"] = False
-            deferred = self.evaluate_policy(plan, evaluable_state, events)
-            if deferred.action == "full":
+            if decision.action == "full":
                 state["terminal_exit_pending"] = True
-                state["terminal_exit_tag"] = (
-                    deferred.tag or "s3v2_deferred_full_exit"
-                )
+                state["terminal_exit_tag"] = decision.tag
         if state != previous:
             self._save_state(trade, state)
-        return plan, state, events, self.evaluate_policy(plan, state, events)
+        return plan, state, events, decision
 
     def custom_exit(
         self,
@@ -1493,9 +1252,6 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
     ) -> float:
         entry_rate = float(state.get("entry_rate") or current_rate)
         stop_price = entry_rate * (1.0 - plan.hard_stop)
-        support = _finite_float(state.get("structural_support"))
-        if plan.role != "baseline" and support is not None and support < entry_rate:
-            stop_price = max(stop_price, support * (1.0 - LEVEL_BAND))
         if state.get("partial_filled"):
             if plan.remainder == "breakeven":
                 stop_price = max(stop_price, entry_rate * 1.001)

@@ -1,11 +1,16 @@
+# ruff: noqa: S101
+
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from hashlib import sha256
 from pathlib import Path
 from shutil import copy2
 from tempfile import TemporaryDirectory
 from typing import Any
+from zipfile import ZipFile
 
 import numpy as np
 import pandas as pd
@@ -15,71 +20,61 @@ from freqtrade.persistence import Trade
 from freqtrade.persistence.usedb_context import FtNoDBContext
 from freqtrade.resolvers import StrategyResolver
 from freqtrade.strategy import IStrategy
-from user_data.strategies.sieve3_exit_breakeven_from_multi2_tlv2_vp_res_break_vp_bullctx_long_1h import (
-    Sieve3ExitBreakevenFromMulti2Tlv2VpResBreakVpBullctxLong1H,
+from user_data.strategies import (
+    sieve3_V2_integrated_from_mtf_std_daily_macd_volume_breakout_long_1h as strategy_module,
 )
-from user_data.strategies.sieve3_V2_integrated_from_multi2_tlv2_vp_res_break_vp_bullctx_long_1h import (
-    EXIT_PLANS,
-    PARTIAL_TAGS,
-    STATE_KEY,
-    STATE_VERSION,
-    ExitDecision,
-    Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H,
+
+
+ENTRY_SOURCE_STAGE = strategy_module.ENTRY_SOURCE_STAGE
+EXIT_HYPOTHESIS = strategy_module.EXIT_HYPOTHESIS
+EXIT_PLANS = strategy_module.EXIT_PLANS
+PARTIAL_TAGS = strategy_module.PARTIAL_TAGS
+RESEARCH_PATH = strategy_module.RESEARCH_PATH
+SIEVE_STAGE = strategy_module.SIEVE_STAGE
+SOURCE_RESULT_BATCH = strategy_module.SOURCE_RESULT_BATCH
+SOURCE_STRATEGY = strategy_module.SOURCE_STRATEGY
+STATE_KEY = strategy_module.STATE_KEY
+STATE_VERSION = strategy_module.STATE_VERSION
+TARGET_PROVIDER_CHAINS = strategy_module.TARGET_PROVIDER_CHAINS
+ExitDecision = strategy_module.ExitDecision
+Sieve3V2IntegratedFromMtfStdDailyMacdVolumeBreakoutLong1H = (
+    strategy_module.Sieve3V2IntegratedFromMtfStdDailyMacdVolumeBreakoutLong1H
 )
 
 
 STRATEGY_PATH = Path(
-    "user_data/strategies/sieve3_V2_integrated_from_multi2_tlv2_vp_res_break_vp_bullctx_long_1h.py"
+    "user_data/strategies/sieve3_V2_integrated_from_mtf_std_daily_macd_volume_breakout_long_1h.py"
 )
 DATA_PATH = Path("user_data/data/binance/futures/BTC_USDT_USDT-1h-futures.feather")
+DATA_4H_PATH = Path("user_data/data/binance/futures/BTC_USDT_USDT-4h-futures.feather")
+DATA_1D_PATH = Path("user_data/data/binance/futures/BTC_USDT_USDT-1d-futures.feather")
+ORACLE_ZIP_PATH = Path(
+    "user_data/Custom_Launcher/launcher_v2/runtime/entry_sieve/backtests/"
+    "sieve2_mtf_std_daily_macd_volume_breakout_long_1h__auto_generic_1h_2020_q2_q3/"
+    "full_cycle_2020_2026/tp_3_sl_3/backtest-result-2026-06-12_08-38-35.zip"
+)
+ORACLE_SOURCE_SHA256 = "c8e78309683f277548e9ac9e3a929ae475a6daa4c197d6060eed4eaf7455b18f"
+ORACLE_RESULT_SHA256 = "ea1713135c6646f6db870cc7fa3e3e673310ec70061eb31f627e49d1d1960f09"
+ORACLE_LOCK_SHA256 = "932d20bed431b8f58d4b8bc0309fa9f289fdc9ea66e3a1fdf2df503932b15e02"
+EFFECTIVE_BUY_LOCK_SHA256 = "e97f93bfde27c64de9ffa158a06ce4f9017363dcddcd9fabea71071cdbcf0a58"
+ORACLE_CLASS = "Sieve2MtfStdDailyMacdVolumeBreakoutLong1h"
 
 
 LOCKED_BUY_DEFAULTS: dict[str, Any] = {
-    "use_sieve2_vp_guard": False,
-    "sieve2_vp_guard_mode": "score_or_context",
-    "sieve2_vp_window": 96,
-    "sieve2_vp_bins": 36,
-    "sieve2_vp_score_min": 0.25,
-    "sieve2_vp_context_min": 0.28,
-    "use_sieve2_market_guard": False,
-    "sieve2_market_guard_mode": "pressure_or_trend",
-    "sieve2_market_window": 24,
-    "sieve2_market_pressure_min": 0.07,
-    "sieve2_market_trend_min": 0.25,
-    "sieve2_rs_benchmark_pair": "BTC/USDT:USDT",
-    "sieve2_rs_score_min": 0.45,
-    "use_volume_guard": True,
-    "volume_guard_window": 24,
-    "volume_ratio_min": 1.6,
-    "use_pressure_guard": True,
-    "pressure_window": 24,
-    "pressure_min": 0.15,
-    "use_accumulation_guard": False,
-    "use_body_direction_guard": False,
-    "use_close_direction_guard": False,
-    "vp_window": 96,
-    "vp_bins": 48,
-    "vp_value_area_pct": 0.70,
-    "vp_price_source": "hlc3",
-    "vp_smooth_bins": 3,
-    "vp_hvn_threshold": 0.70,
-    "vp_lvn_threshold": 0.35,
-    "vp_pressure_delta_min": 0.05,
-    "vp_node_near_pct": 0.010,
-    "vp_volume_percentile_min": 0.55,
-    "vp_score_window": 48,
-    "vp_fast_traverse_atr_mult": 1.2,
-    "vp_entry_score_margin": 0.02,
-    "vp_score_min": 0.4,
-    "vp_context_min": 0.28,
-    "vp_level_buffer_pct": 0.016,
-    "pivot_strength": 2,
-    "min_line_score": 0.6,
-    "min_active_bars": 8,
-    "max_distance_atr": 3.0,
-    "proximity_rank_weight": 0.05,
-    "line_buffer_pct": 0.0,
-    "line_slope_min_pct": 0.0005,
+    "bb_len": 52,
+    "bb_width_max": 0.13,
+    "ema_fast_len": 43,
+    "ema_slow_len": 139,
+    "retest_buffer_pct": 0.026,
+    "rsi_len": 23,
+    "rsi_long_min": 42,
+    "rsi_short_max": 41,
+    "use_daily_trend": False,
+    "use_h4_compression": False,
+    "use_momentum_filter": True,
+    "use_retest": True,
+    "use_volume_filter": True,
+    "volume_ratio_min": 1.67,
 }
 
 
@@ -113,9 +108,7 @@ class FakeTrade:
     @property
     def open_orders(self) -> list[FakeOrder]:
         return [
-            order
-            for order in self.orders
-            if order.ft_is_open and order.ft_order_side != "stoploss"
+            order for order in self.orders if order.ft_is_open and order.ft_order_side != "stoploss"
         ]
 
     def get_custom_data(self, key: str) -> Any:
@@ -126,16 +119,130 @@ class FakeTrade:
 
 
 class FakeDataProvider:
-    def __init__(self, frame: pd.DataFrame) -> None:
+    def __init__(
+        self,
+        frame: pd.DataFrame,
+        informative: dict[str, pd.DataFrame] | None = None,
+    ) -> None:
         self.frame = frame
+        self.informative = informative or {}
 
     def get_analyzed_dataframe(self, pair: str, timeframe: str):
         _ = pair, timeframe
         return self.frame.copy(), None
 
+    def current_whitelist(self) -> list[str]:
+        return ["BTC/USDT:USDT"]
 
-def _strategy() -> Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H:
-    return Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H({})
+    def get_pair_dataframe(self, pair: str, timeframe: str) -> pd.DataFrame:
+        _ = pair
+        return self.informative[timeframe].copy()
+
+
+def _oracle_members() -> tuple[bytes, bytes, dict[str, Any]]:
+    with ZipFile(ORACLE_ZIP_PATH) as archive:
+        names = archive.namelist()
+        source_name = next(name for name in names if name.endswith(f"_{ORACLE_CLASS}.py"))
+        lock_name = next(name for name in names if name.endswith(f"_{ORACLE_CLASS}.json"))
+        result_name = next(
+            name
+            for name in names
+            if name.endswith(".json")
+            and not name.endswith("_config.json")
+            and not name.endswith(f"_{ORACLE_CLASS}.json")
+        )
+        return (
+            archive.read(source_name),
+            archive.read(lock_name),
+            json.loads(archive.read(result_name)),
+        )
+
+
+def _oracle_strategy() -> IStrategy:
+    source, lock_bytes, _ = _oracle_members()
+    with TemporaryDirectory() as temp_dir:
+        Path(temp_dir, "sieve2_mtf_std_daily_macd_volume_breakout_long_1h.py").write_bytes(source)
+        strategy = StrategyResolver.load_strategy(
+            {
+                "strategy": ORACLE_CLASS,
+                "strategy_path": temp_dir,
+                "recursive_strategy_search": False,
+                "user_data_dir": Path("user_data"),
+                "timeframe": "1h",
+                "stake_currency": "USDT",
+                "stake_amount": 100,
+                "max_open_trades": 5,
+                "dry_run": True,
+                "trading_mode": "futures",
+                "margin_mode": "isolated",
+                "exchange": {
+                    "name": "binance",
+                    "pair_whitelist": [],
+                    "pair_blacklist": [],
+                },
+            }
+        )
+    locked = json.loads(lock_bytes)["params"]["buy"]
+    for name, value in locked.items():
+        getattr(strategy, name).value = value
+    return strategy
+
+
+def _historical_provider(frame: pd.DataFrame) -> FakeDataProvider:
+    return FakeDataProvider(
+        frame,
+        {
+            "4h": pd.read_feather(DATA_4H_PATH),
+            "1d": pd.read_feather(DATA_1D_PATH),
+        },
+    )
+
+
+def _strategy() -> Sieve3V2IntegratedFromMtfStdDailyMacdVolumeBreakoutLong1H:
+    return Sieve3V2IntegratedFromMtfStdDailyMacdVolumeBreakoutLong1H({})
+
+
+def test_authoritative_oracle_hashes_and_three_four_execution_correction() -> None:
+    source, lock_bytes, result = _oracle_members()
+    executed = result["strategy"][ORACLE_CLASS]
+
+    assert sha256(ORACLE_ZIP_PATH.read_bytes()).hexdigest() == ORACLE_RESULT_SHA256
+    assert sha256(source).hexdigest() == ORACLE_SOURCE_SHA256
+    assert sha256(lock_bytes).hexdigest() == ORACLE_LOCK_SHA256
+    assert json.loads(lock_bytes)["params"]["buy"] == LOCKED_BUY_DEFAULTS
+    effective_lock = json.dumps(LOCKED_BUY_DEFAULTS, sort_keys=True, separators=(",", ":")).encode()
+    assert sha256(effective_lock).hexdigest() == EFFECTIVE_BUY_LOCK_SHA256
+    assert executed["minimal_roi"] == {"0": 0.03}
+    assert executed["stoploss"] == -0.04
+    assert executed["total_trades"] == 2192
+
+
+def test_machine_readable_lineage_matches_the_promoted_source_and_behavior() -> None:
+    expected = {
+        "SIEVE_STAGE": "sieve3",
+        "SOURCE_STRATEGY": "sieve2_mtf_std_daily_macd_volume_breakout_long_1h",
+        "SOURCE_RESULT_BATCH": (
+            "20260612T071622_entry_sieve2_top_level_clear100_cores8_20260612_01_retry01"
+        ),
+        "RESEARCH_PATH": "sieve3_v2_integrated_mtf_structure_exit",
+        "ENTRY_SOURCE_STAGE": "sieve2",
+        "EXIT_HYPOTHESIS": (
+            "Frozen MTF prior highs, causal structural highs, and measured-range targets "
+            "interact with multi-source invalidation through complete layered "
+            "long-management policies."
+        ),
+    }
+    module_values = {
+        "SIEVE_STAGE": SIEVE_STAGE,
+        "SOURCE_STRATEGY": SOURCE_STRATEGY,
+        "SOURCE_RESULT_BATCH": SOURCE_RESULT_BATCH,
+        "RESEARCH_PATH": RESEARCH_PATH,
+        "ENTRY_SOURCE_STAGE": ENTRY_SOURCE_STAGE,
+        "EXIT_HYPOTHESIS": EXIT_HYPOTHESIS,
+    }
+    assert module_values == expected
+    strategy = _strategy()
+    assert {name: getattr(strategy, name) for name in expected} == expected
 
 
 def test_standalone_contract_and_locked_entry_surface() -> None:
@@ -143,8 +250,10 @@ def test_standalone_contract_and_locked_entry_surface() -> None:
     assert strategy.__class__.__bases__ == (IStrategy,)
     source = STRATEGY_PATH.read_text(encoding="utf-8")
     assert "user_data.strategies" not in source
-    assert "tlv2_support_line_rank0" not in source
+    assert "_sieve3_exit_rework_core" not in source
+    assert "tlv2" not in source.lower()
 
+    assert strategy.can_short is False
     assert strategy.use_exit_signal is True
     assert strategy.use_custom_stoploss is True
     assert strategy.use_custom_roi is True
@@ -166,6 +275,9 @@ def test_standalone_contract_and_locked_entry_surface() -> None:
         for name in dir(strategy)
         if getattr(strategy, name, None).__class__.__name__.endswith("Parameter")
     }
+    assert {name for name, value in parameters.items() if value.space == "buy"} == set(
+        LOCKED_BUY_DEFAULTS
+    )
     active = {name for name, value in parameters.items() if value.optimize}
     assert active == {"exit_policy_plan"}
     assert strategy.exit_policy_plan.space == "sell"
@@ -175,7 +287,7 @@ def test_freqtrade_strategy_resolver_loads_v2_module() -> None:
     with TemporaryDirectory() as temp_dir:
         copy2(STRATEGY_PATH, Path(temp_dir) / STRATEGY_PATH.name)
         config = {
-            "strategy": "Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H",
+            "strategy": "Sieve3V2IntegratedFromMtfStdDailyMacdVolumeBreakoutLong1H",
             "strategy_path": temp_dir,
             "recursive_strategy_search": False,
             "user_data_dir": Path("user_data"),
@@ -199,7 +311,7 @@ def test_freqtrade_strategy_resolver_loads_v2_module() -> None:
 
 
 def test_exit_plans_are_compact_unique_whole_policies() -> None:
-    assert 20 <= len(EXIT_PLANS) <= 50
+    assert len(EXIT_PLANS) == 32
     assert len(EXIT_PLANS) == len(set(EXIT_PLANS.values()))
     assert {plan.role for plan in EXIT_PLANS.values()} >= {
         "baseline",
@@ -211,16 +323,77 @@ def test_exit_plans_are_compact_unique_whole_policies() -> None:
         "dual_target",
         "progress_failure",
     }
+    integrated_roles = {
+        "target_partial",
+        "invalidation_reduce",
+        "target_tighten",
+        "dual_target",
+        "progress_failure",
+    }
+    integrated = [plan for plan in EXIT_PLANS.values() if plan.role in integrated_roles]
+    assert len(integrated) == 20
+    assert len(integrated) >= len(EXIT_PLANS) / 2
+
+    target_families = {
+        target
+        for plan in EXIT_PLANS.values()
+        for target in (plan.target_1, plan.target_2)
+        if target is not None
+    }
+    assert target_families == set(TARGET_PROVIDER_CHAINS)
+    raw_families = {
+        "d1_high",
+        "h4_high",
+        "prior48",
+        "prior96",
+        "range_half",
+        "range_full",
+    }
+    assert set(TARGET_PROVIDER_CHAINS["nearest"]) == raw_families
+    for family in raw_families:
+        assert TARGET_PROVIDER_CHAINS[family] == (family,)
+    assert all(
+        provider in raw_families for chain in TARGET_PROVIDER_CHAINS.values() for provider in chain
+    )
     pure_targets = [plan for plan in EXIT_PLANS.values() if plan.role == "target_full"]
     assert pure_targets
     assert all(
-        plan.invalidation == "none" and plan.invalidation_action == "hold"
-        for plan in pure_targets
+        plan.invalidation == "none" and plan.invalidation_action == "hold" for plan in pure_targets
     )
+    assert EXIT_PLANS["baseline_3_3"].fixed_tp == 0.03
+    assert EXIT_PLANS["baseline_3_3"].hard_stop == 0.03
+    assert EXIT_PLANS["promotion_oracle_3_4"].fixed_tp == 0.03
+    assert EXIT_PLANS["promotion_oracle_3_4"].hard_stop == 0.04
+
+
+def test_plan_names_match_executable_signatures_and_invalidation_is_multi_source() -> None:
+    multi_source_modes = {"source_ltf", "ltf_h4", "h4_d1", "any_two"}
+    for name, plan in EXIT_PLANS.items():
+        if plan.invalidation != "none":
+            assert plan.invalidation in multi_source_modes, name
+            assert plan.invalidation in name, name
+        if plan.partial_fraction == 0.33:
+            assert "p33" in name or "reduce33" in name or "runner" in name, name
+        if plan.partial_fraction == 0.50:
+            assert "p50" in name or "reduce50" in name or "runner" in name, name
+        if plan.remainder == "breakeven":
+            assert "be" in name, name
+        if plan.remainder == "trail" and plan.role != "dual_target":
+            assert "trail" in name, name
+
+    pure_invalidations = {
+        name: plan for name, plan in EXIT_PLANS.items() if plan.role == "invalidation_full"
+    }
+    assert set(pure_invalidations) == {
+        "source_ltf_full",
+        "ltf_h4_full",
+        "h4_d1_full",
+        "any_two_full",
+    }
 
 
 def test_every_declared_plan_action_is_reachable() -> None:
-    strategy_class = Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H
+    strategy_class = Sieve3V2IntegratedFromMtfStdDailyMacdVolumeBreakoutLong1H
     for name, plan in EXIT_PLANS.items():
         empty_state = {"partial_pending": False, "partial_filled": False}
         if plan.role == "baseline":
@@ -245,48 +418,53 @@ def test_every_declared_plan_action_is_reachable() -> None:
 
 
 def test_pure_evaluator_priority_and_actions() -> None:
-    partial_plan = EXIT_PLANS["hvn_touch_p33_be_level2"]
+    partial_plan = EXIT_PLANS["prior48_touch_p33_be_any_two"]
     pending = {"partial_pending": True, "partial_filled": False}
-    assert (
-        Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H.evaluate_policy(
-            partial_plan,
-            pending,
-            {"hard_invalidation": True, "target_1": True},
-        ).action
-        == "hold"
-    )
-    assert (
-        Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H.evaluate_policy(
-            partial_plan,
-            pending,
-            {"invalidation": True, "target_1": True},
-        ).action
-        == "hold"
-    )
-    assert (
-        Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H.evaluate_policy(
-            partial_plan,
-            pending,
-            {"target_1": True},
-        ).action
-        == "hold"
+    legacy_deferred = {
+        "partial_pending": False,
+        "partial_filled": False,
+        "terminal_exit_pending": True,
+    }
+    assert Sieve3V2IntegratedFromMtfStdDailyMacdVolumeBreakoutLong1H.evaluate_policy(
+        partial_plan,
+        legacy_deferred,
+        {},
+    ) == ExitDecision("full", "s3v2_hard_invalidation")
+    assert Sieve3V2IntegratedFromMtfStdDailyMacdVolumeBreakoutLong1H.evaluate_policy(
+        partial_plan,
+        pending,
+        {"hard_invalidation": True, "target_1": True},
+    ) == ExitDecision("full", "s3v2_hard_invalidation")
+    assert Sieve3V2IntegratedFromMtfStdDailyMacdVolumeBreakoutLong1H.evaluate_policy(
+        partial_plan,
+        pending,
+        {"invalidation": True, "target_1": True},
+    ) == ExitDecision("full", "s3v2_plan_invalidation")
+    assert Sieve3V2IntegratedFromMtfStdDailyMacdVolumeBreakoutLong1H.evaluate_policy(
+        partial_plan,
+        pending,
+        {"target_1": True},
+    ) == ExitDecision(
+        "partial",
+        "s3v2_partial_target",
+        0.33,
     )
 
-    partial = Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H.evaluate_policy(
+    partial = Sieve3V2IntegratedFromMtfStdDailyMacdVolumeBreakoutLong1H.evaluate_policy(
         partial_plan,
         {"partial_pending": False, "partial_filled": False},
         {"target_1": True},
     )
     assert partial == ExitDecision("partial", "s3v2_partial_target", 0.33)
 
-    tighten = Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H.evaluate_policy(
-        EXIT_PLANS["level2_tighten"],
+    tighten = Sieve3V2IntegratedFromMtfStdDailyMacdVolumeBreakoutLong1H.evaluate_policy(
+        EXIT_PLANS["d1_touch_tighten_any_two"],
         {"partial_pending": False, "partial_filled": False},
-        {"invalidation": True},
+        {"target_1": True},
     )
-    assert tighten == ExitDecision("tighten", tighten="invalidation")
+    assert tighten == ExitDecision("tighten", tighten="target")
     assert (
-        Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H.evaluate_policy(
+        Sieve3V2IntegratedFromMtfStdDailyMacdVolumeBreakoutLong1H.evaluate_policy(
             partial_plan,
             {"partial_pending": False, "partial_filled": False},
             {},
@@ -299,11 +477,11 @@ def test_entry_freeze_uses_placement_candle_and_fill_is_idempotent() -> None:
     frame = pd.DataFrame(
         {
             "date": pd.to_datetime(["2024-01-01T00:00:00Z", "2024-01-01T01:00:00Z"], utc=True),
-            "tlv2_resistance_line_rank0": [99.0, 500.0],
-            "vp_hvn_above": [110.0, 600.0],
-            "vp_vah": [108.0, 590.0],
-            "s3v2_prior_high_48": [107.0, 580.0],
-            "s3v2_prior_high_96": [112.0, 570.0],
+            "prior_high_1h": [99.0, 500.0],
+            "prior_high_4h": [108.0, 610.0],
+            "prior_high_1d": [112.0, 620.0],
+            "s3v2_prior_high_48": [106.0, 580.0],
+            "s3v2_prior_high_96": [110.0, 570.0],
             "s3v2_prior_low_48": [95.0, 400.0],
         }
     )
@@ -316,20 +494,104 @@ def test_entry_freeze_uses_placement_candle_and_fill_is_idempotent() -> None:
     state = trade.get_custom_data(STATE_KEY)
     assert state["broken_resistance"] == 99.0
     assert state["structural_support"] == 95.0
-    assert state["targets"]["hvn"] == 110.0
+    assert state["targets"] == {
+        "d1_high": 112.0,
+        "h4_high": 108.0,
+        "prior48": 106.0,
+        "prior96": 110.0,
+        "range_half": 101.0,
+        "range_full": 103.0,
+        "nearest": 101.0,
+    }
+    assert state["target_providers"] == {
+        "d1_high": "d1_high",
+        "h4_high": "h4_high",
+        "prior48": "prior48",
+        "prior96": "prior96",
+        "range_half": "range_half",
+        "range_full": "range_full",
+        "nearest": "range_half",
+    }
 
     changed_order = FakeOrder("buy", safe_price=200.0)
     strategy.order_filled(trade.pair, trade, changed_order, delayed_fill)
     assert trade.get_custom_data(STATE_KEY) == state
 
     runner = _strategy()
-    runner.exit_policy_plan.value = "hvn_then_measured_runner"
+    runner.exit_policy_plan.value = "prior48_then_d1_runner_any_two"
     runner.dp = FakeDataProvider(frame)
     runner_trade = FakeTrade()
     runner.order_filled(runner_trade.pair, runner_trade, order, delayed_fill)
     runner_state = runner_trade.get_custom_data(STATE_KEY)
-    assert runner_state["targets"]["hvn"] == 110.0
-    assert runner_state["targets"]["measured_full"] is None
+    assert runner_state["targets"]["prior48"] == 106.0
+    assert runner_state["targets"]["d1_high"] == 112.0
+
+
+def test_real_frozen_targets_drive_every_retained_provider_family() -> None:
+    strategy = _strategy()
+    row = pd.Series(
+        {
+            "prior_high_1h": 99.0,
+            "prior_high_4h": 108.0,
+            "prior_high_1d": 112.0,
+            "s3v2_prior_high_48": 106.0,
+            "s3v2_prior_high_96": 110.0,
+            "s3v2_prior_low_48": 95.0,
+        }
+    )
+    targets, providers, broken, support = strategy._frozen_targets(row, 100.0)
+    cases = {
+        "d1_high_touch_full": ("d1_high", "full"),
+        "h4_high_reversal_full": ("h4_high", "full"),
+        "prior48_touch_full": ("prior48", "full"),
+        "prior96_reversal_full": ("prior96", "full"),
+        "range_half_touch_p33_be_source_ltf": ("range_half", "partial"),
+        "range_full_reversal_full": ("range_full", "full"),
+        "nearest_reversal_p50_trail_any_two": ("range_half", "partial"),
+    }
+
+    for plan_name, (expected_provider, expected_action) in cases.items():
+        plan = EXIT_PLANS[plan_name]
+        target = targets[plan.target_1]
+        assert target is not None
+        assert providers[plan.target_1] == expected_provider
+        frame = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2024-01-01T01:00:00Z"], utc=True),
+                "open": [target + 0.5],
+                "high": [target + 1.0],
+                "low": [target - 1.0],
+                "close": [target - 0.5],
+            }
+        )
+        state = {
+            "version": STATE_VERSION,
+            "plan": plan_name,
+            "phase": "ENTRY",
+            "entry_rate": 100.0,
+            "entry_filled_at": "2024-01-01T01:00:00+00:00",
+            "broken_resistance": broken,
+            "structural_support": support,
+            "targets": dict(targets),
+            "target_providers": dict(providers),
+            "target_1_touched_at": None,
+            "target_2_touched_at": None,
+            "partial_filled": False,
+            "terminal_exit_pending": False,
+            "terminal_exit_tag": None,
+        }
+        events, updated = strategy._events(
+            FakeTrade(),
+            state,
+            frame,
+            datetime(2024, 1, 1, 2, tzinfo=UTC),
+            float(target),
+            0.05,
+        )
+        assert events["target_1"] is True, plan_name
+        assert updated["target_1_touched_at"] is not None, plan_name
+        decision = strategy.evaluate_policy(plan, updated, events)
+        assert decision.action == expected_action, plan_name
 
 
 def test_partial_state_changes_only_after_exact_positive_fill() -> None:
@@ -339,7 +601,7 @@ def test_partial_state_changes_only_after_exact_positive_fill() -> None:
         STATE_KEY,
         {
             "version": STATE_VERSION,
-            "plan": "hvn_touch_p33_be_level2",
+            "plan": "prior48_touch_p33_be_any_two",
             "phase": "TARGET_ZONE",
             "partial_filled": False,
             "partial_target_stake": 330.0,
@@ -399,7 +661,7 @@ def test_partial_fill_reconciles_quantity_before_remainder_transition() -> None:
         STATE_KEY,
         {
             "version": STATE_VERSION,
-            "plan": "hvn_touch_p33_be_level2",
+            "plan": "prior48_touch_p33_be_any_two",
             "phase": "TARGET_ZONE",
             "partial_filled": False,
             "partial_target_stake": 330.0,
@@ -426,7 +688,7 @@ def test_partial_fill_reconciles_quantity_before_remainder_transition() -> None:
 
     trade.stake_amount = 835.0
     strategy._decision_context = lambda *args, **kwargs: (  # type: ignore[method-assign]
-        EXIT_PLANS["hvn_touch_p33_be_level2"],
+        EXIT_PLANS["prior48_touch_p33_be_any_two"],
         trade.get_custom_data(STATE_KEY),
         {},
         ExitDecision("partial", "s3v2_partial_target", 0.33),
@@ -501,14 +763,14 @@ def test_hard_invalidation_waits_for_partial_then_remains_sticky() -> None:
         STATE_KEY,
         {
             "version": STATE_VERSION,
-            "plan": "hvn_touch_p33_be_level2",
+            "plan": "prior48_touch_p33_be_any_two",
             "phase": "TARGET_ZONE",
             "entry_rate": 100.0,
             "entry_candle": "2024-01-01T00:00:00+00:00",
             "entry_filled_at": "2024-01-01T01:00:00+00:00",
             "broken_resistance": 99.0,
             "structural_support": 95.0,
-            "targets": {"hvn": 110.0},
+            "targets": {"prior48": 110.0},
             "target_1_touched_at": None,
             "target_2_touched_at": None,
             "partial_filled": False,
@@ -532,14 +794,14 @@ def test_hard_invalidation_waits_for_partial_then_remains_sticky() -> None:
     strategy.dp = FakeDataProvider(
         pd.DataFrame(
             {
-                "date": pd.to_datetime(["2024-01-01T01:00:00Z"], utc=True),
-                "open": [96.0],
-                "high": [97.0],
-                "low": [89.0],
-                "close": [90.0],
-                "vp_context_score_bull": [0.1],
-                "vp_context_score_bear": [0.5],
-                "vp_market_context": [-0.5],
+                "date": pd.to_datetime(["2024-01-01T01:00:00Z", "2024-01-01T02:00:00Z"], utc=True),
+                "open": [96.0, 95.0],
+                "high": [97.0, 96.0],
+                "low": [89.0, 88.0],
+                "close": [90.0, 89.0],
+                "ema_fast_1d": [90.0, 90.0],
+                "ema_slow_1d": [100.0, 100.0],
+                "macd_hist_1d": [-1.0, -1.0],
             }
         )
     )
@@ -547,110 +809,15 @@ def test_hard_invalidation_waits_for_partial_then_remains_sticky() -> None:
         strategy.custom_exit(
             trade.pair,
             trade,
-            datetime(2024, 1, 1, 2, tzinfo=UTC),
+            datetime(2024, 1, 1, 3, tzinfo=UTC),
             90.0,
             -0.10,
         )
         is None
     )
-    assert trade.get_custom_data(STATE_KEY)["terminal_exit_pending"] is True
-    assert (
-        trade.get_custom_data(STATE_KEY)["terminal_exit_tag"]
-        == "s3v2_hard_invalidation"
-    )
-
-    trade.orders.clear()
-    strategy.dp = FakeDataProvider(
-        pd.DataFrame(
-            {
-                "date": pd.to_datetime(["2024-01-01T02:00:00Z"], utc=True),
-                "open": [100.0],
-                "high": [101.0],
-                "low": [99.0],
-                "close": [100.0],
-                "vp_context_score_bull": [0.5],
-                "vp_context_score_bear": [0.1],
-                "vp_market_context": [0.5],
-            }
-        )
-    )
-    assert (
-        strategy.custom_exit(
-            trade.pair,
-            trade,
-            datetime(2024, 1, 1, 3, tzinfo=UTC),
-            100.0,
-            0.0,
-        )
-        == "s3v2_hard_invalidation"
-    )
-
-
-def test_plan_invalidation_waits_for_partial_and_keeps_original_reason() -> None:
-    strategy = _strategy()
-    trade = FakeTrade()
-    trade.set_custom_data(
-        STATE_KEY,
-        {
-            "version": STATE_VERSION,
-            "plan": "hvn_touch_p33_be_level2",
-            "phase": "TARGET_ZONE",
-            "entry_rate": 100.0,
-            "entry_candle": "2024-01-01T00:00:00+00:00",
-            "entry_filled_at": "2024-01-01T01:00:00+00:00",
-            "broken_resistance": 99.0,
-            "structural_support": 95.0,
-            "targets": {"hvn": 110.0},
-            "target_1_touched_at": None,
-            "target_2_touched_at": None,
-            "partial_filled": False,
-            "partial_target_stake": 330.0,
-            "partial_realized_stake": 0.0,
-            "partial_fill_order_ids": [],
-            "terminal_exit_pending": False,
-            "terminal_exit_tag": None,
-            "stop_floor": 95.0,
-        },
-    )
-    trade.orders.append(
-        FakeOrder(
-            "sell",
-            "s3v2_partial_target",
-            status="open",
-            ft_is_open=True,
-            order_id="pending-partial",
-        )
-    )
-    strategy.dp = FakeDataProvider(
-        pd.DataFrame(
-            {
-                "date": pd.to_datetime(
-                    ["2024-01-01T01:00:00Z", "2024-01-01T02:00:00Z"],
-                    utc=True,
-                ),
-                "open": [98.0, 98.0],
-                "high": [99.0, 99.0],
-                "low": [97.0, 97.0],
-                "close": [98.0, 98.0],
-                "vp_context_score_bull": [0.5, 0.5],
-                "vp_context_score_bear": [0.1, 0.1],
-                "vp_market_context": [0.5, 0.5],
-            }
-        )
-    )
-    assert (
-        strategy.custom_exit(
-            trade.pair,
-            trade,
-            datetime(2024, 1, 1, 3, tzinfo=UTC),
-            98.0,
-            -0.02,
-        )
-        is None
-    )
-    persisted = trade.get_custom_data(STATE_KEY)
-    assert persisted["terminal_exit_pending"] is True
-    assert persisted["terminal_exit_tag"] == "s3v2_plan_invalidation"
+    deferred = trade.get_custom_data(STATE_KEY)
+    assert deferred["terminal_exit_pending"] is True
+    assert deferred["terminal_exit_tag"] == "s3v2_hard_invalidation"
 
     trade.orders.clear()
     strategy.dp = FakeDataProvider(
@@ -661,9 +828,121 @@ def test_plan_invalidation_waits_for_partial_and_keeps_original_reason() -> None
                 "high": [101.0],
                 "low": [99.0],
                 "close": [100.0],
-                "vp_context_score_bull": [0.5],
-                "vp_context_score_bear": [0.1],
-                "vp_market_context": [0.5],
+            }
+        )
+    )
+    assert (
+        strategy.custom_exit(
+            trade.pair,
+            trade,
+            datetime(2024, 1, 1, 4, tzinfo=UTC),
+            100.0,
+            0.0,
+        )
+        == "s3v2_hard_invalidation"
+    )
+
+
+def test_transient_non_hard_invalidation_keeps_exact_exit_while_partial_pending() -> None:
+    strategy = _strategy()
+    trade = FakeTrade()
+    trade.set_custom_data(
+        STATE_KEY,
+        {
+            "version": STATE_VERSION,
+            "plan": "prior48_touch_p33_be_any_two",
+            "phase": "TARGET_ZONE",
+            "entry_rate": 100.0,
+            "entry_candle": "2024-01-01T00:00:00+00:00",
+            "entry_filled_at": "2024-01-01T01:00:00+00:00",
+            "broken_resistance": 90.0,
+            "structural_support": 85.0,
+            "targets": {"prior48": 120.0},
+            "target_1_touched_at": None,
+            "target_2_touched_at": None,
+            "partial_filled": False,
+            "partial_target_stake": 330.0,
+            "partial_realized_stake": 0.0,
+            "partial_fill_order_ids": [],
+            "terminal_exit_pending": False,
+            "terminal_exit_tag": None,
+            "stop_floor": 95.0,
+        },
+    )
+    trade.orders.append(
+        FakeOrder(
+            "sell",
+            "s3v2_partial_target",
+            status="open",
+            ft_is_open=True,
+            order_id="pending-partial",
+        )
+    )
+    strategy.dp = FakeDataProvider(
+        pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2024-01-01T01:00:00Z", "2024-01-01T02:00:00Z"], utc=True),
+                "open": [100.0, 100.0],
+                "high": [101.0, 101.0],
+                "low": [99.0, 99.0],
+                "close": [100.0, 100.0],
+                "ema_fast_1h": [110.0, 110.0],
+                "macd_hist_1h": [-1.0, -1.0],
+                "volume_ratio_1h": [0.5, 0.5],
+                "ema_fast_4h": [90.0, 90.0],
+                "ema_slow_4h": [100.0, 100.0],
+                "macd_hist_4h": [-1.0, -1.0],
+                "ema_fast_1d": [110.0, 110.0],
+                "ema_slow_1d": [100.0, 100.0],
+                "macd_hist_1d": [1.0, 1.0],
+            }
+        )
+    )
+    context = strategy._decision_context(
+        trade.pair,
+        trade,
+        datetime(2024, 1, 1, 3, tzinfo=UTC),
+        100.0,
+        0.0,
+    )
+    assert context is not None
+    _, pending_state, events, decision = context
+    assert events["invalidation"] is True
+    assert events["hard_invalidation"] is False
+    assert decision == ExitDecision("full", "s3v2_plan_invalidation")
+    assert pending_state["partial_pending"] is True
+    persisted = trade.get_custom_data(STATE_KEY)
+    assert persisted["terminal_exit_pending"] is True
+    assert persisted["terminal_exit_tag"] == "s3v2_plan_invalidation"
+    assert (
+        strategy.custom_exit(
+            trade.pair,
+            trade,
+            datetime(2024, 1, 1, 3, tzinfo=UTC),
+            100.0,
+            0.0,
+        )
+        is None
+    )
+
+    trade.orders.clear()
+    strategy.dp = FakeDataProvider(
+        pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2024-01-01T03:00:00Z"], utc=True),
+                "open": [100.0],
+                "high": [101.0],
+                "low": [99.0],
+                "close": [100.0],
+                "ema_fast_1h": [90.0],
+                "macd_hist_1h": [1.0],
+                "volume_ratio_1h": [2.0],
+                "ema_fast_4h": [110.0],
+                "ema_slow_4h": [100.0],
+                "macd_hist_4h": [1.0],
+                "ema_fast_1d": [110.0],
+                "ema_slow_1d": [100.0],
+                "macd_hist_1d": [1.0],
             }
         )
     )
@@ -679,19 +958,101 @@ def test_plan_invalidation_waits_for_partial_and_keeps_original_reason() -> None
     )
 
 
-def test_target_confirmation_cannot_reuse_signal_candle_touch() -> None:
+def test_mtf_full_invalidation_requires_coherent_multi_source_failure() -> None:
     strategy = _strategy()
     trade = FakeTrade()
     state = {
         "version": STATE_VERSION,
-        "plan": "hvn_touch_full",
+        "plan": "any_two_full",
         "phase": "ENTRY",
         "entry_rate": 100.0,
         "entry_candle": "2024-01-01T00:00:00+00:00",
         "entry_filled_at": "2024-01-01T01:00:00+00:00",
         "broken_resistance": 99.0,
         "structural_support": 95.0,
-        "targets": {"hvn": 110.0},
+        "targets": {},
+        "target_1_touched_at": None,
+        "target_2_touched_at": None,
+        "partial_filled": False,
+    }
+    frame = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2024-01-01T01:00:00Z", "2024-01-01T02:00:00Z"], utc=True),
+            "open": [97.0, 96.0],
+            "high": [98.0, 97.0],
+            "low": [94.0, 93.0],
+            "close": [95.0, 94.0],
+            "ema_fast_1h": [90.0, 90.0],
+            "macd_hist_1h": [1.0, 1.0],
+            "volume_ratio_1h": [2.0, 2.0],
+            "ema_fast_4h": [110.0, 110.0],
+            "ema_slow_4h": [100.0, 100.0],
+            "macd_hist_4h": [1.0, 1.0],
+            "ema_fast_1d": [110.0, 110.0],
+            "ema_slow_1d": [100.0, 100.0],
+            "macd_hist_1d": [1.0, 1.0],
+        }
+    )
+
+    source_only, _ = strategy._events(
+        trade, dict(state), frame, datetime(2024, 1, 1, 3, tzinfo=UTC), 94.0, -0.06
+    )
+    assert source_only["source_failure"] is True
+    assert source_only["failure_count"] == 1
+    assert source_only["invalidation"] is False
+    assert source_only["hard_invalidation"] is False
+
+    source_and_daily = frame.copy()
+    source_and_daily[["ema_fast_1d", "macd_hist_1d"]] = -1.0
+    paired, _ = strategy._events(
+        trade,
+        dict(state),
+        source_and_daily,
+        datetime(2024, 1, 1, 3, tzinfo=UTC),
+        94.0,
+        -0.06,
+    )
+    assert paired["failure_count"] == 2
+    assert paired["invalidation"] is True
+    assert paired["hard_invalidation"] is True
+
+    one_bar_flip = source_and_daily.iloc[-1:].copy()
+    one_bar_flip["close"] = 100.0
+    one_bar_flip[["ema_fast_1h", "macd_hist_1h", "volume_ratio_1h"]] = [
+        110.0,
+        -1.0,
+        0.5,
+    ]
+    one_bar_flip[["ema_fast_1d", "ema_slow_1d", "macd_hist_1d"]] = [
+        110.0,
+        100.0,
+        1.0,
+    ]
+    single, _ = strategy._events(
+        trade,
+        dict(state),
+        one_bar_flip,
+        datetime(2024, 1, 1, 3, tzinfo=UTC),
+        100.0,
+        0.0,
+    )
+    assert single["failure_count"] == 0
+    assert single["invalidation"] is False
+
+
+def test_target_confirmation_cannot_reuse_signal_candle_touch() -> None:
+    strategy = _strategy()
+    trade = FakeTrade()
+    state = {
+        "version": STATE_VERSION,
+        "plan": "prior48_touch_full",
+        "phase": "ENTRY",
+        "entry_rate": 100.0,
+        "entry_candle": "2024-01-01T00:00:00+00:00",
+        "entry_filled_at": "2024-01-01T01:00:00+00:00",
+        "broken_resistance": 99.0,
+        "structural_support": 95.0,
+        "targets": {"prior48": 110.0},
         "target_1_touched_at": None,
         "target_2_touched_at": None,
         "partial_filled": False,
@@ -703,9 +1064,6 @@ def test_target_confirmation_cannot_reuse_signal_candle_touch() -> None:
             "high": [120.0, 108.0],
             "low": [99.0, 104.0],
             "close": [115.0, 107.0],
-            "vp_context_score_bull": [0.5, 0.5],
-            "vp_context_score_bear": [0.1, 0.1],
-            "vp_market_context": [0.5, 0.5],
         }
     )
     events, _ = strategy._events(
@@ -725,7 +1083,7 @@ def test_delayed_fill_excludes_prefill_target_and_progress_candles() -> None:
     trade.open_date_utc = datetime(2024, 1, 1, 1, tzinfo=UTC)
     state = {
         "version": STATE_VERSION,
-        "plan": "progress48_nearest",
+        "plan": "progress48_nearest_any_two",
         "phase": "ENTRY",
         "entry_rate": 100.0,
         "entry_candle": "2024-01-01T00:00:00+00:00",
@@ -744,9 +1102,6 @@ def test_delayed_fill_excludes_prefill_target_and_progress_candles() -> None:
             "high": [120.0, 120.0, 120.0, 120.0, 105.0, 105.0, 105.0, 105.0],
             "low": 99.0,
             "close": 100.0,
-            "vp_context_score_bull": 0.5,
-            "vp_context_score_bear": 0.1,
-            "vp_market_context": 0.5,
         }
     )
     events, updated = strategy._events(
@@ -796,16 +1151,18 @@ def test_target_band_requires_positive_progress_and_reversal_after_touch() -> No
 def test_fixed_controls_use_native_roi_and_other_plans_disable_roi() -> None:
     strategy = _strategy()
     trade = FakeTrade()
-    for plan_name, expected in (("baseline_3_3", 0.03), ("promotion_2_2", 0.02)):
+    for plan_name, expected in (("baseline_3_3", 0.03), ("promotion_oracle_3_4", 0.03)):
         trade.set_custom_data(
             STATE_KEY,
             {"version": STATE_VERSION, "plan": plan_name},
         )
-        assert strategy.custom_roi(trade.pair, trade, datetime.now(UTC), 10, None, "long") == expected
+        assert (
+            strategy.custom_roi(trade.pair, trade, datetime.now(UTC), 10, None, "long") == expected
+        )
 
     trade.set_custom_data(
         STATE_KEY,
-        {"version": STATE_VERSION, "plan": "hvn_touch_full"},
+        {"version": STATE_VERSION, "plan": "prior48_touch_full"},
     )
     assert strategy.custom_roi(trade.pair, trade, datetime.now(UTC), 10, None, "long") is None
 
@@ -816,7 +1173,7 @@ def test_progress_uses_closed_candle_high_not_mutable_trade_max_rate() -> None:
     trade.max_rate = 1000.0
     state = {
         "version": STATE_VERSION,
-        "plan": "progress48_nearest",
+        "plan": "progress48_nearest_any_two",
         "phase": "ENTRY",
         "entry_rate": 100.0,
         "entry_candle": "2024-01-01T00:00:00+00:00",
@@ -835,9 +1192,6 @@ def test_progress_uses_closed_candle_high_not_mutable_trade_max_rate() -> None:
             "high": 100.5,
             "low": 99.5,
             "close": 100.0,
-            "vp_context_score_bull": 0.5,
-            "vp_context_score_bear": 0.1,
-            "vp_market_context": 0.5,
         }
     )
     events, _ = strategy._events(
@@ -852,16 +1206,16 @@ def test_progress_uses_closed_candle_high_not_mutable_trade_max_rate() -> None:
 
 
 def test_mixed_partial_actions_use_profit_state() -> None:
-    target_plan = EXIT_PLANS["hvn_touch_p33_be_level2"]
-    decision = Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H.evaluate_policy(
+    target_plan = EXIT_PLANS["prior48_touch_p33_be_any_two"]
+    decision = Sieve3V2IntegratedFromMtfStdDailyMacdVolumeBreakoutLong1H.evaluate_policy(
         target_plan,
         {"partial_pending": False, "partial_filled": False},
         {"target_1": True, "profit_bucket": "loss"},
     )
     assert decision == ExitDecision("full", "s3v2_target_reversal_loss")
 
-    reduce_plan = EXIT_PLANS["level1_reduce33_hvn"]
-    decision = Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H.evaluate_policy(
+    reduce_plan = EXIT_PLANS["source_ltf_reduce33_prior48"]
+    decision = Sieve3V2IntegratedFromMtfStdDailyMacdVolumeBreakoutLong1H.evaluate_policy(
         reduce_plan,
         {"partial_pending": False, "partial_filled": False},
         {"invalidation": True, "profit_bucket": "loss"},
@@ -876,14 +1230,14 @@ def test_custom_stoploss_persists_monotonic_absolute_floor() -> None:
         STATE_KEY,
         {
             "version": STATE_VERSION,
-            "plan": "hvn_rev1_p50_trail_level2",
+            "plan": "prior48_reversal_p50_trail_any_two",
             "phase": "REMAINDER",
             "entry_rate": 100.0,
             "entry_candle": "2024-01-01T00:00:00+00:00",
             "entry_filled_at": "2024-01-01T01:00:00+00:00",
             "broken_resistance": 99.0,
             "structural_support": 95.0,
-            "targets": {"hvn": 110.0},
+            "targets": {"prior48": 110.0},
             "target_1_touched_at": "2024-01-01T10:00:00+00:00",
             "target_2_touched_at": None,
             "partial_filled": True,
@@ -904,14 +1258,14 @@ def test_tighten_floor_breach_becomes_explicit_exit() -> None:
     trade = FakeTrade()
     state = {
         "version": STATE_VERSION,
-        "plan": "hvn_touch_tighten_level2",
+        "plan": "prior48_touch_tighten_source_ltf",
         "phase": "ENTRY",
         "entry_rate": 100.0,
         "entry_candle": "2024-01-01T00:00:00+00:00",
         "entry_filled_at": "2024-01-01T01:00:00+00:00",
         "broken_resistance": 99.0,
         "structural_support": 95.0,
-        "targets": {"hvn": 110.0},
+        "targets": {"prior48": 110.0},
         "target_1_touched_at": None,
         "target_2_touched_at": None,
         "partial_filled": False,
@@ -927,9 +1281,6 @@ def test_tighten_floor_breach_becomes_explicit_exit() -> None:
                 "high": [111.0],
                 "low": [104.0],
                 "close": [105.0],
-                "vp_context_score_bull": [0.5],
-                "vp_context_score_bear": [0.1],
-                "vp_market_context": [0.5],
             }
         )
     )
@@ -969,14 +1320,14 @@ def test_freqtrade_applies_and_keeps_monotonic_stop_floor() -> None:
             STATE_KEY,
             {
                 "version": STATE_VERSION,
-                "plan": "hvn_rev1_p50_trail_level2",
+                "plan": "prior48_reversal_p50_trail_any_two",
                 "phase": "REMAINDER",
                 "entry_rate": 100.0,
                 "entry_candle": "2024-01-01T00:00:00+00:00",
                 "entry_filled_at": "2024-01-01T01:00:00+00:00",
                 "broken_resistance": 99.0,
                 "structural_support": 95.0,
-                "targets": {"hvn": 110.0},
+                "targets": {"prior48": 110.0},
                 "target_1_touched_at": "2024-01-01T10:00:00+00:00",
                 "target_2_touched_at": None,
                 "partial_filled": True,
@@ -1018,14 +1369,14 @@ def test_candle_high_trail_cannot_create_same_candle_custom_exit_at_open() -> No
             STATE_KEY,
             {
                 "version": STATE_VERSION,
-                "plan": "hvn_rev1_p50_trail_level2",
+                "plan": "prior48_reversal_p50_trail_any_two",
                 "phase": "REMAINDER",
                 "entry_rate": 100.0,
                 "entry_candle": "2024-01-01T00:00:00+00:00",
                 "entry_filled_at": "2024-01-01T01:00:00+00:00",
                 "broken_resistance": 99.0,
                 "structural_support": 95.0,
-                "targets": {"hvn": 130.0},
+                "targets": {"prior48": 130.0},
                 "target_1_touched_at": "2024-01-01T10:00:00+00:00",
                 "target_2_touched_at": None,
                 "partial_filled": True,
@@ -1059,50 +1410,59 @@ def test_candle_high_trail_cannot_create_same_candle_custom_exit_at_open() -> No
 
 
 def test_entry_driving_indicators_are_prefix_invariant() -> None:
-    frame = pd.read_feather(DATA_PATH).iloc[5000:6000].reset_index(drop=True)
-    strategy = _strategy()
-    short = frame.iloc[:700].copy()
+    frame = pd.read_feather(DATA_PATH).iloc[12000:13600].reset_index(drop=True)
+    prefix = frame.iloc[:1200].copy()
+    short_strategy = _strategy()
+    short_strategy.dp = _historical_provider(prefix)
+    full_strategy = _strategy()
+    full_strategy.dp = _historical_provider(frame)
+    metadata = {"pair": "BTC/USDT:USDT"}
 
-    short_tlv2 = strategy._add_tlv2(short.copy())
-    full_tlv2 = strategy._add_tlv2(frame.copy()).iloc[:700].reset_index(drop=True)
+    short_frame = short_strategy.populate_indicators(prefix.copy(), metadata)
+    full_frame = full_strategy.populate_indicators(frame.copy(), metadata).iloc[:1200]
     for column in (
-        "tlv2_resistance_line_rank0",
-        "tlv2_resistance_score_rank0",
-        "tlv2_resistance_distance_atr_rank0",
+        "ema_fast_1h",
+        "ema_slow_1h",
+        "volume_ratio_1h",
+        "prior_high_1h",
+        "ema_fast_4h",
+        "ema_slow_4h",
+        "macd_hist_1d",
+        "prior_high_1d",
+        "s3v2_prior_high_48",
+        "s3v2_prior_high_96",
     ):
         np.testing.assert_allclose(
-            pd.to_numeric(short_tlv2[column], errors="coerce"),
-            pd.to_numeric(full_tlv2[column], errors="coerce"),
+            pd.to_numeric(short_frame[column], errors="coerce"),
+            pd.to_numeric(full_frame[column], errors="coerce"),
             equal_nan=True,
+            err_msg=column,
         )
 
-    short_vp = strategy._add_vp(short.copy())
-    full_vp = strategy._add_vp(frame.copy()).iloc[:700].reset_index(drop=True)
-    for column in (
-        "vp_score_long",
-        "vp_context_score_bull",
-        "vp_context_score_bear",
-        "vp_market_context",
-        "vp_hvn_above",
-        "vp_vah",
-    ):
-        np.testing.assert_allclose(
-            pd.to_numeric(short_vp[column], errors="coerce"),
-            pd.to_numeric(full_vp[column], errors="coerce"),
-            equal_nan=True,
-        )
+    short_entries = short_strategy.populate_entry_trend(short_frame.copy(), metadata)
+    full_entries = full_strategy.populate_entry_trend(full_frame.copy(), metadata)
+    pd.testing.assert_series_equal(
+        short_entries["enter_long"].fillna(0).astype(int),
+        full_entries["enter_long"].fillna(0).astype(int),
+    )
+    pd.testing.assert_series_equal(
+        short_entries["enter_tag"].fillna(""),
+        full_entries["enter_tag"].fillna(""),
+    )
 
 
-def test_neutral_entry_parity_against_tested_control() -> None:
+def test_neutral_entry_parity_against_authoritative_executed_source() -> None:
     frame = pd.read_feather(DATA_PATH)
     frame = frame.loc[
-        frame["date"].ge(pd.Timestamp("2020-04-01", tz="UTC"))
+        frame["date"].ge(pd.Timestamp("2020-01-01", tz="UTC"))
         & frame["date"].lt(pd.Timestamp("2020-10-01", tz="UTC"))
     ].reset_index(drop=True)
     metadata = {"pair": "BTC/USDT:USDT"}
 
-    control = Sieve3ExitBreakevenFromMulti2Tlv2VpResBreakVpBullctxLong1H({})
+    control = _oracle_strategy()
+    control.dp = _historical_provider(frame)
     candidate = _strategy()
+    candidate.dp = _historical_provider(frame)
     control_frame = control.populate_entry_trend(
         control.populate_indicators(frame.copy(), metadata), metadata
     )
@@ -1110,8 +1470,11 @@ def test_neutral_entry_parity_against_tested_control() -> None:
         candidate.populate_indicators(frame.copy(), metadata), metadata
     )
 
-    assert int(control_frame["enter_long"].sum()) == 5
-    pd.testing.assert_series_equal(control_frame["enter_long"], candidate_frame["enter_long"])
+    assert int(control_frame["enter_long"].fillna(0).sum()) > 0
+    pd.testing.assert_series_equal(
+        control_frame["enter_long"].fillna(0).astype(int),
+        candidate_frame["enter_long"].fillna(0).astype(int),
+    )
     pd.testing.assert_series_equal(
         control_frame["enter_tag"].fillna(""),
         candidate_frame["enter_tag"].fillna(""),
