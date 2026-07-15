@@ -10,6 +10,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from freqtrade.enums import ExitType
 from freqtrade.persistence import Trade
 from freqtrade.persistence.usedb_context import FtNoDBContext
 from freqtrade.resolvers import StrategyResolver
@@ -894,6 +895,58 @@ def test_freqtrade_applies_and_keeps_monotonic_stop_floor() -> None:
             0,
         )
         assert trade.stop_loss == 118.2
+
+
+def test_candle_high_trail_cannot_create_same_candle_custom_exit_at_open() -> None:
+    strategy = _strategy()
+    with FtNoDBContext("1h"):
+        trade = Trade(
+            id=930002,
+            pair="BTC/USDT:USDT",
+            stake_amount=1000.0,
+            amount=10.0,
+            open_date=datetime(2024, 1, 1, tzinfo=UTC),
+            fee_open=0.0,
+            fee_close=0.0,
+            exchange="binance",
+            open_rate=100.0,
+            price_precision=2,
+            precision_mode=2,
+            precision_mode_price=2,
+            leverage=1.0,
+            is_short=False,
+        )
+        trade.set_custom_data(
+            STATE_KEY,
+            {
+                "version": STATE_VERSION,
+                "plan": "hvn_rev1_p50_trail_level2",
+                "phase": "REMAINDER",
+                "entry_rate": 100.0,
+                "entry_candle": "2024-01-01T00:00:00+00:00",
+                "entry_filled_at": "2024-01-01T01:00:00+00:00",
+                "broken_resistance": 99.0,
+                "structural_support": 95.0,
+                "targets": {"hvn": 130.0},
+                "target_1_touched_at": "2024-01-01T10:00:00+00:00",
+                "target_2_touched_at": None,
+                "partial_filled": True,
+                "partial_filled_at": "2024-01-01T10:00:00+00:00",
+                "terminal_exit_pending": False,
+                "stop_floor": None,
+            },
+        )
+        exits = strategy.should_exit(
+            trade,
+            110.0,
+            datetime(2024, 1, 2, tzinfo=UTC),
+            enter=False,
+            exit_=False,
+            low=109.0,
+            high=120.0,
+        )
+        assert all(exit_check.exit_type != ExitType.CUSTOM_EXIT for exit_check in exits)
+        assert any(exit_check.exit_type == ExitType.TRAILING_STOP_LOSS for exit_check in exits)
         assert trade.get_custom_data(STATE_KEY)["stop_floor"] == 118.2
 
         strategy.ft_stoploss_adjust(

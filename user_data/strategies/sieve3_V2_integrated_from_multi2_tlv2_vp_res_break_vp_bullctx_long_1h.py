@@ -1398,9 +1398,6 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
         if decision.action == "full":
             return decision.tag
         desired_floor = self._desired_stop_price(plan, state, decision, current_rate)
-        persisted_floor = _finite_float(state.get("stop_floor"))
-        if persisted_floor is not None:
-            desired_floor = max(desired_floor, persisted_floor)
         return "s3v2_stop_floor_breached" if desired_floor >= current_rate else None
 
     def custom_roi(
