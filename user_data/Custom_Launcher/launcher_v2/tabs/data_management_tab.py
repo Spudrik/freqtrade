@@ -16,6 +16,7 @@ from .social_context_sources_tab import SocialContextSourcesTab
 from .news_tab import NewsTab
 from .web_tab import WebTab
 from .orderbook_tab import OrderBookTab
+from .orderbook_history_tab import OrderBookHistoryTab
 from .data_watchdog_tab import DataWatchdogTab
 
 
@@ -23,19 +24,23 @@ class DataManagementTab(BaseTab):
     tab_key = "data_management"
     tab_title = "Data Management"
 
-    child_tab_classes = [
-        DownloadTab,
+    live_tab_classes = [
         NewsTab,
         WebTab,
         GlobalContextTab,
+        OrderBookTab,
+        DataWatchdogTab,
+    ]
+
+    historical_tab_classes = [
+        DownloadTab,
         HistoricalDataSourcesTab,
         GdeltBackfillTab,
         NewsBackfillSourcesTab,
         MarketContextSourcesTab,
         SocialContextSourcesTab,
         ContextFeatureBuilderTab,
-        OrderBookTab,
-        DataWatchdogTab,
+        OrderBookHistoryTab,
     ]
 
     def __init__(self, master: tk.Misc, context: Any) -> None:
@@ -49,7 +54,21 @@ class DataManagementTab(BaseTab):
 
         notebook = ttk.Notebook(self)
         notebook.grid(row=0, column=0, sticky="nsew")
-        for tab_cls in self.child_tab_classes:
+
+        live_frame = ttk.Frame(notebook)
+        historical_frame = ttk.Frame(notebook)
+        notebook.add(live_frame, text="Live Data")
+        notebook.add(historical_frame, text="Historical Data")
+
+        self._build_group_notebook(live_frame, self.live_tab_classes)
+        self._build_group_notebook(historical_frame, self.historical_tab_classes)
+
+    def _build_group_notebook(self, frame: ttk.Frame, tab_classes: list[type[BaseTab]]) -> None:
+        frame.grid_columnconfigure(0, weight=1)
+        frame.grid_rowconfigure(0, weight=1)
+        notebook = ttk.Notebook(frame)
+        notebook.grid(row=0, column=0, sticky="nsew")
+        for tab_cls in tab_classes:
             tab = tab_cls(notebook, self.context)
             self.child_tabs[tab.tab_key] = tab
             self.context.registry[tab.tab_key] = tab

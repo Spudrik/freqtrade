@@ -5,17 +5,7 @@ import tkinter as tk
 from tkinter import scrolledtext, simpledialog, ttk
 
 from ..base_tab import BaseTab
-
-
-PAIR_REFERENCE_GROUPS: list[dict[str, Any]] = [
-    {"name": "Top 10 Market Cap", "note": "Large-cap crypto reference list.", "pairs": ["BTC", "ETH", "BNB", "SOL", "XRP", "ADA", "DOGE", "TRX", "AVAX", "LINK"]},
-    {"name": "Top Volume Candidates", "note": "Static proxy for liquid pairs.", "pairs": ["BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "LINK", "AVAX", "WIF", "PEPE", "SUI", "NEAR", "LTC", "BCH"]},
-    {"name": "High Beta", "note": "Higher volatility candidates.", "pairs": ["WIF", "PEPE", "BONK", "BOME", "DOGE", "SHIB", "ORDI", "TIA", "SEI", "SUI", "INJ", "JUP", "PENDLE", "ENA", "STRK"]},
-    {"name": "L1 Networks", "note": "Base-layer networks.", "pairs": ["BTC", "ETH", "SOL", "BNB", "ADA", "AVAX", "TRX", "DOT", "ATOM", "NEAR", "ICP", "APT", "SUI", "SEI", "ALGO"]},
-    {"name": "DeFi", "note": "DEX, lending, yield, and governance names.", "pairs": ["UNI", "AAVE", "MKR", "LDO", "CRV", "COMP", "SNX", "SUSHI", "YFI", "1INCH", "PENDLE", "ENA", "DYDX", "GMX", "CAKE"]},
-    {"name": "AI/Data", "note": "AI, data, compute, and indexing narratives.", "pairs": ["TAO", "RENDER", "RNDR", "FET", "AGIX", "OCEAN", "ARKM", "GRT", "WLD", "NMR", "PHB", "AI"]},
-    {"name": "Payments", "note": "Payments, settlement, and fast-transfer networks.", "pairs": ["XRP", "XLM", "LTC", "BCH", "TRX", "DASH", "CELO", "HBAR", "IOTA", "ALGO"]},
-]
+from ..pair_reference import PAIR_REFERENCE_GROUPS, format_pair_symbols
 
 
 def parse_pairs(text: str) -> list[str]:
@@ -104,8 +94,7 @@ class PairsTab(BaseTab):
         return widget
 
     def _format_reference_pairs(self, symbols: Iterable[str]) -> list[str]:
-        suffix = "" if self.pair_reference_format_var.get() == "USDT spot" else ":USDT"
-        return [f"{str(symbol).upper()}/USDT{suffix}" for symbol in symbols]
+        return format_pair_symbols(symbols, futures=self.pair_reference_format_var.get() != "USDT spot")
 
     def _selected_group(self) -> dict[str, Any] | None:
         if self.reference_tree is None:

@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 from pandas import DataFrame, Series
 
-from pattern_common import (
+from user_data.Indicators.pattern_common import (
     _bottom_base_is_held,
     _bottom_p1_dominance_score,
     _carry_values_while_state,

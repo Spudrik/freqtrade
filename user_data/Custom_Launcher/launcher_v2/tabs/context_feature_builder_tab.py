@@ -21,6 +21,7 @@ class ContextFeatureBuilderTab(BaseTab):
         self.news_db_var = tk.StringVar(value=str(paths.news_db))
         self.web_db_var = tk.StringVar(value=str(paths.web_db))
         self.global_db_var = tk.StringVar(value=str(paths.global_db))
+        self.gdelt_db_var = tk.StringVar(value=str(paths.gdelt_db))
         self.feature_db_var = tk.StringVar(value=str(paths.feature_db))
         self.export_dir_var = tk.StringVar(value=str(paths.export_dir))
         self.report_dir_var = tk.StringVar(value=str(paths.report_dir))
@@ -59,11 +60,12 @@ class ContextFeatureBuilderTab(BaseTab):
         self._path_row(paths, 0, "News DB", self.news_db_var, directory=False)
         self._path_row(paths, 1, "Web DB", self.web_db_var, directory=False)
         self._path_row(paths, 2, "Global DB", self.global_db_var, directory=False)
-        self._path_row(paths, 3, "Feature DB", self.feature_db_var, directory=False)
-        self._path_row(paths, 4, "Parquet export dir", self.export_dir_var, directory=True)
-        self._path_row(paths, 5, "Report dir", self.report_dir_var, directory=True)
-        self._path_row(paths, 6, "BTC 1h OHLCV", self.btc_ohlcv_path_var, directory=False)
-        labeled_entry(paths, 7, 0, "Overlap days", self.overlap_days_var, width=12)
+        self._path_row(paths, 3, "GDELT DB", self.gdelt_db_var, directory=False)
+        self._path_row(paths, 4, "Feature DB", self.feature_db_var, directory=False)
+        self._path_row(paths, 5, "Parquet export dir", self.export_dir_var, directory=True)
+        self._path_row(paths, 6, "Report dir", self.report_dir_var, directory=True)
+        self._path_row(paths, 7, "BTC 1h OHLCV", self.btc_ohlcv_path_var, directory=False)
+        labeled_entry(paths, 8, 0, "Overlap days", self.overlap_days_var, width=12)
 
         buttons = ttk.Frame(self)
         buttons.grid(row=2, column=0, sticky="ew", padx=8, pady=(0, 8))
@@ -121,6 +123,7 @@ class ContextFeatureBuilderTab(BaseTab):
             "news_db": self.news_db_var.get(),
             "web_db": self.web_db_var.get(),
             "global_db": self.global_db_var.get(),
+            "gdelt_db": self.gdelt_db_var.get(),
             "feature_db": self.feature_db_var.get(),
             "export_dir": self.export_dir_var.get(),
             "report_dir": self.report_dir_var.get(),
@@ -202,6 +205,7 @@ class ContextFeatureBuilderTab(BaseTab):
         self.news_db_var.set(str(state.get("news_db") or defaults.news_db))
         self.web_db_var.set(str(state.get("web_db") or defaults.web_db))
         self.global_db_var.set(str(state.get("global_db") or defaults.global_db))
+        self.gdelt_db_var.set(str(state.get("gdelt_db") or defaults.gdelt_db))
         self.feature_db_var.set(str(state.get("feature_db") or defaults.feature_db))
         self.export_dir_var.set(str(state.get("export_dir") or defaults.export_dir))
         self.report_dir_var.set(str(state.get("report_dir") or defaults.report_dir))

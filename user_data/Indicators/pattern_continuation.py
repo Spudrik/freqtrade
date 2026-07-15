@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 from pandas import DataFrame, Series
 
-from pattern_common import (
+from user_data.Indicators.pattern_common import (
     _clip_value,
     _combine_sparse_indexes,
     _combine_sparse_pivots,

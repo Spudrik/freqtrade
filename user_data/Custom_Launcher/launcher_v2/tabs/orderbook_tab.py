@@ -13,7 +13,7 @@ from .pairs_tab import parse_pairs
 
 class OrderBookTab(BaseTab):
     tab_key = "orderbook"
-    tab_title = "Order Book Lab"
+    tab_title = "Order Book"
 
     def __init__(self, master: tk.Misc, context: Any) -> None:
         super().__init__(master, context)
@@ -31,7 +31,7 @@ class OrderBookTab(BaseTab):
         self.context_period_var = tk.StringVar(value="5m")
         self.snapshot_interval_seconds_var = tk.StringVar(value="60")
         self.capacity_warning_mb_var = tk.StringVar(value="500")
-        self.capacity_critical_mb_var = tk.StringVar(value="2000")
+        self.capacity_critical_mb_var = tk.StringVar(value="102400")
         self.max_symbols_var = tk.StringVar(value="12")
         self.store_snapshots_var = tk.BooleanVar(value=False)
         self.collector_preview_var = tk.StringVar(value="")
@@ -60,14 +60,7 @@ class OrderBookTab(BaseTab):
     def _build_ui(self) -> None:
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(0, weight=1)
-        notebook = ttk.Notebook(self)
-        notebook.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
-        live_tab = ttk.Frame(notebook)
-        history_tab = ttk.Frame(notebook)
-        notebook.add(live_tab, text="Live Collector")
-        notebook.add(history_tab, text="Bybit History")
-        self._build_live_tab(live_tab)
-        self._build_history_tab(history_tab)
+        self._build_live_tab(self)
 
     def _build_live_tab(self, root: ttk.Frame) -> None:
         root.grid_columnconfigure(0, weight=1)
@@ -93,7 +86,7 @@ class OrderBookTab(BaseTab):
             labeled_entry(settings, offset, 0, left_label, left_var)
             if right_var is not None:
                 labeled_entry(settings, offset, 2, right_label, right_var)
-        ttk.Checkbutton(settings, text="Store raw snapshots (optional, high storage)", variable=self.store_snapshots_var).grid(row=8, column=0, columnspan=2, sticky="w", padx=8, pady=4)
+        ttk.Label(settings, text="SQLite storage: 1m summary bars only. Raw metric ticks and raw snapshots are disabled.").grid(row=8, column=0, columnspan=4, sticky="w", padx=8, pady=4)
 
         preview = ttk.LabelFrame(root, text="Generated command")
         preview.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 8))
@@ -121,7 +114,7 @@ class OrderBookTab(BaseTab):
 
         estimate = ttk.LabelFrame(root, text="Storage estimate")
         estimate.grid(row=4, column=0, sticky="ew", padx=8, pady=(0, 8))
-        estimate_items = [("Metric rows/day", "metric_rows"), ("Snapshot rows/day", "snapshot_rows"), ("Estimated MB/day", "mb_per_day"), ("Days to warning", "days_to_warning"), ("Whitelist pairs", "pair_count"), ("Active symbols", "symbol_count")]
+        estimate_items = [("Rows/day", "metric_rows"), ("Snapshot rows/day", "snapshot_rows"), ("Estimated MB/day", "mb_per_day"), ("Days to warning", "days_to_warning"), ("Whitelist pairs", "pair_count"), ("Active symbols", "symbol_count")]
         for index, (label, key) in enumerate(estimate_items):
             ttk.Label(estimate, text=f"{label}:").grid(row=0, column=index * 2, sticky="w", padx=8, pady=6)
             ttk.Label(estimate, textvariable=self.estimate_vars[key]).grid(row=0, column=index * 2 + 1, sticky="w", padx=8, pady=6)
@@ -258,7 +251,6 @@ class OrderBookTab(BaseTab):
     def _bind_refresh(self) -> None:
         for var in (self.config_path_var, self.data_dir_var, self.depth_levels_var, self.stream_update_ms_var, self.metric_interval_seconds_var, self.context_poll_seconds_var, self.context_period_var, self.snapshot_interval_seconds_var, self.capacity_warning_mb_var, self.capacity_critical_mb_var, self.max_symbols_var):
             var.trace_add("write", lambda *_: self.refresh_pair_preview())
-        self.store_snapshots_var.trace_add("write", lambda *_: self.refresh_pair_preview())
         for var in self.market_profile_vars.values():
             var.trace_add("write", lambda *_: self.refresh_pair_preview())
         for var in (self.history_datadir_var, self.history_exchange_var, self.history_trading_mode_var, self.history_category_var, self.history_depth_var, self.history_timerange_var, self.history_feature_timeframes_var, self.history_feature_format_var, self.history_max_rows_var):
@@ -275,11 +267,13 @@ class OrderBookTab(BaseTab):
             "metric_interval_seconds": self.metric_interval_seconds_var.get(),
             "context_poll_seconds": self.context_poll_seconds_var.get(),
             "context_period": self.context_period_var.get(),
+            "bar_intervals_seconds": [60],
             "snapshot_interval_seconds": self.snapshot_interval_seconds_var.get(),
             "capacity_warning_mb": self.capacity_warning_mb_var.get(),
             "capacity_critical_mb": self.capacity_critical_mb_var.get(),
             "max_symbols": self.max_symbols_var.get(),
-            "store_snapshots": self.store_snapshots_var.get(),
+            "store_metric_ticks": False,
+            "store_snapshots": False,
             "history_datadir": self.history_datadir_var.get(),
             "history_exchange": self.history_exchange_var.get(),
             "history_trading_mode": self.history_trading_mode_var.get(),
@@ -304,7 +298,7 @@ class OrderBookTab(BaseTab):
         valid, preview = self.service.normalized_pairs(self._main_pairs(), state)
         set_tree_rows(self.pair_tree, [(row["pair"], row["market"], row["symbol"], row["depth"], row["update_ms"], row["status"]) for row in preview] if hasattr(self, "pair_tree") else [])
         estimate = self.service.estimate(len(valid), state)
-        self.estimate_vars["metric_rows"].set(f"{estimate['metric_rows_per_day']:.0f}")
+        self.estimate_vars["metric_rows"].set(f"raw {estimate['metric_rows_per_day']:.0f} / bars {estimate.get('bar_rows_per_day', 0.0):.0f}")
         self.estimate_vars["snapshot_rows"].set(f"{estimate['snapshot_rows_per_day']:.0f}")
         self.estimate_vars["mb_per_day"].set(f"{estimate['estimated_total_mb_per_day']:.2f}")
         warning = max(1.0, float(state["capacity_warning_mb"] or 500))
@@ -482,7 +476,24 @@ class OrderBookTab(BaseTab):
         open_path(path)
 
     def get_state(self) -> dict[str, Any]:
-        return self._state()
+        state = self._state()
+        return {
+            "config_path": state["config_path"],
+            "data_dir": state["data_dir"],
+            "market_profiles": state["market_profiles"],
+            "depth_levels": state["depth_levels"],
+            "stream_update_ms": state["stream_update_ms"],
+            "metric_interval_seconds": state["metric_interval_seconds"],
+            "context_poll_seconds": state["context_poll_seconds"],
+            "context_period": state["context_period"],
+            "bar_intervals_seconds": [60],
+            "snapshot_interval_seconds": state["snapshot_interval_seconds"],
+            "capacity_warning_mb": state["capacity_warning_mb"],
+            "capacity_critical_mb": state["capacity_critical_mb"],
+            "max_symbols": state["max_symbols"],
+            "store_metric_ticks": False,
+            "store_snapshots": False,
+        }
 
     def set_state(self, state: dict[str, Any]) -> None:
         paths = self.service.paths({})
@@ -502,17 +513,7 @@ class OrderBookTab(BaseTab):
         self.context_period_var.set(str(state.get("context_period") or "5m"))
         self.snapshot_interval_seconds_var.set(str(state.get("snapshot_interval_seconds") or "60"))
         self.capacity_warning_mb_var.set(str(state.get("capacity_warning_mb") or "500"))
-        self.capacity_critical_mb_var.set(str(state.get("capacity_critical_mb") or "2000"))
+        self.capacity_critical_mb_var.set(str(state.get("capacity_critical_mb") or "102400"))
         self.max_symbols_var.set(str(state.get("max_symbols") or "12"))
-        self.store_snapshots_var.set(bool(state.get("store_snapshots", False)))
-        self.history_datadir_var.set(str(state.get("history_datadir") or self.history_datadir_var.get()))
-        self.history_exchange_var.set(str(state.get("history_exchange") or "bybit"))
-        self.history_trading_mode_var.set(str(state.get("history_trading_mode") or "futures"))
-        self.history_category_var.set(str(state.get("history_category") or "linear"))
-        self.history_depth_var.set(str(state.get("history_depth") or "500"))
-        self.history_timerange_var.set(str(state.get("history_timerange") or ""))
-        self.history_feature_timeframes_var.set(str(state.get("history_feature_timeframes") or "1h"))
-        self.history_feature_format_var.set(str(state.get("history_feature_format") or "feather"))
-        self.history_max_rows_var.set(str(state.get("history_max_rows") or ""))
-        self.history_erase_var.set(bool(state.get("history_erase", False)))
-        self._set_history_pairs(parse_pairs(str(state.get("history_pairs") or "")))
+        self.store_snapshots_var.set(False)
+        self.refresh_pair_preview()

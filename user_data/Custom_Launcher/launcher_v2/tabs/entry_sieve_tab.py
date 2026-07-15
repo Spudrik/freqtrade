@@ -4,6 +4,7 @@ from typing import Any
 import tkinter as tk
 from tkinter import ttk
 
+from ..pair_reference import pair_reference_choice_labels
 from .explorer_tab import ExplorerTab, SIEVE_RESULT_COLUMNS, _split_list
 
 
@@ -20,6 +21,7 @@ class EntrySieveTab(ExplorerTab):
 
     tab_key = "entry_sieve"
     tab_title = "Entry Sieve"
+    derive_sieve_backtests = True
 
     def _build_ui(self) -> None:
         self.grid_columnconfigure(0, weight=1)
@@ -60,13 +62,23 @@ class EntrySieveTab(ExplorerTab):
         self._editable_entry(strategy, 0, 2, "Strategy filter", self.sieve_strategy_filter_var)
         ttk.Label(strategy, text="Queue priority").grid(row=1, column=0, sticky="w", padx=8, pady=4)
         ttk.Combobox(strategy, textvariable=self.sieve_batch_priority_var, values=("least_run_first", "configured"), state="readonly").grid(row=1, column=1, sticky="ew", padx=8, pady=4)
+        ttk.Label(strategy, text="Normal Run Pairs").grid(row=2, column=0, sticky="w", padx=8, pady=4)
+        self.sieve_normal_pair_group_combo = ttk.Combobox(
+            strategy,
+            textvariable=self.sieve_normal_pair_group_var,
+            values=pair_reference_choice_labels(),
+            state="readonly",
+        )
+        self.sieve_normal_pair_group_combo.grid(row=2, column=1, columnspan=3, sticky="ew", padx=8, pady=4)
 
         speed = ttk.LabelFrame(controls, text="Speed Run")
         speed.grid(row=0, column=1, sticky="nsew", padx=(4, 0), pady=(0, 8))
         speed.grid_columnconfigure(1, weight=1)
         speed.grid_columnconfigure(3, weight=1)
         ttk.Checkbutton(speed, text="Speed run", variable=self.sieve_speed_run_var).grid(row=0, column=0, sticky="w", padx=8, pady=4)
-        self._editable_entry(speed, 0, 2, "Speed pairs", self.sieve_speed_pair_count_var)
+        ttk.Label(speed, text="Speed Pairs").grid(row=0, column=1, sticky="w", padx=8, pady=4)
+        self.sieve_speed_pairs_entry = ttk.Entry(speed, textvariable=self.sieve_speed_pairs_var, state="disabled")
+        self.sieve_speed_pairs_entry.grid(row=0, column=2, columnspan=2, sticky="ew", padx=8, pady=4)
         self.sieve_auto_windows_check = ttk.Checkbutton(speed, text="Auto windows", variable=self.sieve_auto_windows_var)
         self.sieve_auto_windows_check.grid(row=1, column=0, sticky="w", padx=8, pady=4)
         ttk.Label(speed, text="Windows/file").grid(row=1, column=2, sticky="w", padx=8, pady=4)
@@ -79,32 +91,42 @@ class EntrySieveTab(ExplorerTab):
         hyperopt.grid_columnconfigure(1, weight=1)
         hyperopt.grid_columnconfigure(3, weight=1)
         self.epochs_entry = self._editable_entry(hyperopt, 0, 0, "Epochs", self.epochs_var)
-        self._editable_entry(hyperopt, 0, 2, "Hyperopt jobs", self.sieve_hyperopt_jobs_var)
         self.auto_epochs_check = ttk.Checkbutton(hyperopt, text="Auto epochs (20x params)", variable=self.auto_epochs_var)
         self.auto_epochs_check.grid(row=1, column=0, columnspan=2, sticky="w", padx=8, pady=4)
         self.auto_epochs_cap_entry = self._editable_entry(hyperopt, 1, 2, "Auto epoch cap", self.auto_epochs_cap_var)
+        self._editable_entry(hyperopt, 2, 0, "Random states", self.random_state_var)
+        self._editable_entry(hyperopt, 2, 2, "Sampling seeds", self.sampling_seed_var)
 
         targets = ttk.LabelFrame(controls, text="Targets")
         targets.grid(row=1, column=1, sticky="nsew", padx=(4, 0), pady=(0, 8))
         targets.grid_columnconfigure(1, weight=1)
         targets.grid_columnconfigure(3, weight=1)
-        self._editable_entry(targets, 0, 0, "Take profit %", self.sieve_take_profit_var)
-        self._editable_entry(targets, 0, 2, "Stoploss %", self.sieve_stoploss_var)
+        self.sieve_take_profit_entry = self._editable_entry(targets, 0, 0, "Take profit %", self.sieve_take_profit_var)
+        self.sieve_stoploss_entry = self._editable_entry(targets, 0, 2, "Stoploss %", self.sieve_stoploss_var)
+        self.sieve_control_entry_exits_check = ttk.Checkbutton(
+            targets,
+            text="Sieve controls entry exits",
+            variable=self.sieve_control_entry_exits_var,
+        )
+        self.sieve_control_entry_exits_check.grid(row=1, column=0, sticky="w", padx=8, pady=4)
         self.sieve_target_sweep_check = ttk.Checkbutton(targets, text="Target sweep", variable=self.sieve_target_sweep_var)
-        self.sieve_target_sweep_check.grid(row=1, column=0, sticky="w", padx=8, pady=4)
-        self.sieve_target_pairs_entry = self._editable_entry(targets, 1, 2, "TP/SL grid", self.sieve_target_pairs_var)
+        self.sieve_target_sweep_check.grid(row=1, column=2, sticky="w", padx=8, pady=4)
+        self.sieve_target_pairs_entry = self._editable_entry(targets, 2, 0, "TP/SL grid", self.sieve_target_pairs_var)
 
         execution = ttk.LabelFrame(controls, text="Execution")
         execution.grid(row=2, column=0, columnspan=2, sticky="ew")
-        execution.grid_columnconfigure(1, weight=1)
-        execution.grid_columnconfigure(3, weight=1)
-        execution.grid_columnconfigure(5, weight=1)
+        for column in (1, 3, 5, 7):
+            execution.grid_columnconfigure(column, weight=1)
         ttk.Checkbutton(execution, text="Split-venv pipeline", variable=self.split_venv_pipeline_var).grid(row=0, column=0, sticky="w", padx=8, pady=4)
-        ttk.Label(execution, text="Backtest workers").grid(row=0, column=2, sticky="w", padx=8, pady=4)
-        ttk.Combobox(execution, textvariable=self.backtest_worker_count_var, values=[str(index) for index in range(1, 21)], state="readonly", width=6).grid(row=0, column=3, sticky="w", padx=8, pady=4)
-        self._editable_entry(execution, 0, 4, "Backtest Python", self.backtest_python_exe_var)
-        self._editable_entry(execution, 1, 0, "Handoff dir", self.pipeline_handoff_dir_var)
-        ttk.Label(execution, textvariable=self.sieve_status_var).grid(row=2, column=0, columnspan=6, sticky="w", padx=8, pady=4)
+        max_cores_entry = self._editable_entry(execution, 0, 2, "Max Cores Allowed", self.sieve_max_cores_allowed_var)
+        hyperopt_jobs_entry = self._editable_entry(execution, 0, 4, "Hyperopt jobs", self.sieve_hyperopt_jobs_var)
+        for entry in (max_cores_entry, hyperopt_jobs_entry):
+            entry.bind("<KeyRelease>", lambda _event: self.after_idle(self._update_sieve_concurrency_values), add="+")
+            entry.bind("<FocusOut>", lambda _event: self.after_idle(self._update_sieve_concurrency_values), add="+")
+        self._calculated_value(execution, 0, 6, "Parallel Backtest w/ Hyperopt", self.parallel_backtest_with_hyperopt_var)
+        self._calculated_value(execution, 1, 0, "Max Backtest Workers", self.backtest_worker_count_var)
+        self._editable_entry(execution, 1, 2, "Backtest Python", self.backtest_python_exe_var)
+        self._editable_entry(execution, 1, 4, "Handoff dir", self.pipeline_handoff_dir_var)
 
         queue_frame = ttk.LabelFrame(parent, text="Batch Queue")
         queue_frame.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 8))
@@ -181,12 +203,11 @@ class EntrySieveTab(ExplorerTab):
             "side": "Side",
             "core_behavior": "Core behaviour",
             "training_window": "Training window",
+            "random_state": "Random state",
             "validation_window": "Validation window",
             "take_profit_pct": "TP %",
             "stoploss_pct": "SL %",
             "status": "Status",
-            "analysis_read": "Read",
-            "analysis_next": "Next",
             "hyperopt_loss": "Hyperopt loss",
             "objective": "Objective",
             "best_params_count": "Params",
@@ -227,9 +248,9 @@ class EntrySieveTab(ExplorerTab):
             elif column in {"take_profit_pct", "stoploss_pct"}:
                 width = 70
                 minwidth = 60
-            elif column in {"analysis_read", "analysis_next"}:
-                width = 110
-                minwidth = 90
+            elif column == "random_state":
+                width = 90
+                minwidth = 80
             elif column in {"backtest_file", "params_file"}:
                 width = 360
                 minwidth = 220
@@ -237,6 +258,7 @@ class EntrySieveTab(ExplorerTab):
             elif column in {"training_window", "validation_window"}:
                 width = 160
                 minwidth = 130
+            width = minwidth
             self.sieve_results_tree.column(column, width=width, minwidth=minwidth, stretch=stretch)
         self.sieve_results_tree.grid(row=0, column=0, sticky="nsew", padx=(8, 0), pady=(8, 0))
         scroll_y = ttk.Scrollbar(results, orient="vertical", command=self.sieve_results_tree.yview)
@@ -256,6 +278,8 @@ class EntrySieveTab(ExplorerTab):
     def _bind_events(self) -> None:
         self.auto_epochs_var.trace_add("write", lambda *_: self._update_epochs_mode_state())
         self.sieve_speed_run_var.trace_add("write", lambda *_: self._update_epochs_mode_state())
+        self.sieve_control_entry_exits_var.trace_add("write", lambda *_: self._update_sieve_exit_control_state())
+        self.sieve_normal_pair_group_var.trace_add("write", lambda *_: self.context.emit("save_state", {"reason": "entry_sieve_pair_group"}))
         self.sieve_result_batch_filter_var.trace_add("write", lambda *_: self._refresh_sieve_results())
         for variable in (
             self.sieve_filter_var,
@@ -290,8 +314,6 @@ class EntrySieveTab(ExplorerTab):
         for widget_name in (
             "sieve_auto_windows_check",
             "auto_epochs_check",
-            "sieve_target_sweep_check",
-            "sieve_target_pairs_entry",
         ):
             widget = getattr(self, widget_name, None)
             if widget is not None:
@@ -301,23 +323,57 @@ class EntrySieveTab(ExplorerTab):
         if auto_window_count_combo is not None:
             auto_window_count_combo.configure(state=readonly_state)
 
+        normal_pair_group_combo = getattr(self, "sieve_normal_pair_group_combo", None)
+        if normal_pair_group_combo is not None:
+            normal_pair_group_combo.configure(state="disabled" if speed_run else "readonly")
+
+        speed_pairs_entry = getattr(self, "sieve_speed_pairs_entry", None)
+        if speed_pairs_entry is not None:
+            speed_pairs_entry.configure(state="readonly" if speed_run else "disabled")
+
         if speed_run:
             if self.epochs_entry is not None:
                 self.epochs_entry.configure(state="disabled")
             if self.auto_epochs_cap_entry is not None:
                 self.auto_epochs_cap_entry.configure(state="disabled")
+        self._update_sieve_exit_control_state()
+
+    def _update_sieve_exit_control_state(self) -> None:
+        if not hasattr(self, "sieve_control_entry_exits_var"):
+            return
+        control_exits = bool(self.sieve_control_entry_exits_var.get())
+        speed_run = bool(self.sieve_speed_run_var.get())
+        exit_state = "normal" if control_exits else "disabled"
+        sweep_state = "normal" if control_exits and not speed_run else "disabled"
+        for widget_name in ("sieve_take_profit_entry", "sieve_stoploss_entry"):
+            widget = getattr(self, widget_name, None)
+            if widget is not None:
+                widget.configure(state=exit_state)
+        for widget_name in ("sieve_target_sweep_check", "sieve_target_pairs_entry"):
+            widget = getattr(self, widget_name, None)
+            if widget is not None:
+                widget.configure(state=sweep_state)
 
     def refresh(self) -> None:
+        self._refresh_normal_pair_group_options()
         self._load_windows()
         self._load_sieve_batches()
         self._refresh_sieve_results()
+
+    def _refresh_normal_pair_group_options(self) -> None:
+        values = pair_reference_choice_labels()
+        combo = getattr(self, "sieve_normal_pair_group_combo", None)
+        if combo is not None:
+            combo.configure(values=values)
+        if values and self.sieve_normal_pair_group_var.get() not in values:
+            self.sieve_normal_pair_group_var.set(values[1] if len(values) > 1 else values[0])
 
     def _load_sieve_batches(self) -> None:
         try:
             batches = self.sieve_service.load_strategy_batches()
             values = [str(batch.get("id") or "") for batch in batches if str(batch.get("id") or "").strip()]
         except Exception as exc:
-            batches = [{"id": "all", "label": "All Sieve1"}]
+            batches = [{"id": "all", "label": "All Sieve2"}]
             values = ["all"]
             self.context.shared.status.set(f"Entry Sieve batch load failed: {exc}")
 
@@ -415,8 +471,10 @@ class EntrySieveTab(ExplorerTab):
             "sieve_strategy_filter": self.sieve_strategy_filter_var.get(),
             "sieve_speed_run": self.sieve_speed_run_var.get(),
             "sieve_speed_pair_count": self.sieve_speed_pair_count_var.get(),
+            "sieve_normal_pair_group": self.sieve_normal_pair_group_var.get(),
             "sieve_take_profit_pct": self.sieve_take_profit_var.get(),
             "sieve_stoploss_pct": self.sieve_stoploss_var.get(),
+            "sieve_control_entry_exits": self.sieve_control_entry_exits_var.get(),
             "sieve_auto_windows": self.sieve_auto_windows_var.get(),
             "sieve_auto_window_count": self.sieve_auto_window_count_var.get(),
             "sieve_target_sweep": self.sieve_target_sweep_var.get(),

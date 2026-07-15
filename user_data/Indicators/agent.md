@@ -2,6 +2,8 @@
 
 This file is for active instructions only. Strategy-output inventories, old archive notes, and historical experiment logs belong in separate reference files, not here.
 
+For Sieve strategy-stage tasks, also read `sieve_tasks_todo.md`. That file is intentionally narrow and should not be used as the control document for external context, orderbook, news, or FreqAI confluence research.
+
 ## Indicator Objective
 
 Build a multilayer Freqtrade indicator stack that finds real market edge instead of relying on lagging confirmation alone.

@@ -36,17 +36,18 @@
   ],
   "freqai": {
     "enabled": true,
+    "activate_tensorboard": false,
     "purge_old_models": 2,
-    "train_period_days": 2,
-    "backtest_period_days": 1,
+    "train_period_days": 180,
+    "backtest_period_days": 30,
     "live_retrain_hours": 0,
-    "identifier": "context-freqai-research-v1",
+    "identifier": "context-freqai-event-horizons-v1",
     "feature_parameters": {
       "include_timeframes": [
         "1h"
       ],
       "include_corr_pairlist": [],
-      "label_period_candles": 6,
+      "label_period_candles": 168,
       "include_shifted_candles": 1,
       "DI_threshold": 0,
       "weight_factor": 0.9,

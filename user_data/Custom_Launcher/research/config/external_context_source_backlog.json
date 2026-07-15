@@ -1,0 +1,61 @@
+{
+  "description": "Backlog of potentially useful external context sources. Add integrations only after access, licensing, and timestamp safety are clear.",
+  "priority": [
+    {
+      "name": "Google Trends",
+      "status": "implemented_live_collector_with_staggered_baskets",
+      "notes": "Useful as retail/investor attention proxy. Crypto attention is enabled; macro/systemic/market-stress baskets are configured but disabled by default to avoid pytrends rate limiting. Historical exports are rescaled by Google over the requested window, so do not silently backfill old candles with long-window downloads."
+    },
+    {
+      "name": "ETF flow history",
+      "status": "implemented_farside_live_latest_with_historical_parse_support",
+      "examples": [
+        "Farside Investors Bitcoin ETF flow all-data table"
+      ],
+      "notes": "Free HTML table parsed through the global context collector. Daily rows are timestamped conservatively to the next UTC day to avoid intraday lookahead. Keep as institutional context, not media sentiment."
+    },
+    {
+      "name": "Funding rates and open interest",
+      "status": "candidate",
+      "examples": [
+        "exchange APIs",
+        "Coinact funding-rate history",
+        "CandleFeed / derivatives data APIs"
+      ],
+      "notes": "Likely useful with news volume plus local structure. Need source with historical data, clear symbols, and no survivorship/lookahead issues."
+    },
+    {
+      "name": "Liquidations",
+      "status": "candidate",
+      "examples": [
+        "exchange streams",
+        "derivatives data vendors"
+      ],
+      "notes": "Useful for shock confirmation. Free long history may be limited."
+    },
+    {
+      "name": "Options skew and implied volatility",
+      "status": "candidate",
+      "examples": [
+        "Deribit public data where available",
+        "vendor APIs"
+      ],
+      "notes": "Potentially strong for expected move and event risk, but more fragile to source and contract normalization."
+    },
+    {
+      "name": "Social attention/sentiment",
+      "status": "candidate",
+      "examples": [
+        "Reddit",
+        "X/Twitter if accessible",
+        "forum datasets"
+      ],
+      "notes": "Research suggests social/investor attention can be stronger than generic news, especially at extremes. Need careful bot/noise handling."
+    }
+  ],
+  "parked_live_conversation_items": {
+    "A": "Stop treating all hours equally; evaluate event windows separately.",
+    "B": "Add event-trigger filters before modelling: severity, confluence, novelty, source diversity, price structure, and volume expansion.",
+    "C": "Add event-study reports before further broad FreqAI runs: feature spike before/around known events, then post-event return/drawdown/upside."
+  }
+}

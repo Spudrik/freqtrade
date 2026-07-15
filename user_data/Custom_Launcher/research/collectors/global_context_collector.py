@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.request import Request, urlopen
@@ -252,6 +253,9 @@ def run_collection_cycle(db_path: Path, enabled_sources: list[dict[str, Any]], c
     try:
         for source in enabled_sources:
             try:
+                if _should_skip_source(conn, source):
+                    upsert_source_status(conn, _source_status_payload(source, enabled=True))
+                    continue
                 rows = fetch_source(source, config)
                 for row in rows:
                     insert_context_tick(conn, row)
@@ -265,6 +269,27 @@ def run_collection_cycle(db_path: Path, enabled_sources: list[dict[str, Any]], c
     finally:
         conn.close()
     return inserted, failures
+
+
+def _should_skip_source(conn, source: dict[str, Any]) -> bool:
+    interval = int(source.get("min_interval_seconds") or 0)
+    if interval <= 0:
+        return False
+    source_id = str(source.get("id") or "")
+    row = conn.execute("SELECT last_success_at, last_failure_at FROM context_sources WHERE source_id = ?", (source_id,)).fetchone()
+    if not row:
+        return False
+    last_seen_text = row["last_success_at"] or row["last_failure_at"]
+    if not last_seen_text:
+        return False
+    try:
+        last_seen = datetime.fromisoformat(str(last_seen_text).replace("Z", "+00:00"))
+        if last_seen.tzinfo is None:
+            last_seen = last_seen.replace(tzinfo=timezone.utc)
+    except Exception:
+        return False
+    elapsed = (datetime.now(timezone.utc) - last_seen.astimezone(timezone.utc)).total_seconds()
+    return elapsed < interval
 
 
 def _source_status_payload(

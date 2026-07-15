@@ -7,6 +7,7 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -42,7 +43,6 @@ from .entry_sieve_lock import EntrySieveRunLock
 
 BACKTEST_LANE_START_STAGGER_SECONDS = 1.0
 MAX_BACKTEST_WORKERS = 20
-RESERVED_SYSTEM_WORKERS = 2
 BACKTEST_WAIT_STATUS_SECONDS = 60.0
 BACKTEST_START_STAGGER_SECONDS = 15.0
 BACKTEST_START_RAM_LIMIT_PERCENT = 80.0
@@ -78,11 +78,15 @@ RESULT_METADATA_KEYS = (
     "strategy_batch",
     "strategy_batch_label",
     "strategy_filter",
+    "random_states",
+    "sampling_seeds",
+    "seed_count",
     "speed_run_mode",
     "speed_pair_count",
     "auto_window_mode",
     "auto_window_count",
     "target_sweep_enabled",
+    "control_entry_exits",
 )
 ACTIVE_ENTRY_SIEVE_LOCK: EntrySieveRunLock | None = None
 
@@ -95,17 +99,45 @@ def load_json(path: Path, default: Any) -> Any:
 
 def save_json(path: Path, data: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    temp_path = path.with_name(f".{path.name}.{os.getpid()}.{time.time_ns()}.tmp")
+    try:
+        temp_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        os.replace(temp_path, path)
+    finally:
+        try:
+            temp_path.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run neutral Entry Sieve hyperopt/backtest jobs.")
     parser.add_argument("--job-file", required=True)
+    parser.add_argument(
+        "--resume-existing-results",
+        action="store_true",
+        help="Reuse completed result rows and durable Hyperopt checkpoints, then append the remainder.",
+    )
     return parser.parse_args(argv)
 
 
 def _safe_name(value: str) -> str:
     return "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in str(value)).strip("_") or "item"
+
+
+def _truthy(value: Any, *, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if not text:
+        return default
+    return text not in {"0", "false", "no", "off", "disabled"}
+
+
+def _entry_exit_control_enabled(job: dict[str, Any]) -> bool:
+    return _truthy(job.get("control_entry_exits"), default=True)
 
 
 def _listish(value: Any) -> list[str]:
@@ -115,6 +147,100 @@ def _listish(value: Any) -> list[str]:
         return [str(item).strip().lower() for item in value if str(item).strip()]
     text = str(value or "").replace(";", ",").replace("|", ",")
     return [item.strip().lower() for item in text.split(",") if item.strip()]
+
+
+def _split_seed_values(value: Any) -> list[str]:
+    if isinstance(value, (list, tuple, set)):
+        raw_items = [str(item) for item in value]
+    else:
+        text = str(value or "")
+        for delimiter in (";", "|", "\n", "\t"):
+            text = text.replace(delimiter, ",")
+        raw_items = []
+        for chunk in text.split(","):
+            raw_items.extend(chunk.split())
+    seeds: list[str] = []
+    seen: set[str] = set()
+    for item in raw_items:
+        seed = str(item).strip()
+        if not seed or seed in seen:
+            continue
+        seen.add(seed)
+        seeds.append(seed)
+    return seeds
+
+
+def _seed_plan(job: dict[str, Any]) -> list[dict[str, Any]]:
+    random_states = _split_seed_values(job.get("random_states"))
+    if not random_states:
+        random_states = _split_seed_values(job.get("random_state"))
+    sampling_seeds = _split_seed_values(job.get("sampling_seeds"))
+    if not sampling_seeds:
+        sampling_seeds = _split_seed_values(job.get("sampling_seed"))
+    seed_count = max(len(random_states), len(sampling_seeds), 1)
+    plan: list[dict[str, Any]] = []
+    for index in range(seed_count):
+        random_state = random_states[index] if index < len(random_states) else ""
+        sampling_seed = sampling_seeds[index] if index < len(sampling_seeds) else ""
+        plan.append(
+            {
+                "seed_index": index + 1,
+                "random_state": random_state,
+                "sampling_seed": sampling_seed,
+                "seed_label": random_state or sampling_seed or "",
+                "seed_count": seed_count,
+            }
+        )
+    return plan
+
+
+def _seed_suffix(seed_context: dict[str, Any]) -> str:
+    label = str(seed_context.get("seed_label") or "").strip()
+    return f"seed_{_safe_name(label)}" if label else ""
+
+
+def _training_run_key(
+    strategy: dict[str, Any],
+    training_window: dict[str, Any],
+    seed_context: dict[str, Any],
+) -> tuple[str, str, str, str]:
+    return (
+        str(strategy.get("name") or Path(str(strategy.get("strategy_file") or "")).stem),
+        window_label(training_window),
+        str(seed_context.get("random_state") or "").strip(),
+        str(seed_context.get("sampling_seed") or "").strip(),
+    )
+
+
+def _strategy_run_name(
+    strategy: dict[str, Any],
+    training_window: dict[str, Any],
+    seed_context: dict[str, Any],
+) -> str:
+    source_file = Path(str(strategy.get("strategy_file") or ""))
+    base_run_name = f"{_safe_name(strategy.get('name') or source_file.stem)}__{_safe_name(window_label(training_window))}"
+    seed_suffix = _seed_suffix(seed_context)
+    return f"{base_run_name}__{seed_suffix}" if seed_suffix else base_run_name
+
+
+def _strategy_with_seed_metadata(strategy: dict[str, str], seed_context: dict[str, Any]) -> dict[str, str]:
+    row = dict(strategy)
+    row["random_state"] = str(seed_context.get("random_state") or "")
+    row["sampling_seed"] = str(seed_context.get("sampling_seed") or "")
+    row["seed_index"] = str(seed_context.get("seed_index") or "")
+    row["seed_count"] = str(seed_context.get("seed_count") or "")
+    return row
+
+
+def _expand_training_plan_with_seeds(
+    training_plan: list[tuple[dict[str, str], dict[str, Any]]],
+    seed_plan: list[dict[str, Any]],
+) -> list[tuple[dict[str, str], dict[str, Any], dict[str, Any]]]:
+    return [
+        (strategy, training_window, seed_context)
+        for strategy, training_window in training_plan
+        for seed_context in seed_plan
+    ]
 
 
 def _literal_or_name(node: ast.AST, constants: dict[str, Any] | None = None) -> Any:
@@ -420,13 +546,20 @@ def _base_snapshot(strategy_class: str) -> dict[str, Any]:
     }
 
 
-def _build_preset(base_preset: dict[str, Any], strategy_file: Path, strategy_class: str, runtime_dir: Path, timeframe: str = "") -> dict[str, Any]:
+def _build_preset(
+    base_preset: dict[str, Any],
+    strategy_file: Path,
+    strategy_class: str,
+    runtime_dir: Path,
+    timeframe: str = "",
+    hyperopt_spaces: str = "buy",
+) -> dict[str, Any]:
     preset = deepcopy(base_preset)
     preset["strategy_file"] = str(strategy_file)
     preset["strategy_class"] = strategy_class
     if timeframe:
         preset["timeframe"] = str(timeframe)
-    preset["hyperopt_spaces"] = "buy"
+    preset["hyperopt_spaces"] = str(hyperopt_spaces or "buy")
     preset["backtest_export"] = "trades"
     preset["backtest_directory"] = str(runtime_dir / "backtests")
     return preset
@@ -434,15 +567,21 @@ def _build_preset(base_preset: dict[str, Any], strategy_file: Path, strategy_cla
 
 def _job_result_metadata(job: dict[str, Any]) -> dict[str, Any]:
     batch_id = str(job.get("strategy_batch") or "all").strip() or "all"
+    random_states = _split_seed_values(job.get("random_states")) or _split_seed_values(job.get("random_state"))
+    sampling_seeds = _split_seed_values(job.get("sampling_seeds")) or _split_seed_values(job.get("sampling_seed"))
     return {
         "strategy_batch": batch_id,
         "strategy_batch_label": str(job.get("strategy_batch_label") or batch_id),
         "strategy_filter": str(job.get("strategy_filter") or ""),
+        "random_states": ",".join(random_states),
+        "sampling_seeds": ",".join(sampling_seeds),
+        "seed_count": len(_seed_plan(job)),
         "speed_run_mode": bool(job.get("speed_run_mode")),
         "speed_pair_count": str(job.get("speed_pair_count") or ""),
         "auto_window_mode": bool(job.get("auto_window_mode")),
         "auto_window_count": str(job.get("auto_window_count") or ""),
         "target_sweep_enabled": bool(job.get("target_sweep_enabled")),
+        "control_entry_exits": _entry_exit_control_enabled(job),
     }
 
 
@@ -471,14 +610,17 @@ def _speed_pair_count(job: dict[str, Any]) -> int:
 
 def _speed_limited_preset(base_preset: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
     preset = deepcopy(base_preset)
-    if not bool(job.get("speed_run_mode")):
-        return preset
-    if str(preset.get("pair_mode") or "").strip().lower() != "manual":
-        return preset
-    pairs = _pair_tokens(preset.get("pairs"))
-    if not pairs:
-        return preset
-    preset["pairs"] = "\n".join(pairs[: _speed_pair_count(job)])
+    if bool(job.get("speed_run_mode")):
+        configured_pairs = job.get("speed_pairs")
+        pairs = [str(pair).strip() for pair in configured_pairs if str(pair).strip()] if isinstance(configured_pairs, list) else _pair_tokens(configured_pairs)
+        if not pairs:
+            pairs = _pair_tokens(preset.get("pairs"))[: _speed_pair_count(job)]
+    else:
+        configured_pairs = job.get("normal_run_pairs")
+        pairs = [str(pair).strip() for pair in configured_pairs if str(pair).strip()] if isinstance(configured_pairs, list) else _pair_tokens(configured_pairs)
+    if pairs:
+        preset["pair_mode"] = "manual"
+        preset["pairs"] = "\n".join(pairs)
     return preset
 
 
@@ -517,6 +659,82 @@ def _prepare_runtime_strategy(source_file: Path, run_dir: Path) -> Path:
     return runtime_file
 
 
+def _strategy_exit_values(strategy_file: Path, strategy_class: str, env: dict[str, str], cwd: Path) -> tuple[float | None, float | None]:
+    module_name = f"_entry_sieve_exit_check_{strategy_file.stem}_{abs(hash((str(strategy_file), time.time_ns())))}"
+    spec = importlib.util.spec_from_file_location(module_name, strategy_file)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Could not load strategy module for exit-control validation: {strategy_file}")
+
+    env_keys = ("ENTRY_SIEVE_TAKE_PROFIT_PCT", "ENTRY_SIEVE_STOPLOSS_PCT", "ENTRY_SIEVE_CONTROL_EXITS")
+    old_env = {key: os.environ.get(key) for key in env_keys}
+    path_parts = [str(cwd), str(strategy_file.parent)]
+    path_parts.extend(part for part in str(env.get("PYTHONPATH") or "").split(os.pathsep) if part)
+    old_sys_path = list(sys.path)
+    try:
+        for key in env_keys:
+            if key in env:
+                os.environ[key] = str(env[key])
+        for part in reversed(path_parts):
+            if part and part not in sys.path:
+                sys.path.insert(0, part)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        spec.loader.exec_module(module)
+        cls = getattr(module, strategy_class, None)
+        if cls is None or not isinstance(cls, type):
+            raise RuntimeError(f"Strategy class '{strategy_class}' not found for exit-control validation: {strategy_file.name}")
+        minimal_roi = getattr(cls, "minimal_roi", None)
+        roi_value: float | None = None
+        if isinstance(minimal_roi, dict):
+            raw_roi = minimal_roi.get("0")
+            if raw_roi is None:
+                raw_roi = minimal_roi.get(0)
+            if raw_roi is not None:
+                roi_value = float(raw_roi)
+        stoploss = getattr(cls, "stoploss", None)
+        stoploss_value = float(stoploss) if stoploss is not None else None
+        return roi_value, stoploss_value
+    finally:
+        sys.path[:] = old_sys_path
+        sys.modules.pop(module_name, None)
+        for key, old_value in old_env.items():
+            if old_value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = old_value
+
+
+def _validate_entry_exit_control(
+    *,
+    job: dict[str, Any],
+    strategy_file: Path,
+    strategy_class: str,
+    env: dict[str, str],
+    cwd: Path,
+    take_profit_pct: str,
+    stoploss_pct: str,
+) -> None:
+    if not _entry_exit_control_enabled(job):
+        return
+    expected_roi = _parse_pct(take_profit_pct) / 100.0
+    expected_stoploss = -_parse_pct(stoploss_pct) / 100.0
+    roi_value, stoploss_value = _strategy_exit_values(strategy_file, strategy_class, env, cwd)
+    tolerance = 0.000001
+    if roi_value is None or stoploss_value is None:
+        raise RuntimeError(
+            f"Entry Sieve exit-control validation failed for {strategy_file.name}: "
+            "strategy must expose minimal_roi and stoploss when entry exit control is enabled."
+        )
+    if abs(roi_value - expected_roi) > tolerance or abs(stoploss_value - expected_stoploss) > tolerance:
+        raise RuntimeError(
+            f"Entry Sieve exit-control mismatch for {strategy_file.name}: "
+            f"requested TP/SL {take_profit_pct}/{stoploss_pct}, "
+            f"resolved minimal_roi[0]={roi_value:.6g}, stoploss={stoploss_value:.6g}. "
+            "Entry tests must let Sieve control fixed exits; use entry_sieve_minimal_roi/entry_sieve_stoploss "
+            "or disable entry exit control only for exit-stage Sieve work."
+        )
+
+
 def _child_env(
     job: dict[str, Any],
     cwd: Path,
@@ -531,6 +749,7 @@ def _child_env(
     env["PYTHONPATH"] = os.pathsep.join(extra_paths) + (os.pathsep + existing if existing else "")
     env["ENTRY_SIEVE_TAKE_PROFIT_PCT"] = str(take_profit_pct or job.get("take_profit_pct") or "2")
     env["ENTRY_SIEVE_STOPLOSS_PCT"] = str(stoploss_pct or job.get("stoploss_pct") or "2")
+    env["ENTRY_SIEVE_CONTROL_EXITS"] = "1" if _entry_exit_control_enabled(job) else "0"
     return env
 
 
@@ -569,11 +788,18 @@ def _result_row(
         "strategy_batch": str(strategy.get("strategy_batch") or "all"),
         "strategy_batch_label": str(strategy.get("strategy_batch_label") or strategy.get("strategy_batch") or "all"),
         "strategy_filter": str(strategy.get("strategy_filter") or ""),
+        "random_states": str(strategy.get("random_states") or ""),
+        "sampling_seeds": str(strategy.get("sampling_seeds") or ""),
         "speed_run_mode": bool(strategy.get("speed_run_mode")),
         "speed_pair_count": str(strategy.get("speed_pair_count") or ""),
         "auto_window_mode": bool(strategy.get("auto_window_mode")),
         "auto_window_count": str(strategy.get("auto_window_count") or ""),
         "target_sweep_enabled": bool(strategy.get("target_sweep_enabled")),
+        "control_entry_exits": _truthy(strategy.get("control_entry_exits"), default=True),
+        "random_state": str(strategy.get("random_state") or ""),
+        "sampling_seed": str(strategy.get("sampling_seed") or ""),
+        "seed_index": str(strategy.get("seed_index") or ""),
+        "seed_count": str(strategy.get("seed_count") or ""),
         "side": strategy.get("side", ""),
         "core_behavior": strategy.get("core_behavior", ""),
         "training_window": window_label(training_window),
@@ -622,6 +848,62 @@ def _count_jsonl_rows(path: Path) -> int:
         return sum(1 for line in handle if line.strip())
 
 
+def _result_run_key(row: dict[str, Any]) -> tuple[str, str, str, str] | None:
+    strategy_name = str(row.get("strategy") or "").strip()
+    training_label = str(row.get("training_window") or "").strip()
+    random_state = str(row.get("random_state") or "").strip()
+    sampling_seed = str(row.get("sampling_seed") or "").strip()
+    if not strategy_name or not training_label:
+        return None
+    return strategy_name, training_label, random_state, sampling_seed
+
+
+def _result_task_key(row: dict[str, Any]) -> tuple[str, str, str, str, str, str, str, str] | None:
+    run_key = _result_run_key(row)
+    if run_key is None:
+        return None
+    return (
+        *run_key,
+        str(row.get("validation_window") or "").strip(),
+        str(row.get("take_profit_pct") or "").strip(),
+        str(row.get("stoploss_pct") or "").strip(),
+        str(row.get("target_sweep") or "").strip().lower(),
+    )
+
+
+def _latest_jsonl_result_rows(path: Path) -> tuple[dict[tuple[str, str, str, str, str, str, str, str], dict[str, Any]], dict[str, int]]:
+    latest: dict[tuple[str, str, str, str, str, str, str, str], dict[str, Any]] = {}
+    unkeyed_counts: dict[str, int] = {}
+    if not path.exists():
+        return latest, unkeyed_counts
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                unkeyed_counts["invalid_json"] = unkeyed_counts.get("invalid_json", 0) + 1
+                continue
+            key = _result_task_key(row)
+            if key is None:
+                status = str(row.get("status") or "").strip().lower() or "missing"
+                unkeyed_counts[status] = unkeyed_counts.get(status, 0) + 1
+                continue
+            latest[key] = row
+    return latest, unkeyed_counts
+
+
+def _jsonl_status_counts(path: Path) -> dict[str, int]:
+    latest, counts = _latest_jsonl_result_rows(path)
+    counts = dict(counts)
+    for row in latest.values():
+        status = str(row.get("status") or "").strip().lower() or "missing"
+        counts[status] = counts.get(status, 0) + 1
+    return counts
+
+
 def _load_result_summary(runtime_dir: Path, job_id: str) -> dict[str, Any]:
     summary_file = _result_summary_file(runtime_dir, job_id)
     payload = load_json(summary_file, {}) if summary_file.exists() else {}
@@ -638,6 +920,7 @@ def _write_result_summary(
     row_count: int | None = None,
     created_at: str = "",
     metadata: dict[str, Any] | None = None,
+    extra_fields: dict[str, Any] | None = None,
 ) -> None:
     results_file = _result_file(runtime_dir, job_id)
     summary_file = _result_summary_file(runtime_dir, job_id)
@@ -666,6 +949,8 @@ def _write_result_summary(
         for key in RESULT_METADATA_KEYS:
             if key in metadata:
                 summary[key] = metadata.get(key)
+    if extra_fields:
+        summary.update(extra_fields)
     save_json(summary_file, summary)
     save_json(
         runtime_dir / "latest.json",
@@ -677,6 +962,7 @@ def _write_result_summary(
             "status": status,
             "phase": phase,
             **{key: summary[key] for key in RESULT_METADATA_KEYS if key in summary},
+            **(extra_fields or {}),
         },
     )
 
@@ -710,6 +996,158 @@ def _initialize_result_batch(runtime_dir: Path, job: dict[str, Any]) -> None:
     _result_file(runtime_dir, str(job.get("job_id") or "unknown")).parent.mkdir(parents=True, exist_ok=True)
 
 
+def _existing_result_progress(runtime_dir: Path, job_id: str, *, expected_rows_per_run: int) -> tuple[set[tuple[str, str, str, str]], int]:
+    results_file = _result_file(runtime_dir, job_id)
+    if not results_file.exists():
+        return set(), 0
+    ok_counts: dict[tuple[str, str, str, str], int] = {}
+    latest_rows, _ = _latest_jsonl_result_rows(results_file)
+    for row in latest_rows.values():
+        if str(row.get("status") or "").strip().lower() != "ok":
+            continue
+        run_key = _result_run_key(row)
+        if run_key is None:
+            continue
+        ok_counts[run_key] = ok_counts.get(run_key, 0) + 1
+    expected_count = max(1, int(expected_rows_per_run))
+    completed = {run_key for run_key, count in ok_counts.items() if count >= expected_count}
+    row_count = sum(count for run_key, count in ok_counts.items() if run_key in completed)
+    return completed, row_count
+
+
+def _checkpoint_record_key(record: dict[str, Any]) -> tuple[str, str, str, str] | None:
+    strategy_name = str(record.get("strategy") or "").strip()
+    training_window = record.get("training_window")
+    if isinstance(training_window, dict):
+        training_name = window_label(training_window)
+    else:
+        training_name = str(training_window or "").strip()
+    if not strategy_name or not training_name:
+        return None
+    return (
+        strategy_name,
+        training_name,
+        str(record.get("random_state") or "").strip(),
+        str(record.get("sampling_seed") or "").strip(),
+    )
+
+
+def _checkpoint_matches_job(record: dict[str, Any], job_id: str) -> bool:
+    record_job_id = str(record.get("job_id") or "").strip()
+    if record_job_id:
+        return record_job_id == job_id
+    hyperopt_file = str(record.get("hyperopt_file") or "").strip()
+    return bool(hyperopt_file and job_id in Path(hyperopt_file).parts)
+
+
+def _existing_hyperopt_checkpoints(state: dict[str, Any], job_id: str) -> dict[tuple[str, str, str, str], dict[str, Any]]:
+    checkpoints: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    for value in state.get("completed_runs") or []:
+        if not isinstance(value, dict) or not _checkpoint_matches_job(value, job_id):
+            continue
+        key = _checkpoint_record_key(value)
+        if key is None:
+            continue
+        hyperopt_file = Path(str(value.get("hyperopt_file") or ""))
+        params_file = Path(str(value.get("checkpoint_params_file") or value.get("params_file") or ""))
+        if hyperopt_file.is_file() and params_file.is_file():
+            checkpoints[key] = value
+    return checkpoints
+
+
+def _upsert_hyperopt_checkpoint(state: dict[str, Any], record: dict[str, Any]) -> None:
+    key = _checkpoint_record_key(record)
+    completed_runs = [value for value in state.get("completed_runs") or [] if isinstance(value, dict)]
+    if key is not None:
+        completed_runs = [
+            value
+            for value in completed_runs
+            if not (_checkpoint_matches_job(value, str(record.get("job_id") or "")) and _checkpoint_record_key(value) == key)
+        ]
+    completed_runs.append(record)
+    state["completed_runs"] = completed_runs
+    state["updated_at"] = datetime.now().astimezone().isoformat()
+
+
+def _recover_hyperopt_checkpoint_from_artifacts(
+    *,
+    job: dict[str, Any],
+    runtime_dir: Path,
+    strategy: dict[str, Any],
+    training_window: dict[str, Any],
+    seed_context: dict[str, Any],
+    validation_windows: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    job_id = str(job.get("job_id") or "").strip()
+    source_file = Path(str(strategy.get("strategy_file") or "")).resolve()
+    strategy_class = str(strategy.get("strategy_class") or "").strip()
+    run_name = _strategy_run_name(strategy, training_window, seed_context)
+    runtime_params_file = (runtime_dir / "runs" / run_name / "strategy" / source_file.name).with_suffix(".json")
+    hyperopt_userdir = runtime_dir / "hyperopt_userdirs" / _safe_name(job_id or "job") / run_name
+    checkpoint_params_file = hyperopt_userdir / "best_params.checkpoint.json"
+    result_dir = hyperopt_userdir / "hyperopt_results"
+    last_result_file = result_dir / ".last_result.json"
+    if not last_result_file.is_file():
+        return None
+    try:
+        latest = load_json(last_result_file, {})
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+    latest_name = Path(str(latest.get("latest_hyperopt") or "")).name if isinstance(latest, dict) else ""
+    hyperopt_file = result_dir / latest_name
+    if not latest_name or not hyperopt_file.is_file():
+        return None
+    params_source = checkpoint_params_file
+    if not params_source.is_file():
+        if not runtime_params_file.is_file():
+            return None
+        params_delay = runtime_params_file.stat().st_mtime - hyperopt_file.stat().st_mtime
+        if params_delay < -1.0 or params_delay > 600.0:
+            return None
+        params_source = runtime_params_file
+    try:
+        snapshot = load_json(params_source, {})
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(snapshot, dict) or str(snapshot.get("strategy_name") or "") != strategy_class:
+        return None
+    params = snapshot.get("params")
+    if not isinstance(params, dict) or not params:
+        return None
+    save_json(checkpoint_params_file, snapshot)
+    try:
+        epoch_count = max(0, int(str(job.get("epochs") or "0").strip()))
+    except ValueError:
+        epoch_count = 0
+    best_params_count = sum(len(values) for values in params.values() if isinstance(values, dict))
+    finished_at = datetime.fromtimestamp(params_source.stat().st_mtime).astimezone().isoformat()
+    target_pairs = _target_pairs(job)
+    return {
+        "job_id": job_id,
+        "strategy": strategy.get("name") or source_file.stem,
+        "strategy_class": strategy_class,
+        "training_window": compact_window(training_window),
+        "validation_windows": [compact_window(window) for window in validation_windows],
+        "target_pairs": [
+            {"take_profit_pct": str(pair["take_profit_pct"]), "stoploss_pct": str(pair["stoploss_pct"])}
+            for pair in target_pairs
+        ],
+        "random_state": str(seed_context.get("random_state") or ""),
+        "sampling_seed": str(seed_context.get("sampling_seed") or ""),
+        "seed_index": seed_context.get("seed_index"),
+        "seed_count": seed_context.get("seed_count"),
+        "hyperopt_file": str(hyperopt_file),
+        "params_file": str(checkpoint_params_file),
+        "checkpoint_params_file": str(checkpoint_params_file),
+        "archive_params_file": str(runtime_params_file) if runtime_params_file.is_file() else "",
+        "best_params_count": best_params_count,
+        "epoch_count": epoch_count,
+        "hyperopt_loss": None,
+        "finished_at": finished_at,
+        "recovered_from_artifacts": True,
+    }
+
+
 def _update_result_batch_status(runtime_dir: Path, job_id: str, status_payload: dict[str, Any]) -> None:
     results_file = _result_file(runtime_dir, job_id)
     summary_file = _result_summary_file(runtime_dir, job_id)
@@ -725,6 +1163,11 @@ def _update_result_batch_status(runtime_dir: Path, job_id: str, status_payload: 
         phase=str(status_payload.get("phase") or ""),
         updated_at=updated_at,
         metadata={key: status_payload.get(key) for key in RESULT_METADATA_KEYS if key in status_payload},
+        extra_fields={
+            key: status_payload.get(key)
+            for key in ("status_counts", "ok_row_count", "error_row_count", "has_error_rows")
+            if key in status_payload
+        },
     )
 
 
@@ -761,6 +1204,15 @@ def _run_backtest_task(batch: PendingBacktests, task: BacktestTask, python_exe: 
     preset = deepcopy(batch.preset)
     preset.pop("backtest_directory", None)
     task.output_dir.mkdir(parents=True, exist_ok=True)
+    _validate_entry_exit_control(
+        job={"control_entry_exits": batch.strategy.get("control_entry_exits")},
+        strategy_file=Path(str(preset.get("strategy_file") or "")),
+        strategy_class=str(preset.get("strategy_class") or ""),
+        env=task.env,
+        cwd=batch.cwd,
+        take_profit_pct=task.take_profit_pct,
+        stoploss_pct=task.stoploss_pct,
+    )
     snapshot = result_file_snapshot(task.output_dir, ("*.zip", "*.json"))
     command = [
         python_exe,
@@ -1088,7 +1540,25 @@ def _start_available_backtests(
     lane_count = len(backtest_lanes)
     if lane_count <= 0:
         return lane_cursor, last_start_at, 0, "No backtest lanes configured"
-    active_limit = max(1, min(lane_limit, lane_count))
+    active_limit = min(lane_limit, lane_count)
+    if active_limit <= 0:
+        _write_backtest_queue_status(
+            runtime_dir,
+            job_id=job_id,
+            phase=status_phase,
+            run_index=run_index,
+            total_hyperopts=total_hyperopts,
+            completed_hyperopts=completed_hyperopts,
+            completed_backtests=completed_backtests,
+            total_backtests=total_backtests,
+            current_strategy=current_strategy,
+            current_training_window=current_training_window,
+            waiting_batches=waiting_batches,
+            running_batches=running_batches,
+            lane_limit=0,
+            message="Parallel Backtest w/ Hyperopt is 0",
+        )
+        return lane_cursor, last_start_at, 0, "Parallel Backtest w/ Hyperopt is 0"
     started = 0
     block_reason = ""
     while waiting_batches and len(running_batches) < active_limit:
@@ -1139,11 +1609,14 @@ def _prepare_strategy_window(
     state: dict[str, Any],
     strategy: dict[str, str],
     training_window: dict[str, Any],
+    seed_context: dict[str, Any],
     validation_windows: list[dict[str, Any]],
+    checkpoint: dict[str, Any] | None = None,
 ) -> PendingBacktests:
     source_file = Path(strategy["strategy_file"]).resolve()
     strategy_class = str(strategy["strategy_class"])
-    run_name = f"{_safe_name(strategy.get('name') or source_file.stem)}__{_safe_name(window_label(training_window))}"
+    seed_suffix = _seed_suffix(seed_context)
+    run_name = _strategy_run_name(strategy, training_window, seed_context)
     run_dir = runtime_dir / "runs" / run_name
     runtime_strategy_file = _prepare_runtime_strategy(source_file, run_dir)
     params_file = runtime_strategy_file.with_suffix(".json")
@@ -1152,37 +1625,77 @@ def _prepare_strategy_window(
     if not project_root:
         raise RuntimeError("Entry Sieve preset must include project_root.")
     cwd = project_root.resolve()
-    python_exe = str(base_preset.get("python_exe") or job.get("python_exe") or sys.executable)
+    python_exe = str(job.get("python_exe") or base_preset.get("python_exe") or sys.executable)
     strategy_timeframe = str(_strategy_profile(strategy).get("timeframe") or "")
-    preset = _build_preset(base_preset, runtime_strategy_file, strategy_class, runtime_dir, strategy_timeframe)
-    env = _child_env(job, cwd, source_file.parent)
-
-    catalog = load_catalog(source_file, strategy_class)
-    strategy_spaces = strategy_parameter_spaces(source_file, strategy_class)
-    target = resolve_params(catalog, "family", "entries", "targeted", strategy_spaces)
-    resolved_params = target.get("resolved_params") or []
-    epochs = _resolve_epochs(job, resolved_params)
-    best_epoch, hyperopt_file, epoch_count = run_hyperopt(
-        python_exe=python_exe,
-        cwd=cwd,
-        preset=preset,
-        target=target,
-        timerange=str(training_window.get("timerange") or ""),
-        epochs=epochs,
-        random_state=str(job.get("random_state") or "").strip() or None,
-        env=env,
+    preset = _build_preset(
+        base_preset,
+        runtime_strategy_file,
+        strategy_class,
+        runtime_dir,
+        strategy_timeframe,
+        str(job.get("hyperopt_spaces") or "buy"),
     )
-    candidate_params = filter_best_params(best_epoch, target)
-    if not candidate_params:
-        raise RuntimeError("Hyperopt completed but returned no entry parameters.")
+    hyperopt_userdir = runtime_dir / "hyperopt_userdirs" / _safe_name(str(job.get("job_id") or "job")) / run_name
+    (hyperopt_userdir / "hyperopt_results").mkdir(parents=True, exist_ok=True)
+    preset["hyperopt_userdir"] = str(hyperopt_userdir)
+    env = _child_env(job, cwd, source_file.parent)
+    _validate_entry_exit_control(
+        job=job,
+        strategy_file=runtime_strategy_file,
+        strategy_class=strategy_class,
+        env=env,
+        cwd=cwd,
+        take_profit_pct=str(job.get("take_profit_pct") or "2"),
+        stoploss_pct=str(job.get("stoploss_pct") or "2"),
+    )
 
-    snapshot = merge_params_into_snapshot(_base_snapshot(strategy_class), candidate_params)
-    explorer_save_json(params_file, snapshot)
-    archive_params_file = runtime_dir / "params" / f"{_safe_name(strategy_class)}__{_safe_name(window_label(training_window))}.json"
-    explorer_save_json(archive_params_file, snapshot)
+    if checkpoint is not None:
+        hyperopt_file = Path(str(checkpoint.get("hyperopt_file") or ""))
+        checkpoint_params_file = Path(
+            str(checkpoint.get("checkpoint_params_file") or checkpoint.get("params_file") or "")
+        )
+        if not hyperopt_file.is_file() or not checkpoint_params_file.is_file():
+            raise RuntimeError(f"Hyperopt checkpoint artifacts are incomplete for {run_name}.")
+        snapshot = load_json(checkpoint_params_file, {})
+        if not isinstance(snapshot, dict) or str(snapshot.get("strategy_name") or "") != strategy_class:
+            raise RuntimeError(f"Hyperopt checkpoint params do not match {strategy_class} for {run_name}.")
+        explorer_save_json(params_file, snapshot)
+        best_params_count = int(checkpoint.get("best_params_count") or 0)
+        epoch_count = int(checkpoint.get("epoch_count") or 0)
+        hyperopt_loss = checkpoint.get("hyperopt_loss")
+    else:
+        catalog = load_catalog(source_file, strategy_class)
+        strategy_spaces = strategy_parameter_spaces(source_file, strategy_class)
+        target_family = str(job.get("target_family") or "entries").strip() or "entries"
+        target = resolve_params(catalog, "family", target_family, "targeted", strategy_spaces)
+        resolved_params = target.get("resolved_params") or []
+        epochs = _resolve_epochs(job, resolved_params)
+        best_epoch, hyperopt_file, epoch_count = run_hyperopt(
+            python_exe=python_exe,
+            cwd=cwd,
+            preset=preset,
+            target=target,
+            timerange=str(training_window.get("timerange") or ""),
+            epochs=epochs,
+            random_state=str(seed_context.get("random_state") or "").strip() or None,
+            env=env,
+        )
+        candidate_params = filter_best_params(best_epoch, target)
+        if not candidate_params:
+            raise RuntimeError(f"Hyperopt completed but returned no {target_family} parameters.")
 
-    hyperopt_loss = best_epoch.get("loss")
-    best_params_count = sum(len(values) for values in candidate_params.values() if isinstance(values, dict))
+        snapshot = merge_params_into_snapshot(_base_snapshot(strategy_class), candidate_params)
+        explorer_save_json(params_file, snapshot)
+        params_name_parts = [_safe_name(strategy_class), _safe_name(window_label(training_window))]
+        if seed_suffix:
+            params_name_parts.append(seed_suffix)
+        archive_params_file = runtime_dir / "params" / f"{'__'.join(params_name_parts)}.json"
+        explorer_save_json(archive_params_file, snapshot)
+        checkpoint_params_file = hyperopt_userdir / "best_params.checkpoint.json"
+        save_json(checkpoint_params_file, snapshot)
+
+        hyperopt_loss = best_epoch.get("loss")
+        best_params_count = sum(len(values) for values in candidate_params.values() if isinstance(values, dict))
     target_pairs = _target_pairs(job)
     tasks: list[BacktestTask] = []
     for validation_window in validation_windows:
@@ -1201,29 +1714,40 @@ def _prepare_strategy_window(
                     output_dir=runtime_dir / "backtests" / run_name / validation_name / target_name,
                 )
             )
-    state.setdefault("completed_runs", []).append(
-        {
+    if checkpoint is None:
+        checkpoint_record = {
+            "job_id": str(job.get("job_id") or ""),
             "strategy": strategy.get("name") or source_file.stem,
             "strategy_class": strategy_class,
             "training_window": compact_window(training_window),
             "validation_windows": [compact_window(window) for window in validation_windows],
             "target_pairs": [{"take_profit_pct": task.take_profit_pct, "stoploss_pct": task.stoploss_pct} for task in tasks],
+            "random_state": str(seed_context.get("random_state") or ""),
+            "sampling_seed": str(seed_context.get("sampling_seed") or ""),
+            "seed_index": seed_context.get("seed_index"),
+            "seed_count": seed_context.get("seed_count"),
             "hyperopt_file": str(hyperopt_file),
-            "params_file": str(archive_params_file),
+            "params_file": str(checkpoint_params_file),
+            "checkpoint_params_file": str(checkpoint_params_file),
+            "archive_params_file": str(archive_params_file),
             "best_params_count": best_params_count,
             "epoch_count": epoch_count,
+            "hyperopt_loss": float(hyperopt_loss) if isinstance(hyperopt_loss, (int, float)) else None,
             "finished_at": datetime.now().astimezone().isoformat(),
         }
-    )
+        _upsert_hyperopt_checkpoint(state, checkpoint_record)
+        save_json(runtime_dir / "state.json", state)
+    strategy_metadata = _strategy_with_seed_metadata(strategy, seed_context)
+    strategy_metadata["control_entry_exits"] = _entry_exit_control_enabled(job)
     return PendingBacktests(
         job_id=str(job.get("job_id") or ""),
-        strategy=strategy,
+        strategy=strategy_metadata,
         training_window=training_window,
         tasks=tasks,
         preset=preset,
         cwd=cwd,
         hyperopt_file=hyperopt_file,
-        params_file=archive_params_file,
+        params_file=checkpoint_params_file,
         best_params_count=best_params_count,
         epoch_count=epoch_count,
         hyperopt_loss=float(hyperopt_loss) if isinstance(hyperopt_loss, (int, float)) else None,
@@ -1345,6 +1869,14 @@ def _worker_count(value: Any, *, default: int) -> int:
     return min(MAX_BACKTEST_WORKERS, max(1, count))
 
 
+def _parallel_worker_count(value: Any, *, default: int) -> int:
+    try:
+        count = int(str(value).strip())
+    except (TypeError, ValueError):
+        count = default
+    return min(MAX_BACKTEST_WORKERS, max(0, count))
+
+
 def _hyperopt_job_count(preset: dict[str, Any]) -> int:
     try:
         count = int(str(preset.get("hyperopt_jobs") or "").strip())
@@ -1359,30 +1891,61 @@ def _hyperopt_job_count(preset: dict[str, Any]) -> int:
 def _final_backtest_worker_limit(
     *,
     backtest_lane_count: int,
-    base_preset: dict[str, Any],
     split_venv_pipeline: bool,
+    max_cores_allowed: int,
 ) -> int:
     if not split_venv_pipeline:
         return 1
-    return _active_worker_capacity(backtest_lane_count)
-
-
-def _active_worker_capacity(backtest_lane_count: int) -> int:
-    cpu_total = max(1, int(os.cpu_count() or 1))
-    return max(1, min(backtest_lane_count, cpu_total - RESERVED_SYSTEM_WORKERS))
+    return min(backtest_lane_count, max(1, max_cores_allowed))
 
 
 def _pipelined_backtest_worker_limit(
     *,
     backtest_lane_count: int,
-    base_preset: dict[str, Any],
     split_venv_pipeline: bool,
+    parallel_backtest_with_hyperopt: int,
 ) -> int:
     if not split_venv_pipeline:
         return 1
-    active_capacity = _active_worker_capacity(backtest_lane_count)
-    hyperopt_workers = _hyperopt_job_count(base_preset)
-    return max(1, min(backtest_lane_count, active_capacity - hyperopt_workers))
+    return min(backtest_lane_count, max(0, parallel_backtest_with_hyperopt))
+
+
+def _adaptive_hyperopt_jobs(
+    *,
+    max_hyperopt_jobs: int,
+    max_cores_allowed: int,
+    backtest_worker_count: int,
+    completed_hyperopts: int,
+    waiting_backtests: int,
+    running_backtests: int,
+) -> int:
+    max_jobs = max(1, min(max_hyperopt_jobs, max_cores_allowed))
+    if completed_hyperopts < max(1, max_cores_allowed):
+        return max_jobs
+    backlog = max(0, waiting_backtests + running_backtests)
+    if backlog <= 0:
+        return max_jobs
+    max_backtest_lanes = max(0, min(backtest_worker_count, max_cores_allowed - 1))
+    if max_backtest_lanes <= 0:
+        return max_jobs
+    backlog_floor = max(1, (max_backtest_lanes + 1) // 2)
+    if backlog < backlog_floor:
+        return max_jobs
+    backtest_lanes = min(backlog, max_backtest_lanes)
+    jobs = max_cores_allowed - backtest_lanes
+    return max(1, min(max_jobs, jobs))
+
+
+def _adaptive_pipelined_backtest_worker_limit(
+    *,
+    backtest_lane_count: int,
+    split_venv_pipeline: bool,
+    max_cores_allowed: int,
+    effective_hyperopt_jobs: int,
+) -> int:
+    if not split_venv_pipeline:
+        return 1
+    return min(backtest_lane_count, max(0, max_cores_allowed - effective_hyperopt_jobs))
 
 
 def _effective_backtest_worker_count(
@@ -1527,7 +2090,9 @@ def main(argv: list[str] | None = None) -> int:
     validation_selection = [job.get("auto_validation_window") or FULL_CYCLE_VALIDATION_WINDOW] if auto_window_mode else job.get("validation_windows") or []
     validation_windows = resolve_windows(all_windows, validation_selection, label="validation")
     strategies = _annotate_strategies_with_job_metadata([strategy for strategy in job.get("strategies") or [] if isinstance(strategy, dict)], job)
-    training_plan, configured_training_window_count = _build_training_plan(strategies, all_windows, job)
+    base_training_plan, configured_training_window_count = _build_training_plan(strategies, all_windows, job)
+    seed_plan = _seed_plan(job)
+    training_plan = _expand_training_plan_with_seeds(base_training_plan, seed_plan)
     base_preset = _speed_limited_preset(presets[preset_name], job)
     hyperopt_jobs = str(job.get("hyperopt_jobs") or "").strip()
     if hyperopt_jobs:
@@ -1540,13 +2105,22 @@ def main(argv: list[str] | None = None) -> int:
     _initialize_result_batch(runtime_dir, job)
     split_venv_pipeline = bool(job.get("split_venv_pipeline"))
     target_sweep_enabled = bool(job.get("target_sweep_enabled"))
-    base_python_exe = str(base_preset.get("python_exe") or job.get("python_exe") or sys.executable)
+    base_python_exe = str(job.get("python_exe") or base_preset.get("python_exe") or sys.executable)
     if split_venv_pipeline:
         backtest_python_exe = str(job.get("backtest_python_exe") or "")
     else:
         backtest_python_exe = str(job.get("backtest_python_exe") or base_preset.get("python_exe") or sys.executable)
     backtest_python_exes = _split_python_exes(job.get("backtest_python_exes"))
-    requested_backtest_worker_count = _worker_count(job.get("backtest_worker_count"), default=2 if split_venv_pipeline else 1)
+    max_cores_allowed = _worker_count(
+        job.get("max_cores_allowed") or job.get("backtest_worker_count"),
+        default=2 if split_venv_pipeline else 1,
+    )
+    max_hyperopt_jobs = _hyperopt_job_count(base_preset)
+    parallel_backtest_with_hyperopt = _parallel_worker_count(
+        max_cores_allowed - max_hyperopt_jobs,
+        default=0,
+    )
+    requested_backtest_worker_count = _worker_count(job.get("backtest_worker_count") or max_cores_allowed, default=max_cores_allowed)
     backtest_worker_count = _effective_backtest_worker_count(
         requested_backtest_worker_count,
         split_venv_pipeline=split_venv_pipeline,
@@ -1564,26 +2138,94 @@ def main(argv: list[str] | None = None) -> int:
     if not isinstance(state, dict):
         state = {}
 
-    total_runs = len(training_plan)
     target_pair_count = len(_target_pairs(job))
+    expected_rows_per_run = max(1, len(validation_windows) * target_pair_count)
+    resume_existing_rows = 0
+    resume_completed_runs = 0
+    resume_hyperopt_plan: list[
+        tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]
+    ] = []
+    if bool(args.resume_existing_results):
+        completed_keys, resume_existing_rows = _existing_result_progress(
+            runtime_dir,
+            job_id,
+            expected_rows_per_run=expected_rows_per_run,
+        )
+        if completed_keys:
+            original_training_plan = training_plan
+            training_plan = [
+                (strategy, training_window, seed_context)
+                for strategy, training_window, seed_context in original_training_plan
+                if (
+                    str(strategy.get("name") or Path(str(strategy.get("strategy_file") or "")).stem),
+                    window_label(training_window),
+                    str(seed_context.get("random_state") or "").strip(),
+                    str(seed_context.get("sampling_seed") or "").strip(),
+                )
+                not in completed_keys
+            ]
+            resume_completed_runs = len(original_training_plan) - len(training_plan)
+
+        checkpoint_map = _existing_hyperopt_checkpoints(state, job_id)
+        recovered_count = 0
+        for strategy, training_window, seed_context in training_plan:
+            run_key = _training_run_key(strategy, training_window, seed_context)
+            checkpoint = checkpoint_map.get(run_key)
+            if checkpoint is None:
+                checkpoint = _recover_hyperopt_checkpoint_from_artifacts(
+                    job=job,
+                    runtime_dir=runtime_dir,
+                    strategy=strategy,
+                    training_window=training_window,
+                    seed_context=seed_context,
+                    validation_windows=validation_windows,
+                )
+                if checkpoint is not None:
+                    _upsert_hyperopt_checkpoint(state, checkpoint)
+                    checkpoint_map[run_key] = checkpoint
+                    recovered_count += 1
+            if checkpoint is not None:
+                resume_hyperopt_plan.append((strategy, training_window, seed_context, checkpoint))
+        if resume_hyperopt_plan:
+            checkpoint_keys = {
+                _training_run_key(strategy, training_window, seed_context)
+                for strategy, training_window, seed_context, _ in resume_hyperopt_plan
+            }
+            training_plan = [
+                (strategy, training_window, seed_context)
+                for strategy, training_window, seed_context in training_plan
+                if _training_run_key(strategy, training_window, seed_context) not in checkpoint_keys
+            ]
+        if recovered_count:
+            save_json(state_file, state)
+
+    resume_hyperopt_runs = len(resume_hyperopt_plan)
+    total_runs = len(training_plan) + resume_hyperopt_runs
+    if bool(args.resume_existing_results):
+        total_runs += resume_completed_runs
     total_backtests = total_runs * len(validation_windows) * target_pair_count
     print(f"Entry Sieve job: {job_id}")
+    if bool(args.resume_existing_results):
+        print(f"Resume existing results: {resume_completed_runs}/{total_runs} run(s), {resume_existing_rows}/{total_backtests} result row(s) already present")
+        print(f"Resume Hyperopt checkpoints: {resume_hyperopt_runs}/{total_runs} run(s) ready for validation")
     if auto_window_mode:
-        print(f"Strategies: {len(strategies)} | auto windows/file: {configured_training_window_count} | validation windows: {len(validation_windows)} | runs: {total_runs}")
+        print(f"Strategies: {len(strategies)} | auto windows/file: {configured_training_window_count} | seeds: {len(seed_plan)} | validation windows: {len(validation_windows)} | runs: {total_runs}")
     else:
-        print(f"Strategies: {len(strategies)} | training windows: {configured_training_window_count} | validation windows: {len(validation_windows)} | runs: {total_runs}")
+        print(f"Strategies: {len(strategies)} | training windows: {configured_training_window_count} | seeds: {len(seed_plan)} | validation windows: {len(validation_windows)} | runs: {total_runs}")
     if split_venv_pipeline:
         print(f"Split-venv backtest lanes ({len(backtest_lanes)}/{requested_backtest_worker_count} requested, {backtest_worker_count} effective):")
         for lane_index, lane in enumerate(backtest_lanes, start=1):
             print(f"  lane {lane_index}: {lane}")
         if not target_sweep_enabled:
             print(
-                "Non-sweep backtest scheduler: "
-                f"{_pipelined_backtest_worker_limit(backtest_lane_count=len(backtest_lanes), base_preset=base_preset, split_venv_pipeline=split_venv_pipeline)} lane(s) during hyperopt, "
-                f"{_final_backtest_worker_limit(backtest_lane_count=len(backtest_lanes), base_preset=base_preset, split_venv_pipeline=split_venv_pipeline)} lane(s) during final drain"
+                "Non-sweep adaptive backtest scheduler: "
+                f"up to {max_hyperopt_jobs} hyperopt job(s), "
+                f"initially {_pipelined_backtest_worker_limit(backtest_lane_count=len(backtest_lanes), split_venv_pipeline=split_venv_pipeline, parallel_backtest_with_hyperopt=parallel_backtest_with_hyperopt)} backtest lane(s) during hyperopt, "
+                f"{_final_backtest_worker_limit(backtest_lane_count=len(backtest_lanes), split_venv_pipeline=split_venv_pipeline, max_cores_allowed=max_cores_allowed)} lane(s) during final drain"
             )
     if bool(job.get("speed_run_mode")):
-        print(f"Speed run mode enabled: first {_speed_pair_count(job)} manual pair(s), 1 auto window, epochs capped at {job.get('auto_epochs_cap') or SPEED_RUN_EPOCH_CAP}, target sweep disabled")
+        speed_pairs = _pair_tokens(base_preset.get("pairs"))
+        print(f"Speed run mode enabled: {len(speed_pairs)} fixed speed pair(s), 1 auto window, epochs capped at {job.get('auto_epochs_cap') or SPEED_RUN_EPOCH_CAP}, target sweep disabled")
     if target_sweep_enabled:
         pairs = _target_pairs(job)
         pair_text = ", ".join(f"{pair['take_profit_pct']}/{pair['stoploss_pct']}" for pair in pairs)
@@ -1594,25 +2236,42 @@ def main(argv: list[str] | None = None) -> int:
         status="running",
         phase="starting",
         total_hyperopts=total_runs,
-        completed_hyperopts=0,
+        completed_hyperopts=resume_completed_runs + resume_hyperopt_runs,
         total_backtests=total_backtests,
-        completed_backtests=0,
+        completed_backtests=resume_existing_rows,
         strategy_count=len(strategies),
         training_window_count=configured_training_window_count,
+        seed_count=len(seed_plan),
         validation_window_count=len(validation_windows),
         target_pair_count=target_pair_count,
         auto_window_mode=auto_window_mode,
-        message="Entry Sieve run started",
+        message="Entry Sieve resume started" if bool(args.resume_existing_results) else "Entry Sieve run started",
     )
 
-    run_index = 0
-    pending_batches: list[PendingBacktests] = []
-    final_completed_backtests = 0
+    pending_batches = [
+        _prepare_strategy_window(
+            job=job,
+            base_preset=base_preset,
+            runtime_dir=runtime_dir,
+            state=state,
+            strategy=strategy,
+            training_window=training_window,
+            seed_context=seed_context,
+            validation_windows=validation_windows,
+            checkpoint=checkpoint,
+        )
+        for strategy, training_window, seed_context, checkpoint in resume_hyperopt_plan
+    ]
+    run_index = resume_completed_runs + len(pending_batches)
+    final_completed_backtests = resume_existing_rows
     if target_sweep_enabled:
-        for strategy, training_window in training_plan:
+        for strategy, training_window, seed_context in training_plan:
+            strategy = _strategy_with_seed_metadata(strategy, seed_context)
             strategy_name = strategy.get("name") or Path(str(strategy.get("strategy_file") or "")).stem
+            seed_label = str(seed_context.get("random_state") or "").strip()
+            seed_text = f" | seed={seed_label}" if seed_label else ""
             run_index += 1
-            print(f"\nEntry Sieve {run_index}/{total_runs}: {strategy_name} | train={window_label(training_window)}")
+            print(f"\nEntry Sieve {run_index}/{total_runs}: {strategy_name} | train={window_label(training_window)}{seed_text}")
             _write_run_status(
                 runtime_dir,
                 job_id,
@@ -1625,7 +2284,8 @@ def main(argv: list[str] | None = None) -> int:
                 completed_backtests=0,
                 current_strategy=strategy_name,
                 current_training_window=window_label(training_window),
-                message=f"Hyperopt {run_index}/{total_runs}: {strategy_name}",
+                random_state=seed_label,
+                message=f"Hyperopt {run_index}/{total_runs}: {strategy_name}{seed_text}",
             )
             try:
                 pending_batches.append(
@@ -1636,6 +2296,7 @@ def main(argv: list[str] | None = None) -> int:
                         state=state,
                         strategy=strategy,
                         training_window=training_window,
+                        seed_context=seed_context,
                         validation_windows=validation_windows,
                     )
                 )
@@ -1651,7 +2312,8 @@ def main(argv: list[str] | None = None) -> int:
                     completed_backtests=0,
                     current_strategy=strategy_name,
                     current_training_window=window_label(training_window),
-                    message=f"Hyperopt complete {run_index}/{total_runs}: {strategy_name}",
+                    random_state=seed_label,
+                    message=f"Hyperopt complete {run_index}/{total_runs}: {strategy_name}{seed_text}",
                 )
             except Exception as exc:
                 print(f"Entry Sieve run failed: {exc}")
@@ -1681,7 +2343,8 @@ def main(argv: list[str] | None = None) -> int:
                     completed_backtests=0,
                     current_strategy=strategy_name,
                     current_training_window=window_label(training_window),
-                    message=f"Hyperopt failed {run_index}/{total_runs}: {strategy_name}",
+                    random_state=seed_label,
+                    message=f"Hyperopt failed {run_index}/{total_runs}: {strategy_name}{seed_text}",
                 )
         _write_run_status(
             runtime_dir,
@@ -1691,10 +2354,10 @@ def main(argv: list[str] | None = None) -> int:
             total_hyperopts=total_runs,
             completed_hyperopts=total_runs,
             total_backtests=total_backtests,
-            completed_backtests=0,
+            completed_backtests=resume_existing_rows,
             message="Target-sweep backtests started",
         )
-        final_completed_backtests = _run_target_sweep_backtests(
+        final_completed_backtests = resume_existing_rows + _run_target_sweep_backtests(
             runtime_dir=runtime_dir,
             job_id=job_id,
             batches=pending_batches,
@@ -1702,26 +2365,27 @@ def main(argv: list[str] | None = None) -> int:
             total_backtests=total_backtests,
         )
     else:
-        waiting_batches: list[PendingBacktests] = []
+        waiting_batches: list[PendingBacktests] = list(pending_batches)
         running_batches: list[PendingBacktests] = []
-        completed_backtests = 0
+        completed_backtests = resume_existing_rows
         lane_cursor = 0
         last_backtest_start_at: float | None = None
-        hyperopt_lane_limit = _pipelined_backtest_worker_limit(
-            backtest_lane_count=len(backtest_lanes),
-            base_preset=base_preset,
-            split_venv_pipeline=split_venv_pipeline,
-        )
         drain_lane_limit = _final_backtest_worker_limit(
             backtest_lane_count=len(backtest_lanes),
-            base_preset=base_preset,
             split_venv_pipeline=split_venv_pipeline,
+            max_cores_allowed=max_cores_allowed,
         )
-        with ThreadPoolExecutor(max_workers=max(1, len(backtest_lanes)), thread_name_prefix="entry-sieve-backtest") as executor:
-            for strategy, training_window in training_plan:
+        with (
+            ThreadPoolExecutor(max_workers=max(1, len(backtest_lanes)), thread_name_prefix="entry-sieve-backtest") as executor,
+            ThreadPoolExecutor(max_workers=1, thread_name_prefix="entry-sieve-hyperopt") as hyperopt_executor,
+        ):
+            for strategy, training_window, seed_context in training_plan:
+                strategy = _strategy_with_seed_metadata(strategy, seed_context)
                 strategy_name = strategy.get("name") or Path(str(strategy.get("strategy_file") or "")).stem
+                seed_label = str(seed_context.get("random_state") or "").strip()
+                seed_text = f" | seed={seed_label}" if seed_label else ""
                 run_index += 1
-                print(f"\nEntry Sieve {run_index}/{total_runs}: {strategy_name} | train={window_label(training_window)}")
+                print(f"\nEntry Sieve {run_index}/{total_runs}: {strategy_name} | train={window_label(training_window)}{seed_text}")
                 if split_venv_pipeline:
                     completed_backtests += _finish_ready_backtests(
                         runtime_dir,
@@ -1735,6 +2399,53 @@ def main(argv: list[str] | None = None) -> int:
                         current_strategy=strategy_name,
                         current_training_window=window_label(training_window),
                     )
+                if split_venv_pipeline:
+                    effective_hyperopt_jobs = _adaptive_hyperopt_jobs(
+                        max_hyperopt_jobs=max_hyperopt_jobs,
+                        max_cores_allowed=max_cores_allowed,
+                        backtest_worker_count=backtest_worker_count,
+                        completed_hyperopts=run_index - 1,
+                        waiting_backtests=len(waiting_batches),
+                        running_backtests=len(running_batches),
+                    )
+                    hyperopt_lane_limit = _adaptive_pipelined_backtest_worker_limit(
+                        backtest_lane_count=len(backtest_lanes),
+                        split_venv_pipeline=split_venv_pipeline,
+                        max_cores_allowed=max_cores_allowed,
+                        effective_hyperopt_jobs=effective_hyperopt_jobs,
+                    )
+                    run_base_preset = deepcopy(base_preset)
+                    run_base_preset["hyperopt_jobs"] = str(effective_hyperopt_jobs)
+                    if waiting_batches:
+                        lane_cursor, last_backtest_start_at, _, _ = _start_available_backtests(
+                            runtime_dir,
+                            waiting_batches,
+                            running_batches,
+                            executor=executor,
+                            backtest_lanes=backtest_lanes,
+                            lane_limit=hyperopt_lane_limit,
+                            lane_cursor=lane_cursor,
+                            last_start_at=last_backtest_start_at,
+                            job_id=job_id,
+                            completed_backtests=completed_backtests,
+                            total_backtests=total_backtests,
+                            run_index=run_index,
+                            total_hyperopts=total_runs,
+                            completed_hyperopts=run_index - 1,
+                            current_strategy=strategy_name,
+                            current_training_window=window_label(training_window),
+                            status_phase="backtest_wait",
+                        )
+                    queue_text = (
+                        f" | hyperopt_jobs={effective_hyperopt_jobs}, "
+                        f"backtest_lanes={hyperopt_lane_limit}, "
+                        f"backlog={len(waiting_batches) + len(running_batches)}"
+                    )
+                else:
+                    effective_hyperopt_jobs = max_hyperopt_jobs
+                    hyperopt_lane_limit = 1
+                    run_base_preset = base_preset
+                    queue_text = ""
                 _write_run_status(
                     runtime_dir,
                     job_id,
@@ -1747,18 +2458,88 @@ def main(argv: list[str] | None = None) -> int:
                     completed_backtests=completed_backtests,
                     current_strategy=strategy_name,
                     current_training_window=window_label(training_window),
-                    message=f"Hyperopt {run_index}/{total_runs}: {strategy_name}",
+                    random_state=seed_label,
+                    waiting_backtest_batches=len(waiting_batches) if split_venv_pipeline else 0,
+                    running_backtest_batches=len(running_batches) if split_venv_pipeline else 0,
+                    backtest_worker_limit=hyperopt_lane_limit if split_venv_pipeline else 1,
+                    message=f"Hyperopt {run_index}/{total_runs}: {strategy_name}{seed_text}{queue_text}",
                 )
                 try:
-                    batch = _prepare_strategy_window(
-                        job=job,
-                        base_preset=base_preset,
-                        runtime_dir=runtime_dir,
-                        state=state,
-                        strategy=strategy,
-                        training_window=training_window,
-                        validation_windows=validation_windows,
-                    )
+                    if split_venv_pipeline:
+                        hyperopt_future = hyperopt_executor.submit(
+                            _prepare_strategy_window,
+                            job=job,
+                            base_preset=run_base_preset,
+                            runtime_dir=runtime_dir,
+                            state=state,
+                            strategy=strategy,
+                            training_window=training_window,
+                            seed_context=seed_context,
+                            validation_windows=validation_windows,
+                        )
+                        while not hyperopt_future.done():
+                            completed_backtests += _finish_ready_backtests(
+                                runtime_dir,
+                                running_batches,
+                                job_id=job_id,
+                                completed_backtests=completed_backtests,
+                                total_backtests=total_backtests,
+                                run_index=run_index,
+                                total_hyperopts=total_runs,
+                                completed_hyperopts=run_index - 1,
+                                current_strategy=strategy_name,
+                                current_training_window=window_label(training_window),
+                            )
+                            lane_cursor, last_backtest_start_at, started, _ = _start_available_backtests(
+                                runtime_dir,
+                                waiting_batches,
+                                running_batches,
+                                executor=executor,
+                                backtest_lanes=backtest_lanes,
+                                lane_limit=hyperopt_lane_limit,
+                                lane_cursor=lane_cursor,
+                                last_start_at=last_backtest_start_at,
+                                job_id=job_id,
+                                completed_backtests=completed_backtests,
+                                total_backtests=total_backtests,
+                                run_index=run_index,
+                                total_hyperopts=total_runs,
+                                completed_hyperopts=run_index - 1,
+                                current_strategy=strategy_name,
+                                current_training_window=window_label(training_window),
+                                status_phase="backtest_wait",
+                            )
+                            if started:
+                                continue
+                            running_futures = [batch.future for batch in running_batches if batch.future is not None]
+                            if running_futures:
+                                wait(running_futures, timeout=5.0, return_when=FIRST_COMPLETED)
+                            else:
+                                time.sleep(5.0)
+                        completed_backtests += _finish_ready_backtests(
+                            runtime_dir,
+                            running_batches,
+                            job_id=job_id,
+                            completed_backtests=completed_backtests,
+                            total_backtests=total_backtests,
+                            run_index=run_index,
+                            total_hyperopts=total_runs,
+                            completed_hyperopts=run_index - 1,
+                            current_strategy=strategy_name,
+                            current_training_window=window_label(training_window),
+                        )
+                        batch = hyperopt_future.result()
+                    else:
+                        batch = _prepare_strategy_window(
+                            job=job,
+                            base_preset=run_base_preset,
+                            runtime_dir=runtime_dir,
+                            state=state,
+                            strategy=strategy,
+                            training_window=training_window,
+                            seed_context=seed_context,
+                            validation_windows=validation_windows,
+                        )
                     if split_venv_pipeline:
                         waiting_batches.append(batch)
                         completed_backtests += _finish_ready_backtests(
@@ -1813,7 +2594,8 @@ def main(argv: list[str] | None = None) -> int:
                         waiting_backtest_batches=len(waiting_batches) if split_venv_pipeline else 0,
                         running_backtest_batches=len(running_batches) if split_venv_pipeline else 0,
                         backtest_worker_limit=hyperopt_lane_limit if split_venv_pipeline else 1,
-                        message=f"Run queued {run_index}/{total_runs}: {strategy_name}" if split_venv_pipeline else f"Run complete {run_index}/{total_runs}: {strategy_name}",
+                        random_state=seed_label,
+                        message=f"Run queued {run_index}/{total_runs}: {strategy_name}{seed_text}" if split_venv_pipeline else f"Run complete {run_index}/{total_runs}: {strategy_name}{seed_text}",
                     )
                 except Exception as exc:
                     print(f"Entry Sieve run failed: {exc}")
@@ -1844,7 +2626,8 @@ def main(argv: list[str] | None = None) -> int:
                         completed_backtests=completed_backtests,
                         current_strategy=strategy_name,
                         current_training_window=window_label(training_window),
-                        message=f"Run failed {run_index}/{total_runs}: {strategy_name}",
+                        random_state=seed_label,
+                        message=f"Run failed {run_index}/{total_runs}: {strategy_name}{seed_text}",
                     )
             while waiting_batches or running_batches:
                 completed_backtests += _finish_ready_backtests(
@@ -1945,19 +2728,33 @@ def main(argv: list[str] | None = None) -> int:
                     current_training_window="",
                 )
         final_completed_backtests = completed_backtests
+    final_counts = _jsonl_status_counts(_result_file(runtime_dir, job_id))
+    ok_row_count = int(final_counts.get("ok") or 0)
+    error_row_count = sum(count for status, count in final_counts.items() if status != "ok")
+    final_status = "finished" if error_row_count == 0 else "failed"
+    final_phase = "finished" if error_row_count == 0 else "failed_runtime"
+    final_message = (
+        "Entry Sieve run finished"
+        if error_row_count == 0
+        else f"Entry Sieve run finished with {error_row_count} runtime error row(s)"
+    )
     _write_run_status(
         runtime_dir,
         job_id,
-        status="finished",
-        phase="finished",
+        status=final_status,
+        phase=final_phase,
         total_hyperopts=total_runs,
         completed_hyperopts=total_runs,
         total_backtests=total_backtests,
         completed_backtests=final_completed_backtests,
-        message="Entry Sieve run finished",
+        message=final_message,
+        status_counts=final_counts,
+        ok_row_count=ok_row_count,
+        error_row_count=error_row_count,
+        has_error_rows=error_row_count > 0,
     )
     state["updated_at"] = datetime.now().astimezone().isoformat()
-    explorer_save_json(state_file, state)
+    save_json(state_file, state)
     print(f"\nEntry Sieve results: {_result_file(runtime_dir, job_id)}")
     if ACTIVE_ENTRY_SIEVE_LOCK is not None:
         ACTIVE_ENTRY_SIEVE_LOCK.__exit__(None, None, None)

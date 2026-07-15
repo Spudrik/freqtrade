@@ -1,0 +1,60 @@
+{
+  "description": "Research archetypes for aligning context/news features with BTC outcome horizons. These are descriptive labels and evaluation groupings, not trading rules.",
+  "move_thresholds": {
+    "small_valid_abs_return": 0.03,
+    "large_abs_return": 0.05,
+    "very_large_abs_return": 0.10,
+    "regime_abs_return": 0.30
+  },
+  "default_outcome_horizons_hours": [6, 24, 72, 168, 336, 720, 2160],
+  "archetypes": {
+    "systemic_crypto_failure": {
+      "examples": ["Terra/UST collapse", "Celsius withdrawal freeze", "FTX collapse", "exchange insolvency", "stablecoin depeg"],
+      "topic_keys": ["stablecoin_liquidity", "banking_liquidity", "security_exploit", "liquidation_leverage", "crypto_market_structure"],
+      "primary_outcomes": ["shock_down_72h", "future_max_drawdown_168h", "future_return_720h"],
+      "expected_shape": "Fast downside shock with possible multi-week contagion."
+    },
+    "institutional_adoption_flow": {
+      "examples": ["Tesla BTC purchase", "BlackRock ETF filing", "spot ETF approval", "ETF inflow acceleration", "corporate treasury adoption"],
+      "topic_keys": ["etf_institutional_flow", "crypto_market_structure", "regulation_enforcement"],
+      "primary_outcomes": ["future_return_168h", "breakout_up_720h", "regime_up_2160h"],
+      "expected_shape": "Expectation and flow repricing over days to months."
+    },
+    "macro_liquidity_repricing": {
+      "examples": ["SVB banking stress", "Fed path repricing", "inflation surprise", "jobs report surprise", "DXY/rates risk move"],
+      "topic_keys": ["banking_liquidity", "inflation_rates", "official_macro_release", "dollar_risk_off"],
+      "primary_outcomes": ["future_return_72h", "future_return_168h", "future_return_720h"],
+      "expected_shape": "Direction depends on liquidity/rates context; evaluate with market indices and dollar features."
+    },
+    "geopolitical_risk": {
+      "examples": ["Ukraine invasion", "Iran/Israel escalation", "Hormuz/oil shock", "sanctions shock"],
+      "topic_keys": ["war_geopolitical", "oil_energy_shock", "dollar_risk_off"],
+      "primary_outcomes": ["shock_down_72h", "future_max_drawdown_168h", "future_return_336h"],
+      "expected_shape": "Immediate risk-off or volatility shock, sometimes reversal after de-escalation."
+    },
+    "geopolitical_deescalation": {
+      "examples": ["peace talks first reported", "ceasefire", "truce", "hostage deal", "credible diplomatic talks"],
+      "topic_keys": ["peace_talks_deescalation", "war_geopolitical"],
+      "primary_outcomes": ["future_return_72h", "future_return_168h", "future_max_upside_168h"],
+      "expected_shape": "Potential risk-on relief; should be evaluated separately from war escalation."
+    },
+    "scheduled_supply_narrative": {
+      "examples": ["Bitcoin halving", "halving anticipation", "post-halving supply narrative"],
+      "topic_keys": ["crypto_market_structure"],
+      "primary_outcomes": ["future_return_720h", "regime_up_2160h"],
+      "expected_shape": "Mostly anticipation and post-event regime, not an isolated one-day event."
+    },
+    "regulatory_regime_shift": {
+      "examples": ["spot ETF approval", "major lawsuit resolution", "national ban", "pro-crypto election result"],
+      "topic_keys": ["regulation_enforcement", "etf_institutional_flow"],
+      "primary_outcomes": ["future_return_168h", "future_return_720h", "regime_up_2160h"],
+      "expected_shape": "Multi-week repricing when market structure or access changes."
+    },
+    "ai_bubble_risk": {
+      "examples": ["AI bubble warning", "chip valuation shock", "datacenter capex warning", "AI-led equity drawdown"],
+      "topic_keys": ["ai_bubble_risk", "dollar_risk_off", "inflation_rates"],
+      "primary_outcomes": ["future_return_72h", "future_max_drawdown_168h", "future_return_720h"],
+      "expected_shape": "Risk-asset spillover; current local data may be sparse until this source family grows."
+    }
+  }
+}

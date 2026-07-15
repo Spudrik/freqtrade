@@ -28,10 +28,18 @@ Use simple tab modules and shared helpers to replace the monolithic launcher gra
 - Prefer one trading hypothesis per strategy file.
 - Keep the first-pass capital model simple: fixed stake, no leverage experiments, no adds, no peels.
 - Standardize exits early when comparing entry quality.
-- Use clear prefixes for experimental strategy files so they are easy to group and filter. Current entry-sieve strategy files use the `sieve1_` file prefix and `Sieve1` class prefix.
+- Use clear prefixes for experimental strategy files so they are easy to group and filter. Current sieve strategy files must use the active sieve pass prefix and class prefix consistently, for example `sieve2_` files with `Sieve2` classes.
 - Strategy files intended for HyperOpt must be standalone modules. Do not use parent strategy classes, mixin strategy bases, or external strategy helper files in hyperopted strategy logic.
-- Sieve1 results are informative diagnostics for refining entry signals; do not treat them as pass/fail or acceptance decisions.
-- Future Sieve2/Sieve3/Sieve4 passes may test exits, adds, global guards, or other ideas, but do not implement those without explicit user request.
+- Sieve results are informative diagnostics for refining entry signals; do not treat them as pass/fail or acceptance decisions.
+- Current Sieve2 work may test promising Sieve1 entries with better guard structure, multi-timeframe context, and cleaner confluence. Do not add exits, adds, leverage, or broader strategy-management logic unless explicitly requested.
+- Sieve progression is generation-based, not idea-age-based. When Sieve3 is active, refined Sieve2 foundations and totally new ideas both use `sieve3_` files/classes.
+- Refined Sieve3 files must preserve lineage with metadata such as `SIEVE_STAGE`, `SOURCE_STRATEGY`, `SOURCE_RESULT_BATCH`, and `RESEARCH_PATH`.
+- New ideas during Sieve3 should use `sieve3_novel_*` naming and explicit novel metadata such as `NOVEL_IDEA = True`.
+- One source strategy may branch into multiple Sieve3 files when testing distinct refinements. Keep branches narrow and named by path, for example VP guard, TLV2 guard, HTF context, retest, local structure, VP+TLV2 guard, or retest+HTF guard.
+- Keep all interesting foundations available for next-generation work, not only the currently discussed subset. Interesting foundations include high-winrate low-trade ideas, profitable high-trade sub-50% winrate ideas, strong profit relative to trade count, strong `4/2` target behaviour around 40%+ winrate, low-drawdown stable ideas, and structurally sensible near-misses with clear repair paths.
+- Do not promote or archive solely from a synthetic score. Use result shape, trade count, drawdown, target profile, and trading logic quality together.
+- Weak strategies may be archived out of active batches after result review and logic review, but do not park a file silently. Add a short module-level comment to each archived strategy explaining why it was moved.
+- Archive comments should make later review easy by naming the main reason, for example consistently negative results, excessive noisy trade count, generic/non-structural trigger, redundant duplicate, lookahead-risk concern, or no clear repair path.
 - Check that local definitions for sieve, strategies, entries, exits, guards, and result interpretation are still accurate before changing this area. Report stale definitions or deviations to the user.
 - Keep the ladder and daily-structure family split into separate files when the goal is to isolate entry edge.
 - Strategy parameter tags are limited to `family:*` and `mode:*` only.
@@ -43,7 +51,12 @@ Use simple tab modules and shared helpers to replace the monolithic launcher gra
 - Each `family+mode` block should expose at least 2 tunable parameters.
 - No `family` block and no `mode` block may exist with only 1 parameter.
 - If a mode is sparse, merge it into a related composed mode (for example combine entry logic with exits or risk using `_with_` mode naming).
-- Entry mode shape is a strategy-level decision; there is no fixed guard/trigger template required across all strategies.
+- Entry mode shape is a strategy-level decision, but MTF sieve files must use a real hierarchy: higher-timeframe trading condition plus lower-timeframe structural execution.
+- Useful MTF higher-timeframe contexts include 1d/3d/4h patterns, TLV2 levels, volume-profile VAH/VAL/POC/HVN/LVN behaviour, BOS/CHOCH, HH/HL/LH/LL, supply/demand, and prior high/low levels.
+- Useful lower-timeframe execution includes breakout, break-and-retest, rejection/reclaim, failed break, local BOS/CHOCH, or higher-low/lower-high continuation at the relevant level.
+- Retests are first-class variants, especially for TLV2, volume-profile levels, and 1d/3d pattern lines such as flags, pennants, head-and-shoulders, triangles, channels, and rectangles.
+- Do not use generic momentum, one-candle close direction, EMA/SMA pullback, or oscillator/average-cross logic as the primary trigger for MTF entries. Those can only support a structural trigger as optional guards.
+- MTF strategy names and tags must state the higher timeframe/concept and lower timeframe/execution trigger.
 - Deprecated dataframe/pandas usage is not allowed in strategy code and must be cleaned when touched.
 - Revisit these notes when the research workflow changes materially.
 

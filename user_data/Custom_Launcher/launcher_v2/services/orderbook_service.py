@@ -86,7 +86,8 @@ class OrderBookService:
         context_poll_seconds = max(30, int(str(state.get("context_poll_seconds") or "300")))
         max_symbols = max(1, int(str(state.get("max_symbols") or "12")))
         warning_mb = max(1, int(str(state.get("capacity_warning_mb") or "500")))
-        critical_mb = max(1, int(str(state.get("capacity_critical_mb") or "2000")))
+        critical_mb = max(1, int(str(state.get("capacity_critical_mb") or "102400")))
+        bar_intervals = [60]
         return {
             "version": 1,
             "exchange": "multi_market",
@@ -96,10 +97,12 @@ class OrderBookService:
             "depth_levels": depth,
             "stream_update_ms": update_ms,
             "metric_interval_seconds": metric_interval,
+            "store_metric_ticks": False,
             "context_poll_seconds": context_poll_seconds,
             "context_period": str(state.get("context_period") or "5m"),
+            "bar_intervals_seconds": bar_intervals,
             "snapshot_interval_seconds": snapshot_interval,
-            "store_snapshots": bool(state.get("store_snapshots", False)),
+            "store_snapshots": False,
             "max_symbols": max_symbols,
             "capacity_warning_mb": warning_mb,
             "capacity_critical_mb": critical_mb,
@@ -170,7 +173,9 @@ class OrderBookService:
                 metric_interval_seconds=max(1, int(str(state.get("metric_interval_seconds") or "1"))),
                 snapshot_interval_seconds=max(1, int(str(state.get("snapshot_interval_seconds") or "60"))),
                 depth_levels=requested_depth,
-                store_snapshots=bool(state.get("store_snapshots", False)),
+                store_snapshots=False,
+                store_metric_ticks=False,
+                bar_intervals_seconds=[60],
             )
         retained_depth = max(
             min(requested_depth, resolve_profile_depth(MARKET_PROFILES[key], requested_depth))
@@ -181,7 +186,9 @@ class OrderBookService:
             metric_interval_seconds=max(1, int(str(state.get("metric_interval_seconds") or "1"))),
             snapshot_interval_seconds=max(1, int(str(state.get("snapshot_interval_seconds") or "60"))),
             depth_levels=retained_depth,
-            store_snapshots=bool(state.get("store_snapshots", False)),
+            store_snapshots=False,
+            store_metric_ticks=False,
+            bar_intervals_seconds=[60],
         )
 
     def effective_profile_settings(self, state: dict[str, Any]) -> list[tuple[str, str, str, str]]:

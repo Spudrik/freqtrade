@@ -18,6 +18,14 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def preferred_data_tools_python(app_dir: Path, fallback: str | None = None) -> str:
+    project_root = Path(app_dir).resolve().parent.parent
+    controller_python = project_root / ".venv" / "Scripts" / "python.exe"
+    if controller_python.exists():
+        return str(controller_python)
+    return fallback or sys.executable
+
+
 def utf8_subprocess_env() -> dict[str, str]:
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
@@ -111,7 +119,7 @@ WEB_PROFILE = CollectorProfile(
 class ResearchCollectorService:
     def __init__(self, app_dir: Path, python_exe: str | None = None) -> None:
         self.app_dir = Path(app_dir)
-        self.python_exe = python_exe or sys.executable
+        self.python_exe = preferred_data_tools_python(self.app_dir, python_exe)
 
     def app_path(self, value: str | Path) -> Path:
         path = Path(value)

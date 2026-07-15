@@ -46,6 +46,18 @@ def _read_json(path: Path) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
+    temp_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        temp_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        os.replace(temp_path, path)
+    finally:
+        try:
+            temp_path.unlink()
+        except FileNotFoundError:
+            pass
+
+
 def lock_file(runtime_dir: Path) -> Path:
     return runtime_dir / "entry_sieve.lock"
 
@@ -79,6 +91,11 @@ def live_lock(runtime_dir: Path, *, exclude_job_id: str = "") -> dict[str, Any]:
     path = lock_file(runtime_dir)
     data = _read_json(path)
     if not data:
+        if path.exists():
+            try:
+                path.unlink()
+            except OSError:
+                pass
         return {}
     job_id = str(data.get("job_id") or "")
     if exclude_job_id and job_id == exclude_job_id:
@@ -169,7 +186,7 @@ class EntrySieveRunLock(AbstractContextManager["EntrySieveRunLock"]):
                 "heartbeat_at": datetime.now().astimezone().isoformat(),
             }
         )
-        self.path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        _atomic_write_json(self.path, payload)
 
     def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
         if not self.acquired:

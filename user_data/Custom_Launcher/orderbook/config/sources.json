@@ -13,19 +13,18 @@
   "depth_levels": 20,
   "stream_update_ms": 500,
   "metric_interval_seconds": 1,
+  "store_metric_ticks": false,
   "context_poll_seconds": 300,
   "context_period": "5m",
   "bar_intervals_seconds": [
-    60,
-    300,
-    3600
+    60
   ],
   "snapshot_interval_seconds": 60,
   "store_snapshots": false,
   "store_raw_events": false,
   "max_symbols": 12,
   "capacity_warning_mb": 500,
-  "capacity_critical_mb": 2000,
+  "capacity_critical_mb": 102400,
   "wall_score_threshold": 4.0,
   "pressure_threshold": 0.35,
   "extreme_pressure_threshold": 0.6,

@@ -20,6 +20,7 @@ def main() -> int:
     parser.add_argument("--news-db", type=Path, default=None)
     parser.add_argument("--web-db", type=Path, default=None)
     parser.add_argument("--global-db", type=Path, default=None)
+    parser.add_argument("--gdelt-db", type=Path, default=None)
     parser.add_argument("--feature-db", type=Path, default=None)
     parser.add_argument("--export-dir", type=Path, default=None)
     parser.add_argument("--report-dir", type=Path, default=None)
@@ -41,6 +42,7 @@ def main() -> int:
         news_db=args.news_db or paths.news_db,
         web_db=args.web_db or paths.web_db,
         global_db=args.global_db or paths.global_db,
+        gdelt_db=args.gdelt_db or paths.gdelt_db,
         feature_db=args.feature_db or paths.feature_db,
         export_dir=args.export_dir or paths.export_dir,
         report_dir=args.report_dir or paths.report_dir,

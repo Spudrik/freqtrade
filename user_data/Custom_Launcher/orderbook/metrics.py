@@ -551,20 +551,33 @@ def aggregate_metric_ticks(ticks: list[dict[str, Any]], timeframe_seconds: int, 
     }
 
 
-def estimate_storage_usage(pair_count: int, metric_interval_seconds: int, snapshot_interval_seconds: int, depth_levels: int, store_snapshots: bool) -> dict[str, float]:
+def estimate_storage_usage(
+    pair_count: int,
+    metric_interval_seconds: int,
+    snapshot_interval_seconds: int,
+    depth_levels: int,
+    store_snapshots: bool,
+    store_metric_ticks: bool = True,
+    bar_intervals_seconds: list[int] | tuple[int, ...] | None = None,
+) -> dict[str, float]:
     pairs = max(0, int(pair_count))
     metric_interval = max(1, int(metric_interval_seconds))
     snapshot_interval = max(1, int(snapshot_interval_seconds))
-    metric_rows_per_day = pairs * 86400.0 / metric_interval
+    bar_intervals = [max(1, int(value)) for value in (bar_intervals_seconds or [60])]
+    metric_rows_per_day = pairs * 86400.0 / metric_interval if store_metric_ticks else 0.0
+    bar_rows_per_day = pairs * sum(86400.0 / interval for interval in bar_intervals)
     snapshot_rows_per_day = pairs * 86400.0 / snapshot_interval if store_snapshots else 0.0
     estimated_metric_mb_per_day = metric_rows_per_day * 900.0 / 1048576.0
+    estimated_bar_mb_per_day = bar_rows_per_day * 700.0 / 1048576.0
     estimated_snapshot_mb_per_day = snapshot_rows_per_day * max(2000.0, float(depth_levels) * 2.0 * 80.0) / 1048576.0
     return {
         "metric_rows_per_day": metric_rows_per_day,
+        "bar_rows_per_day": bar_rows_per_day,
         "snapshot_rows_per_day": snapshot_rows_per_day,
         "estimated_metric_mb_per_day": estimated_metric_mb_per_day,
+        "estimated_bar_mb_per_day": estimated_bar_mb_per_day,
         "estimated_snapshot_mb_per_day": estimated_snapshot_mb_per_day,
-        "estimated_total_mb_per_day": estimated_metric_mb_per_day + estimated_snapshot_mb_per_day,
+        "estimated_total_mb_per_day": estimated_metric_mb_per_day + estimated_bar_mb_per_day + estimated_snapshot_mb_per_day,
     }
 
 

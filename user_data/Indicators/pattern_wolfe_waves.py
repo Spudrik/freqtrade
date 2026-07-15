@@ -11,7 +11,7 @@ try:
 except Exception:  # pragma: no cover - standalone review scripts import directly
     from pivot_foundation import build_clean_pivot_source  # type: ignore[no-redef]
 
-from pattern_common import (
+from user_data.Indicators.pattern_common import (
     _carry_values_while_state,
     _clip_value,
     _dedupe_interval_level_events,

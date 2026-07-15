@@ -20,6 +20,7 @@ from .news_research_store import (
     init_db,
     load_status,
     record_fetch,
+    sync_disabled_sources,
     update_status,
     update_source_daily_stats,
     upsert_article,
@@ -441,7 +442,8 @@ def main() -> int:
             config = read_config(args.config)
             cycle_interval = int(config.get("poll_interval_seconds") or args.interval_seconds or 900)
             max_items = int(config.get("max_items_per_source") or args.max_items_per_source or 100)
-            sources = [source for source in config.get("sources") or [] if isinstance(source, dict) and source.get("enabled", True)]
+            configured_sources = [source for source in config.get("sources") or [] if isinstance(source, dict)]
+            sources = [source for source in configured_sources if source.get("enabled", True)]
             cycle_catchup = bool(first_cycle and (restart_gap_hours or 0.0) > 2.0)
             if cycle_catchup:
                 status_payload.update(
@@ -457,6 +459,7 @@ def main() -> int:
             cycle_error: str | None = None
             conn = connect_db(args.db)
             try:
+                sync_disabled_sources(conn, configured_sources)
                 for source in sources:
                     source_id = str(source.get("id") or "source")
                     source_type = str(source.get("type") or "").lower()

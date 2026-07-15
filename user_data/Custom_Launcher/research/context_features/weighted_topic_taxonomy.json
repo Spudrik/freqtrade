@@ -1,0 +1,79 @@
+{
+  "description": "Editable deterministic taxonomy for context event weighting. Weights describe event importance, not bullish or bearish direction.",
+  "topics": {
+    "war_geopolitical": {
+      "base_weight": 1.6,
+      "pattern": "\\b(war|invasion|missile|airstrike|military|geopolit|ukraine|russia|israel|iran|gaza|taiwan|hormuz|nato|ceasefire|peace talks?|truce)\\w*",
+      "gdelt_proxy": ["conflict_event_count", 1.6]
+    },
+    "peace_talks_deescalation": {
+      "base_weight": 1.25,
+      "pattern": "\\b(peace talks?|ceasefire|truce|de-escalat|deescalat|negotiat|armistice|hostage deal|diplomatic talks?)\\w*"
+    },
+    "banking_liquidity": {
+      "base_weight": 1.7,
+      "pattern": "\\b(bank run|bank failure|deposit|liquidity|credit stress|funding|repo|default|insolvenc|contagion|systemic|downgrade|debt distress|credit crunch)\\w*",
+      "gdelt_proxy": ["banking_credit_url_count", 1.7]
+    },
+    "china_property_credit": {
+      "base_weight": 1.65,
+      "pattern": "\\b(china property|chinese property|property developer|real estate crisis|evergrande|country garden|vanke|shadow banking|local government financing|lgfv|housing slump|mortgage boycott)\\w*"
+    },
+    "inflation_rates": {
+      "base_weight": 1.25,
+      "pattern": "\\b(inflation|cpi|ppi|pce|rate hike|rate cut|interest rate|yield|treasury|fomc|fed|ecb|boe|boj|monetary policy)\\w*",
+      "gdelt_proxy": ["macro_url_count", 0.55]
+    },
+    "official_macro_release": {
+      "base_weight": 1.35,
+      "pattern": "\\b(payroll|jobs report|unemployment|jobless claims|gdp|retail sales|ism|pmi|cpi|ppi|pce|minutes|statement)\\w*|source_group:official_data_releases",
+      "gdelt_proxy": ["macro_url_count", 0.4]
+    },
+    "oil_energy_shock": {
+      "base_weight": 1.35,
+      "pattern": "\\b(oil|crude|brent|wti|opec|natural gas|lng|energy crisis|hormuz|supply shock|oil embargo|pipeline attack)\\w*",
+      "gdelt_proxy": ["oil_energy_url_count", 1.35]
+    },
+    "regulation_enforcement": {
+      "base_weight": 1.3,
+      "pattern": "\\b(sec|cftc|regulat|lawsuit|court|enforcement|settlement|ban|fine|criminal|compliance|mica|sanction)\\w*",
+      "gdelt_proxy": ["sanctions_trade_url_count", 1.0]
+    },
+    "etf_institutional_flow": {
+      "base_weight": 1.1,
+      "pattern": "\\b(etf|exchange-traded|blackrock|fidelity|grayscale|institutional|fund flow|inflow|outflow|allocation)\\w*"
+    },
+    "security_exploit": {
+      "base_weight": 1.45,
+      "pattern": "\\b(hack|exploit|breach|security incident|stolen|drain|phishing|vulnerability|ransomware|bridge attack)\\w*"
+    },
+    "stablecoin_liquidity": {
+      "base_weight": 1.45,
+      "pattern": "\\b(stablecoin|usdt|usdc|tether|circle|depeg|redemption|reserve|liquidity|money supply|m2)\\w*",
+      "gdelt_proxy": ["crypto_url_count", 0.25]
+    },
+    "liquidation_leverage": {
+      "base_weight": 1.2,
+      "pattern": "\\b(liquidat|leverage|open interest|funding rate|margin call|short squeeze|long squeeze|forced selling)\\w*",
+      "gdelt_proxy": ["crypto_url_count", 0.15]
+    },
+    "crypto_market_structure": {
+      "base_weight": 1.0,
+      "pattern": "\\b(bitcoin|btc|ethereum|eth|crypto|defi|mining|staking|halving|exchange listing|delisting|protocol|layer 2|l2)\\w*",
+      "gdelt_proxy": ["crypto_url_count", 0.8]
+    },
+    "dollar_risk_off": {
+      "base_weight": 1.25,
+      "pattern": "\\b(dollar|dxy|risk-off|safe haven|yen|gold|treasury|equity selloff|volatility|vix)\\w*",
+      "gdelt_proxy": ["macro_url_count", 0.35]
+    },
+    "pandemic_health_shock": {
+      "base_weight": 1.8,
+      "pattern": "\\b(covid|coronavirus|pandemic|lockdown|variant|public health emergency|who emergency|travel ban|quarantine)\\w*"
+    },
+    "ai_bubble_risk": {
+      "base_weight": 1.25,
+      "pattern": "\\b(ai bubble|artificial intelligence bubble|chip bubble|nvidia bubble|datacenter capex|data center capex|ai crash|ai valuation|ai spending warning)\\w*"
+    }
+  }
+}

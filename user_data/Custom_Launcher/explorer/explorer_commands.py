@@ -42,9 +42,14 @@ def run_hyperopt(
     env: dict[str, str],
 ) -> tuple[dict[str, Any], Path, int]:
     group = {"spaces": target.get("spaces") or []}
-    directory = hyperopt_results_dir(preset)
+    run_preset = dict(preset)
+    isolated_userdir = str(run_preset.get("hyperopt_userdir") or "").strip()
+    if isolated_userdir:
+        run_preset["userdir"] = isolated_userdir
+    directory = hyperopt_results_dir(run_preset)
+    directory.mkdir(parents=True, exist_ok=True)
     snapshot = result_file_snapshot(directory, ("*.fthypt", "*.json"))
-    command = [python_exe, "-u", "-m", "freqtrade", *build_hyperopt_args(preset, group, timerange, epochs, random_state)]
+    command = [python_exe, "-u", "-m", "freqtrade", *build_hyperopt_args(run_preset, group, timerange, epochs, random_state)]
     child_env = dict(env)
     child_env[PARAM_ENV] = ",".join(sorted(target.get("resolved_params") or []))
     started_at = time.time()

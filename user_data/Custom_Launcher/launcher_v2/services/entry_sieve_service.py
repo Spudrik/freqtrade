@@ -10,6 +10,7 @@ from pathlib import Path
 import sys
 from typing import Any
 
+from ..pair_reference import SPEED_PAIR_SYMBOLS, format_pair_symbols, pair_reference_group_by_label
 from .entry_sieve_lock import live_entry_sieve_runs
 
 
@@ -24,8 +25,8 @@ SPEED_RUN_EPOCH_CAP = 120
 DEFAULT_STRATEGY_BATCHES = [
     {
         "id": "all",
-        "label": "All Sieve1",
-        "include": ["sieve1_*.py"],
+        "label": "All Sieve2",
+        "include": ["sieve2_*.py"],
         "exclude": [],
     }
 ]
@@ -36,6 +37,38 @@ def _split_list(value: Any) -> list[str]:
         return [str(item).strip() for item in value if str(item).strip()]
     text = str(value or "").replace(";", ",").replace("\n", ",")
     return [item.strip() for item in text.split(",") if item.strip()]
+
+
+def _split_seed_values(value: Any) -> list[str]:
+    if isinstance(value, list):
+        raw_items = [str(item) for item in value]
+    else:
+        text = str(value or "")
+        for delimiter in (";", "|", "\n", "\t"):
+            text = text.replace(delimiter, ",")
+        raw_items = []
+        for chunk in text.split(","):
+            raw_items.extend(chunk.split())
+    seeds: list[str] = []
+    seen: set[str] = set()
+    for item in raw_items:
+        seed = str(item).strip()
+        if not seed or seed in seen:
+            continue
+        seen.add(seed)
+        seeds.append(seed)
+    return seeds
+
+
+def _truthy(value: Any, *, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if not text:
+        return default
+    return text not in {"0", "false", "no", "off"}
 
 
 def _dedupe_paths(paths: list[str]) -> list[str]:
@@ -62,6 +95,25 @@ def _normalize_worker_count(value: Any, default: str = "2") -> str:
     except (TypeError, ValueError):
         return default
     return str(min(MAX_BACKTEST_WORKERS, max(1, count)))
+
+
+def _hyperopt_worker_count(value: Any) -> int:
+    text = str(value or "").strip()
+    if not text:
+        return 1
+    try:
+        count = int(text)
+    except (TypeError, ValueError):
+        return 1
+    if count < 1:
+        cpu_total = max(1, int(os.cpu_count() or 1))
+        count = max(1, cpu_total + 1 + count)
+    return max(1, count)
+
+
+def _derive_parallel_backtests(max_cores_allowed: str, hyperopt_jobs: Any) -> str:
+    max_cores = int(_normalize_worker_count(max_cores_allowed, "2"))
+    return str(max(0, max_cores - _hyperopt_worker_count(hyperopt_jobs)))
 
 
 def _default_repo_root(app_dir: Path) -> Path:
@@ -99,16 +151,22 @@ class EntrySieveSettings:
     split_venv_pipeline: bool = False
     backtest_python_exe: str = ""
     backtest_python_exes: list[str] = field(default_factory=list)
+    max_cores_allowed: str = "2"
+    parallel_backtest_with_hyperopt: str = "1"
     backtest_worker_count: str = "2"
     pipeline_handoff_dir: str = ""
     strategy_batch: str = "all"
     batch_queue_priority: str = "least_run_first"
     strategy_batch_file: str = "explorer/config/sieve_strategy_batches.json"
-    strategy_filter: str = "sieve1_*.py"
+    strategy_filter: str = "sieve2_*.py"
     speed_run_mode: bool = False
     speed_pair_count: str = "5"
+    speed_pairs: list[str] = field(default_factory=lambda: format_pair_symbols(SPEED_PAIR_SYMBOLS))
+    normal_pair_group: str = "15x Top Volume"
+    normal_run_pairs: list[str] = field(default_factory=list)
     take_profit_pct: str = "2"
     stoploss_pct: str = "2"
+    control_entry_exits: bool = True
     target_sweep_enabled: bool = False
     target_sweep_pairs: str = ""
 
@@ -243,6 +301,10 @@ class EntrySieveService:
         batch_token = self._job_id_batch_token(str(settings.strategy_batch or "all"))
         job_id = datetime.now().strftime(f"%Y%m%dT%H%M%S_entry_{batch_token}")
         job_path = self.jobs_dir / f"{job_id}.json"
+        max_cores_allowed = _normalize_worker_count(settings.max_cores_allowed or settings.backtest_worker_count, "2")
+        parallel_backtests = _derive_parallel_backtests(max_cores_allowed, settings.hyperopt_jobs)
+        random_states = _split_seed_values(settings.random_state)
+        sampling_seeds = _split_seed_values(settings.sampling_seed)
         job = {
             "schema_version": 1,
             "job_id": job_id,
@@ -262,9 +324,14 @@ class EntrySieveService:
             "hyperopt_jobs": str(settings.hyperopt_jobs),
             "speed_run_mode": bool(settings.speed_run_mode),
             "speed_pair_count": str(settings.speed_pair_count),
+            "speed_pairs": list(settings.speed_pairs or format_pair_symbols(SPEED_PAIR_SYMBOLS)),
+            "normal_pair_group": str(settings.normal_pair_group),
+            "normal_run_pairs": list(settings.normal_run_pairs),
             "python_exe": str(self.python_exe),
-            "random_state": str(settings.random_state),
-            "sampling_seed": str(settings.sampling_seed),
+            "random_state": random_states[0] if random_states else str(settings.random_state),
+            "random_states": random_states,
+            "sampling_seed": sampling_seeds[0] if sampling_seeds else str(settings.sampling_seed),
+            "sampling_seeds": sampling_seeds,
             "split_venv_pipeline": bool(settings.split_venv_pipeline),
             "backtest_python_exe": str(settings.backtest_python_exe),
             "backtest_python_exes": _dedupe_paths([
@@ -272,7 +339,9 @@ class EntrySieveService:
                 *list(settings.backtest_python_exes),
                 *self.default_backtest_pythons,
             ]),
-            "backtest_worker_count": _normalize_worker_count(settings.backtest_worker_count, "2"),
+            "max_cores_allowed": max_cores_allowed,
+            "parallel_backtest_with_hyperopt": parallel_backtests,
+            "backtest_worker_count": max_cores_allowed,
             "pipeline_handoff_dir": str(settings.pipeline_handoff_dir),
             "strategy_batch": str(settings.strategy_batch or "all"),
             "strategy_batch_label": str(batch.get("label") or settings.strategy_batch or "all"),
@@ -280,6 +349,7 @@ class EntrySieveService:
             "strategy_filter": str(settings.strategy_filter),
             "take_profit_pct": str(settings.take_profit_pct),
             "stoploss_pct": str(settings.stoploss_pct),
+            "control_entry_exits": bool(settings.control_entry_exits),
             "target_sweep_enabled": bool(settings.target_sweep_enabled),
             "target_sweep_pairs": str(settings.target_sweep_pairs),
             "runtime_dir": str(self.runtime_dir),
@@ -290,16 +360,19 @@ class EntrySieveService:
 
     @staticmethod
     def _effective_settings(settings: EntrySieveSettings) -> EntrySieveSettings:
-        if not bool(settings.speed_run_mode):
-            return settings
-        return replace(
-            settings,
-            auto_window_mode=True,
-            auto_window_count="1",
-            auto_epochs_cap=str(SPEED_RUN_EPOCH_CAP),
-            target_sweep_enabled=False,
-            target_sweep_pairs="",
-        )
+        effective = settings
+        if bool(settings.speed_run_mode):
+            effective = replace(
+                effective,
+                auto_window_mode=True,
+                auto_window_count="1",
+                auto_epochs_cap=str(SPEED_RUN_EPOCH_CAP),
+                target_sweep_enabled=False,
+                target_sweep_pairs="",
+            )
+        if not bool(effective.control_entry_exits):
+            effective = replace(effective, target_sweep_enabled=False, target_sweep_pairs="")
+        return effective
 
     def build_command(self, settings: EntrySieveSettings) -> list[str]:
         job_path = self.build_job(settings)
@@ -710,6 +783,7 @@ class EntrySieveService:
             "speed_pair_count": str(data.get("speed_pair_count") or ""),
             "auto_window_mode": bool(data.get("auto_window_mode")),
             "auto_window_count": str(data.get("auto_window_count") or ""),
+            "control_entry_exits": _truthy(data.get("control_entry_exits"), default=True),
             "target_sweep_enabled": bool(data.get("target_sweep_enabled")),
         }
 
@@ -757,6 +831,7 @@ class EntrySieveService:
             "speed_pair_count": str(data.get("speed_pair_count") or ""),
             "auto_window_mode": bool(data.get("auto_window_mode")),
             "auto_window_count": str(data.get("auto_window_count") or ""),
+            "control_entry_exits": _truthy(data.get("control_entry_exits"), default=True),
             "target_sweep_enabled": bool(data.get("target_sweep_enabled")),
         }
 
@@ -838,24 +913,33 @@ class EntrySieveService:
                 raise ValueError("Entry Sieve epochs must be a positive integer when Auto epochs is disabled.") from None
             if epochs < 1:
                 raise ValueError("Entry Sieve epochs must be >= 1 when Auto epochs is disabled.")
+        hyperopt_jobs_text = str(settings.hyperopt_jobs or "").strip()
+        if hyperopt_jobs_text:
+            try:
+                int(hyperopt_jobs_text)
+            except (TypeError, ValueError):
+                raise ValueError("Entry Sieve hyperopt jobs must be an integer when set.") from None
         if settings.target_sweep_enabled:
             pairs = self._parse_target_pairs(settings.target_sweep_pairs)
             if not pairs:
                 raise ValueError("Entry Sieve target sweep requires at least one TP/SL pair such as 1/1, 2/2, 3/2.")
         if settings.speed_run_mode:
-            try:
-                pair_count = int(str(settings.speed_pair_count or "").strip())
-            except (TypeError, ValueError):
-                raise ValueError("Entry Sieve speed run pair count must be a positive integer.") from None
-            if pair_count < 1:
-                raise ValueError("Entry Sieve speed run pair count must be >= 1.")
+            if not settings.speed_pairs:
+                raise ValueError("Entry Sieve speed run pairs are not configured.")
+        else:
+            normal_pairs = list(settings.normal_run_pairs)
+            if not normal_pairs:
+                group = pair_reference_group_by_label(settings.normal_pair_group)
+                normal_pairs = format_pair_symbols(group.get("pairs") or []) if group else []
+            if not normal_pairs:
+                raise ValueError("Entry Sieve normal run pairs must select a populated Pairs list.")
         if settings.split_venv_pipeline:
             try:
-                worker_count = int(str(settings.backtest_worker_count or "").strip())
+                worker_count = int(str(settings.max_cores_allowed or settings.backtest_worker_count or "").strip())
             except (TypeError, ValueError):
-                raise ValueError(f"Entry Sieve backtest workers must be an integer from 1 to {MAX_BACKTEST_WORKERS}.") from None
+                raise ValueError(f"Entry Sieve max cores allowed must be an integer from 1 to {MAX_BACKTEST_WORKERS}.") from None
             if worker_count < 1 or worker_count > MAX_BACKTEST_WORKERS:
-                raise ValueError(f"Entry Sieve backtest workers must be between 1 and {MAX_BACKTEST_WORKERS}.")
+                raise ValueError(f"Entry Sieve max cores allowed must be between 1 and {MAX_BACKTEST_WORKERS}.")
 
     @staticmethod
     def _strategy_class_name(path: Path) -> str:

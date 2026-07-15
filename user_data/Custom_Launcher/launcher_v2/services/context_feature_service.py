@@ -26,6 +26,7 @@ class ContextFeatureService:
             news_db=_path_or_default(state.get("news_db"), defaults.news_db),
             web_db=_path_or_default(state.get("web_db"), defaults.web_db),
             global_db=_path_or_default(state.get("global_db"), defaults.global_db),
+            gdelt_db=_path_or_default(state.get("gdelt_db"), defaults.gdelt_db),
             feature_db=_path_or_default(state.get("feature_db"), defaults.feature_db),
             export_dir=_path_or_default(state.get("export_dir"), defaults.export_dir),
             report_dir=_path_or_default(state.get("report_dir"), defaults.report_dir),

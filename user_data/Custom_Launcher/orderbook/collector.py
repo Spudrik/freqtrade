@@ -129,13 +129,14 @@ def read_config(path: Path) -> dict[str, Any]:
     payload.setdefault("metric_interval_seconds", 1)
     payload.setdefault("context_poll_seconds", 300)
     payload.setdefault("context_period", "5m")
-    payload.setdefault("bar_intervals_seconds", [60, 300, 3600])
+    payload.setdefault("bar_intervals_seconds", [60])
     payload.setdefault("snapshot_interval_seconds", 60)
     payload.setdefault("store_snapshots", False)
+    payload.setdefault("store_metric_ticks", False)
     payload.setdefault("store_raw_events", False)
     payload.setdefault("max_symbols", 12)
     payload.setdefault("capacity_warning_mb", 500)
-    payload.setdefault("capacity_critical_mb", 2000)
+    payload.setdefault("capacity_critical_mb", 102400)
     payload.setdefault("wall_score_threshold", 4.0)
     payload.setdefault("pressure_threshold", 0.35)
     payload.setdefault("extreme_pressure_threshold", 0.60)
@@ -251,8 +252,9 @@ def main() -> int:
     snapshot_interval = max(1, int(config.get("snapshot_interval_seconds", 60)))
     context_poll_seconds = max(30, int(config.get("context_poll_seconds", 300)))
     context_period = str(config.get("context_period") or "5m")
-    bar_intervals = [int(v) for v in config.get("bar_intervals_seconds", [60, 300, 3600]) if int(v) > 0]
-    store_snapshots = bool(config.get("store_snapshots", True))
+    bar_intervals = [int(v) for v in config.get("bar_intervals_seconds", [60]) if int(v) > 0]
+    store_snapshots = bool(config.get("store_snapshots", False))
+    store_metric_ticks = bool(config.get("store_metric_ticks", False))
     symbols = [item["symbol"] for item in pair_records]
     pairs = sorted({item["pair"] for item in pair_records})
     canonical_pairs = sorted({item["canonical_pair"] for item in pair_records})
@@ -276,6 +278,7 @@ def main() -> int:
         "stream_update_ms": stream_update_ms,
         "metric_interval_seconds": metric_interval,
         "snapshot_interval_seconds": snapshot_interval,
+        "store_metric_ticks": store_metric_ticks,
         "context_poll_seconds": context_poll_seconds,
         "context_period": context_period,
         "pair_count": len(pairs),
@@ -467,8 +470,9 @@ def main() -> int:
                             metrics["margin_type"] = state["margin_type"]
                             metrics["quote_asset"] = state["quote_asset"]
                             metrics["canonical_pair"] = state["canonical_pair"]
-                            insert_metric_tick(conn, metrics)
                             inserted_any_metric = True
+                            if store_metric_ticks:
+                                insert_metric_tick(conn, metrics)
                             state["last_metric_at"] = now_iso
                             state["metric_count"] += 1
                             status_payload["metric_count_total"] = int(status_payload.get("metric_count_total", 0)) + 1
@@ -672,9 +676,11 @@ def main() -> int:
                     snapshot_interval,
                     max_retained_depth,
                     store_snapshots=store_snapshots,
+                    store_metric_ticks=store_metric_ticks,
+                    bar_intervals_seconds=bar_intervals,
                 )
                 warning_mb = float(config.get("capacity_warning_mb", 500))
-                critical_mb = float(config.get("capacity_critical_mb", 2000))
+                critical_mb = float(config.get("capacity_critical_mb", 102400))
                 capacity_level = "ok"
                 if data_dir_mb >= critical_mb:
                     capacity_level = "critical"
@@ -684,6 +690,7 @@ def main() -> int:
                 status_payload["db_mb"] = db_mb
                 status_payload["estimated_mb_per_day"] = round(estimate["estimated_total_mb_per_day"], 2)
                 status_payload["estimated_metric_rows_per_day"] = round(estimate["metric_rows_per_day"], 2)
+                status_payload["estimated_bar_rows_per_day"] = round(estimate["bar_rows_per_day"], 2)
                 status_payload["estimated_snapshot_rows_per_day"] = round(estimate["snapshot_rows_per_day"], 2)
                 status_payload["capacity_level"] = capacity_level
                 if capacity_level in {"warning", "critical"}:

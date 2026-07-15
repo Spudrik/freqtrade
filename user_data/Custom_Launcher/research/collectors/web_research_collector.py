@@ -8,11 +8,14 @@ import logging
 import os
 import re
 import sqlite3
+import ssl
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 from urllib import parse as urllib_parse
 from urllib import request as urllib_request
+
+import certifi
 
 from .news_research_store import (
     apply_article_tags,
@@ -22,6 +25,7 @@ from .news_research_store import (
     init_db,
     load_status,
     record_fetch,
+    sync_disabled_sources,
     update_status,
     update_source_daily_stats,
     upsert_article,
@@ -55,6 +59,7 @@ DEFAULT_STATUS_PATH = DEFAULT_DATA_DIR / "collector_status.json"
 DEFAULT_PID_PATH = DEFAULT_DATA_DIR / "collector.pid"
 DEFAULT_STOP_PATH = DEFAULT_DATA_DIR / "collector.stop"
 DEFAULT_LOG_PATH = DEFAULT_DATA_DIR / "logs" / "web_collector.log"
+HTTPS_SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 
 STARTER_CONFIG: dict[str, Any] = {
     "version": 1,
@@ -188,6 +193,7 @@ STARTER_CONFIG: dict[str, Any] = {
             "topic": "news",
             "market_relevance": "high",
             "url": "https://cointelegraph.com/rss.xml",
+            "ssl_ca_bundle": "certifi",
         },
     ],
 }
@@ -218,7 +224,7 @@ def ensure_config(config_path: Path) -> None:
     save_json(config_path, STARTER_CONFIG)
 
 
-def open_url(url: str, timeout_seconds: int, user_agent: str) -> bytes:
+def open_url(url: str, timeout_seconds: int, user_agent: str, ssl_ca_bundle: str = "") -> bytes:
     request = urllib_request.Request(
         url,
         headers={
@@ -228,7 +234,9 @@ def open_url(url: str, timeout_seconds: int, user_agent: str) -> bytes:
         },
         method="GET",
     )
-    with urllib_request.urlopen(request, timeout=timeout_seconds) as response:
+    parsed = urllib_parse.urlparse(url)
+    context = HTTPS_SSL_CONTEXT if parsed.scheme.lower() == "https" and str(ssl_ca_bundle).lower() == "certifi" else None
+    with urllib_request.urlopen(request, timeout=timeout_seconds, context=context) as response:
         return response.read()
 
 
@@ -421,7 +429,7 @@ def fetch_rss_source(
     user_agent = str(config.get("user_agent") or "FreQ-WebResearchCollector/1.0")
     configured_max_items = int(config.get("max_items_per_source") or 60)
     max_items = max(1, int(max_items_override)) if max_items_override is not None else configured_max_items
-    raw_payload = open_url(str(source.get("url") or ""), timeout_seconds, user_agent)
+    raw_payload = open_url(str(source.get("url") or ""), timeout_seconds, user_agent, str(source.get("ssl_ca_bundle") or config.get("ssl_ca_bundle") or ""))
     raw_path = raw_snapshot_path(raw_dir, source, ".xml")
     if config.get("store_raw_payloads", True):
         save_raw_snapshot(raw_path, raw_payload)
@@ -436,7 +444,7 @@ def fetch_html_links_source(source: dict[str, Any], config: dict[str, Any], raw_
     user_agent = str(config.get("user_agent") or "FreQ-WebResearchCollector/1.0")
     max_items = int(config.get("max_items_per_source") or 60)
     page_url = str(source.get("url") or "").strip()
-    raw_payload = open_url(page_url, timeout_seconds, user_agent)
+    raw_payload = open_url(page_url, timeout_seconds, user_agent, str(source.get("ssl_ca_bundle") or config.get("ssl_ca_bundle") or ""))
     raw_path = raw_snapshot_path(raw_dir, source, ".html")
     if config.get("store_raw_payloads", True):
         save_raw_snapshot(raw_path, raw_payload)
@@ -602,7 +610,8 @@ def main() -> int:
             config = read_config(args.config)
             cycle_interval = int(config.get("poll_interval_seconds") or args.interval_seconds or 21600)
             max_items = int(config.get("max_items_per_source") or args.max_items_per_source or 60)
-            sources = [source for source in config.get("sources") or [] if isinstance(source, dict) and source.get("enabled", True)]
+            configured_sources = [source for source in config.get("sources") or [] if isinstance(source, dict)]
+            sources = [source for source in configured_sources if source.get("enabled", True)]
             cycle_catchup = bool(first_cycle and (restart_gap_hours or 0.0) > 2.0)
             if cycle_catchup:
                 status_payload.update(
@@ -618,6 +627,7 @@ def main() -> int:
             cycle_error: str | None = None
             conn = connect_db(args.db)
             try:
+                sync_disabled_sources(conn, configured_sources)
                 for source in sources:
                     source_id = str(source.get("id") or "source")
                     source_type = str(source.get("type") or "").lower()

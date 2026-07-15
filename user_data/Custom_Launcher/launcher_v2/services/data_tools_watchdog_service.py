@@ -17,6 +17,10 @@ from .orderbook_service import OrderBookService
 DEFAULT_TASK_NAME = "FreqtradeDataToolsWatchdog"
 DEFAULT_CHECK_INTERVAL_MINUTES = 60
 DEFAULT_HEARTBEAT_STALE_MINUTES = 10
+DEFAULT_OPERATOR_NOTE = (
+    "Resolve simple operational blockers only: restart stale/dead collectors through their managed service paths. "
+    "Do not auto-edit source configs, code, credentials, or disable sources; leave unresolved source/API/TLS blockers in status for operator review."
+)
 SERVICE_KEYS = ("news", "web", "global_context", "orderbook")
 
 
@@ -59,6 +63,7 @@ class DataToolsWatchdogService:
             "heartbeat_stale_minutes": str(DEFAULT_HEARTBEAT_STALE_MINUTES),
             "restart_dead": True,
             "services": list(SERVICE_KEYS),
+            "operator_note": DEFAULT_OPERATOR_NOTE,
         }
 
     def preset_path(self) -> Path:
@@ -94,6 +99,7 @@ class DataToolsWatchdogService:
         merged["check_interval_minutes"] = str(_positive_int(merged.get("check_interval_minutes"), DEFAULT_CHECK_INTERVAL_MINUTES))
         merged["heartbeat_stale_minutes"] = str(_positive_int(merged.get("heartbeat_stale_minutes"), DEFAULT_HEARTBEAT_STALE_MINUTES))
         merged["restart_dead"] = bool(merged.get("restart_dead", True))
+        merged["operator_note"] = str(merged.get("operator_note") or DEFAULT_OPERATOR_NOTE).strip() or DEFAULT_OPERATOR_NOTE
         return merged
 
     def run_once(self, state: dict[str, Any] | None = None, *, preset_path: str | Path | None = None) -> dict[str, Any]:
@@ -117,6 +123,7 @@ class DataToolsWatchdogService:
             "checked_at": utc_now(),
             "heartbeat_stale_minutes": heartbeat_stale_minutes,
             "restart_dead": restart_dead,
+            "operator_note": state.get("operator_note") or DEFAULT_OPERATOR_NOTE,
             "rows": rows,
             "events": events,
         }
@@ -223,11 +230,13 @@ class DataToolsWatchdogService:
                 "metric_interval_seconds": preset.get("orderbook_metric_interval_seconds"),
                 "context_poll_seconds": preset.get("orderbook_context_poll_seconds"),
                 "context_period": preset.get("orderbook_context_period"),
+                "bar_intervals_seconds": preset.get("orderbook_bar_intervals_seconds", [60]),
                 "snapshot_interval_seconds": preset.get("orderbook_snapshot_interval_seconds"),
                 "capacity_warning_mb": preset.get("orderbook_capacity_warning_mb"),
                 "capacity_critical_mb": preset.get("orderbook_capacity_critical_mb"),
                 "max_symbols": preset.get("orderbook_max_symbols"),
-                "store_snapshots": bool(preset.get("orderbook_store_snapshots", False)),
+                "store_metric_ticks": False,
+                "store_snapshots": False,
             }
         raise KeyError(key)
 
@@ -316,9 +325,11 @@ class DataToolsWatchdogService:
         wrapper = self.task_wrapper_path(str(state["task_name"]))
         log_path = self.runtime_dir / "data_tools_watchdog_task.log"
         command = self.build_runner_command(state)
+        note = str(state.get("operator_note") or DEFAULT_OPERATOR_NOTE).replace("\r", " ").replace("\n", " ")
         wrapper.parent.mkdir(parents=True, exist_ok=True)
         wrapper.write_text(
             "@echo off\n"
+            f"echo Watchdog note: {note}\n"
             f"{command} >> {_quote(str(log_path))} 2>&1\n",
             encoding="utf-8",
         )

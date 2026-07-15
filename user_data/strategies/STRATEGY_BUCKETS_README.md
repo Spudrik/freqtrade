@@ -48,6 +48,25 @@ wr=54.2%;tr=1444;p=268;dd=7.1%
 - `rework_or_retire`: Weak across TP/SL profiles. Needs redesign or retirement.
 - `retired`: Manually retired or archived. Not part of active testing.
 
+## Sieve2 Parking Folders
+
+- `sieve2_originals_failed`: Original pre-update Sieve2 files parked after review. Some have updated top-level Sieve2 rescue clones, so this folder means inactive original evidence, not always a permanently dead idea.
+- `sieve2_complete_patterns`: High-winrate or clean low-volume pattern candidates held for later pattern-specific review instead of immediate Sieve3 promotion.
+- `sieve3_candidates`: Clean Sieve2 performers worth later Sieve3 cloning/refinement when the user explicitly moves to Sieve3.
+- `failed_strategies/sieve2_pre_tune_originals_YYYYMMDD`: Archived copies of active top-level Sieve2 files before an entry-only tune/fix rerun. These are traceability copies; the active top-level file remains the version to run.
+- `failed_strategies/sieve2_rejected_YYYYMMDD`: Parked Sieve2 files that critical review judged structurally poor or not worth another rescue pass.
+
+Unrun Sieve2 files should stay top-level and run normally unless the user explicitly asks to park them. The active top-level `sieve2_*.py` set may therefore contain updated rescue files, newly added Sieve2 concepts, and unrun Sieve2 files that still need normal testing.
+
+## Current Sieve2 Review Flow
+
+- High-winrate, low-volume rare-pattern entries such as head-and-shoulders, pennants, triangles, wedges, and similar well-formed pattern ideas may be held in `sieve2_complete_patterns`. Low trade count is expected for these concepts.
+- Low-volume non-pattern entries are not automatically useful. Prefer loosening overly strict guards, broadening nearby structural-level acceptance, or adding alternate entry options before deciding whether the idea has value.
+- Moderate/high-volume entries with roughly 40% to 55% win rate, profitable high-trade ideas, and strong profit relative to win rate/trade count should usually be tuned as Sieve2 before rejection.
+- High-volume entries with sub-40% win rate and weak expectancy should generally be parked in rejected unless there is a clear structural repair hypothesis.
+- Strong Sieve2 performers should not be moved straight to Sieve3 only because they passed one balanced run. First run a fixed target validation such as TP 4% / SL 2% when requested, then decide whether they belong in Sieve3.
+- This is entry testing only. Fixed TP/SL target profiles are diagnostic labels for comparing entry quality, not permission to add strategy exit logic or optimise trade management.
+
 ## Status Values
 
 - `active`: Still part of current testing.

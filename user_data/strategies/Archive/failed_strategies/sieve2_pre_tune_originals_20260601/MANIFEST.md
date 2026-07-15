@@ -1,0 +1,92 @@
+# Sieve2 Pre-Tune Originals - 2026-06-01
+
+These are archived copies of active top-level Sieve2 tune/fix candidates before the next entry-only tuning batch.
+The active files remain in `user_data/strategies` for the next run.
+
+- Source result batch: `20260529T213457_entry_all`
+- Archived tune/fix candidates: 80
+- Missing expected files: 0
+
+Reason: candidates had infrastructure failures, low-volume non-pattern ambiguity, overtrading/noisy behavior, or moderate/high trade count with win rate/profitability worth entry-guard retesting rather than immediate rejection.
+
+Files:
+- `sieve2_mtf_confluence_h4_vp_bos_1h_short.py`
+- `sieve2_mtf_confluence_h4_vp_bos_1h_long.py`
+- `sieve2_overtrade_ladder_long_res_break_vp_market_guard.py`
+- `sieve2_overtrade_pivot_long_resistance_breakout_vp_market_guard.py`
+- `sieve2_mtf_confluence_d1_resistance_sweep_h4_bos_short.py`
+- `sieve2_mtf_confluence_d1_support_sweep_h4_bos_long.py`
+- `sieve2_mtf_confluence_h4_bos_prior_1h_breakdown_short.py`
+- `sieve2_mtfx_h4_tlv2_sup_break_short_1h_retest.py`
+- `sieve2_mtfx_h4_vp_lvn_traverse_long_1h_breakout.py`
+- `sieve2_overtrade_demand_zone_breakdown_short_vp_market_guard.py`
+- `sieve2_overtrade_mtf_h4_supply_breakout_long_1h_local_break_vp_market_guard.py`
+- `sieve2_overtrade_multi2_vp_prior_day_high_break_vp_bullctx_long_vp_market_guard.py`
+- `sieve2_overtrade_multi2_vp_prior_day_high_break_vp_node_long_vp_market_guard.py`
+- `sieve2_overtrade_multi2_vp_prior_day_low_break_vp_bearctx_short_vp_market_guard.py`
+- `sieve2_overtrade_multi2_vp_prior_day_low_break_vp_vah_short_vp_market_guard.py`
+- `sieve2_overtrade_multi2_vp_prior_week_low_break_vp_bearctx_short_vp_market_guard.py`
+- `sieve2_overtrade_prior_day_high_breakout_long_vp_market_guard.py`
+- `sieve2_overtrade_supply_zone_breakout_long_vp_market_guard.py`
+- `sieve2_overtrade_tlv2_resistance_breakout_long_1h_vp_market_guard.py`
+- `sieve2_overtrade_tlv2_support_breakdown_short_1h_vp_market_guard.py`
+- `sieve2_reframed_tlv2_support_break_vp_node_short_1h.py`
+- `sieve2_reframed_tlv2_res_break_retest_vp_node_long_1h.py`
+- `sieve2_reframed_tlv2_res_break_vp_node_long_1h.py`
+- `sieve2_loosen_ladder_long_sup_hold_broader_trigger.py`
+- `sieve2_mtf_confluence_d1_bos_h4_vp_node_long.py`
+- `sieve2_mtf_confluence_d1_bos_h4_vp_node_short.py`
+- `sieve2_mtf_confluence_d1_prior_break_1h_short.py`
+- `sieve2_mtf_confluence_d1_prior_low_h4_continuation_short.py`
+- `sieve2_mtf_confluence_d1_resistance_reject_4h_short.py`
+- `sieve2_mtf_confluence_d1_vp_bos_4h_retest_short.py`
+- `sieve2_mtf_confluence_h4_demand_reclaim_1h_long.py`
+- `sieve2_mtf_confluence_h4_vp_prior_1h_retest_short.py`
+- `sieve2_mtfx_d1_avwap_reclaim_long_4h_retest.py`
+- `sieve2_mtfx_d1_demand_zone_long_4h_reclaim.py`
+- `sieve2_mtfx_d1_double_bottom_long_4h_breakout.py`
+- `sieve2_mtfx_d1_liq_equal_lows_long_4h_choch.py`
+- `sieve2_mtfx_d1_rectangle_long_4h_retest.py`
+- `sieve2_mtfx_d1_rectangle_short_4h_breakdown.py`
+- `sieve2_mtfx_d1_rectangle_short_4h_retest.py`
+- `sieve2_mtfx_d1_tlv2_res_break_long_4h_bos.py`
+- `sieve2_mtfx_d1_tlv2_sup_reclaim_long_4h_bos.py`
+- `sieve2_mtfx_d1_tlv2_sup_reclaim_long_4h_retest.py`
+- `sieve2_mtfx_d1_vp_poc_reclaim_long_4h_retest.py`
+- `sieve2_mtfx_h4_avwap_reject_short_1h_retest.py`
+- `sieve2_mtfx_h4_liq_prior_low_long_1h_choch.py`
+- `sieve2_mtfx_h4_supply_zone_short_1h_reject.py`
+- `sieve2_mtfx_h4_tlv2_res_break_long_1h_bos.py`
+- `sieve2_mtfx_h4_tlv2_res_break_long_1h_retest.py`
+- `sieve2_mtfx_h4_tlv2_sup_break_short_1h_choch.py`
+- `sieve2_mtfx_h4_vp_poc_reject_short_1h_retest.py`
+- `sieve2_overtrade_mtf_h4_prior_high_break_long_1h_retest_vp_market_guard.py`
+- `sieve2_overtrade_mtf_h4_res_break_long_1h_retest_vp_market_guard.py`
+- `sieve2_overtrade_multi2_prior_vp_breakdown_short_vp_market_guard.py`
+- `sieve2_overtrade_multi3_prior_avwap_vp_breakdown_short_vp_market_guard.py`
+- `sieve2_overtrade_prior_week_high_breakout_long_vp_market_guard.py`
+- `sieve2_overtrade_multi2_tlv2_vp_sup_break_vp_node_short_1h_vp_market_guard.py`
+- `sieve2_reframed_liquidity_equal_highs_reject_short_1h.py`
+- `sieve2_overtrade_tlv2_support_reclaim_long_1h_vp_market_guard.py`
+- `sieve2_reframed_tlv2_support_break_retest_vp_node_short_1h.py`
+- `sieve2_loosen_geometry_ascending_channel_upper_breakout_long_1d_broader_trigger.py`
+- `sieve2_loosen_multi2_tlv2_boschoch_ris_sup_ride_bos_bull_long_8h_broader_trigger.py`
+- `sieve2_loosen_multi2_tlv2_boschoch_res_reject_choch_bear_short_4h_broader_trigger.py`
+- `sieve2_loosen_multi2_tlv2_vp_res_reject_vp_node_short_8h_broader_trigger.py`
+- `sieve2_loosen_multi2_tlv2_vp_sup_bounce_vp_node_long_8h_broader_trigger.py`
+- `sieve2_loosen_pivot_long_trend_pullback_broader_trigger.py`
+- `sieve2_mtf_confluence_h4_value_reject_1h_retest_short.py`
+- `sieve2_mtfx_d1_vp_vah_reject_short_4h_retest.py`
+- `sieve2_mtfx_h4_liq_prior_high_short_1h_choch.py`
+- `sieve2_overtrade_multi2_tlv2_vp_sup_break_vp_node_short_8h_vp_market_guard.py`
+- `sieve2_overtrade_multi2_tlv2_vp_sup_break_vp_vah_short_8h_vp_market_guard.py`
+- `sieve2_reframed_capitulation_vp_reclaim_long_1h.py`
+- `sieve2_overtrade_multi2_tlv2_vp_sup_reclaim_vp_node_long_1h_vp_market_guard.py`
+- `sieve2_reframed_liquidity_equal_lows_reclaim_long_1h.py`
+- `sieve2_reframed_vp_hvn_reclaim_long_1h.py`
+- `sieve2_reframed_vp_hvn_reject_short_1h.py`
+- `sieve2_reframed_vp_lvn_accept_long_1h.py`
+- `sieve2_reframed_vp_lvn_accept_short_1h.py`
+- `sieve2_reframed_vp_lvn_fast_traverse_long_1h.py`
+- `sieve2_reframed_vp_lvn_fast_traverse_short_1h.py`
+- `sieve2_reframed_vp_poc_reclaim_long_1h.py`

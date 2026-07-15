@@ -1,0 +1,238 @@
+{
+  "description": "Hand-curated BTC news/event windows for sanity-checking context features and FreqAI predictions against known market-moving events. Dates are UTC anchors for research validation, not trading rules.",
+  "events": [
+    {
+      "event_id": "covid_panic_2020_03",
+      "name": "COVID pandemic panic",
+      "archetype": "macro_liquidity_repricing",
+      "anchor_utc": "2020-03-11T00:00:00+00:00",
+      "pre_window_hours": 168,
+      "post_window_hours": 720,
+      "expected_shape": "fast downside shock then policy/liquidity reversal"
+    },
+    {
+      "event_id": "halving_2020_05",
+      "name": "Bitcoin 2020 halving",
+      "archetype": "scheduled_supply_narrative",
+      "anchor_utc": "2020-05-11T00:00:00+00:00",
+      "pre_window_hours": 720,
+      "post_window_hours": 2160,
+      "expected_shape": "anticipation and post-event regime, not isolated one-day move"
+    },
+    {
+      "event_id": "tesla_btc_buy_2021_02",
+      "name": "Tesla BTC purchase disclosed",
+      "archetype": "institutional_adoption_flow",
+      "anchor_utc": "2021-02-08T00:00:00+00:00",
+      "pre_window_hours": 168,
+      "post_window_hours": 720,
+      "expected_shape": "institutional adoption repricing"
+    },
+    {
+      "event_id": "tesla_payments_stop_2021_05",
+      "name": "Tesla stops BTC payments",
+      "archetype": "regulatory_regime_shift",
+      "anchor_utc": "2021-05-12T00:00:00+00:00",
+      "pre_window_hours": 168,
+      "post_window_hours": 720,
+      "expected_shape": "negative ESG/regime repricing"
+    },
+    {
+      "event_id": "china_crackdown_2021_05",
+      "name": "China crypto crackdown and mining ban",
+      "archetype": "regulatory_regime_shift",
+      "anchor_utc": "2021-05-21T00:00:00+00:00",
+      "pre_window_hours": 168,
+      "post_window_hours": 720,
+      "expected_shape": "regulatory shock and forced network/market adjustment"
+    },
+    {
+      "event_id": "evergrande_contagion_2021_09",
+      "name": "Evergrande contagion risk-off shock",
+      "archetype": "china_property_credit_stress",
+      "anchor_utc": "2021-09-20T00:00:00+00:00",
+      "pre_window_hours": 168,
+      "post_window_hours": 720,
+      "expected_shape": "China property credit stress spilling into broad risk assets and crypto",
+      "source_urls": [
+        "https://www.bloomberg.com/news/articles/2021-09-20/bitcoin-slides-to-45-000-as-traders-pare-back-on-risk",
+        "https://www.forbes.com/sites/jonathanponciano/2021/09/20/crypto-markets-suddenly-lose-250-billion-in-value-as-evergrande-turmoil-pummels-bitcoin-ethereum-and-other-major-cryptocurrencies/"
+      ]
+    },
+    {
+      "event_id": "ukraine_invasion_2022_02",
+      "name": "Russia invades Ukraine",
+      "archetype": "geopolitical_risk",
+      "anchor_utc": "2022-02-24T00:00:00+00:00",
+      "pre_window_hours": 336,
+      "post_window_hours": 720,
+      "expected_shape": "acute geopolitical risk-off shock, then sanctions/energy/liquidity follow-through",
+      "source_urls": [
+        "https://www.marketscreener.com/news/latest/Cryptocurrencies-fall-after-Russia-invades-Ukraine-39565319/",
+        "https://abc17news.com/money/cnn-business-consumer/2022/02/24/bitcoins-price-falls-after-russia-attacks-ukraine-2/"
+      ]
+    },
+    {
+      "event_id": "fed_hiking_cycle_start_2022_03",
+      "name": "Fed starts 2022 hiking cycle",
+      "archetype": "macro_liquidity_repricing",
+      "anchor_utc": "2022-03-16T18:00:00+00:00",
+      "pre_window_hours": 720,
+      "post_window_hours": 2160,
+      "expected_shape": "rate/liquidity regime repricing over weeks rather than one-candle shock",
+      "source_urls": [
+        "https://www.federalreserve.gov/newsevents/pressreleases/monetary20220316a.htm",
+        "https://www.federalreserve.gov/monetarypolicy/fomcpresconf20220316.htm"
+      ]
+    },
+    {
+      "event_id": "terra_ust_collapse_2022_05",
+      "name": "Terra UST/LUNA collapse",
+      "archetype": "systemic_crypto_failure",
+      "anchor_utc": "2022-05-09T00:00:00+00:00",
+      "pre_window_hours": 168,
+      "post_window_hours": 720,
+      "expected_shape": "stablecoin failure and contagion drawdown"
+    },
+    {
+      "event_id": "celsius_freeze_2022_06",
+      "name": "Celsius withdrawal freeze",
+      "archetype": "systemic_crypto_failure",
+      "anchor_utc": "2022-06-13T00:00:00+00:00",
+      "pre_window_hours": 168,
+      "post_window_hours": 720,
+      "expected_shape": "credit/liquidity contagion shock",
+      "source_urls": [
+        "https://www.euronews.com/next/2022/06/13/bitcoin-drops-below-25000-crypto-lending-platform-celsius-halts-withdrawals-and-transfers",
+        "https://www.cnbc.com/2022/06/13/bitcoin-btc-falls-as-market-focuses-on-celsius-issue-fed-rate-hike.html"
+      ]
+    },
+    {
+      "event_id": "fed_fourth_75bp_hike_2022_11",
+      "name": "Fed fourth consecutive 75bp hike",
+      "archetype": "macro_liquidity_repricing",
+      "anchor_utc": "2022-11-02T18:00:00+00:00",
+      "pre_window_hours": 336,
+      "post_window_hours": 720,
+      "expected_shape": "tightening shock plus early smaller-hikes signal; risk-asset regime context for nearby crypto stress",
+      "source_urls": [
+        "https://www.investing.com/news/economic-indicators/fed-delivers-fourth-75-bp-hike-signals-smaller-steps-coming-2929852",
+        "https://www.coindesk.com/markets/2022/11/02/federal-reserve-raises-interest-rates-by-75-basis-points-bitcoin"
+      ]
+    },
+    {
+      "event_id": "ftx_collapse_2022_11",
+      "name": "FTX collapse",
+      "archetype": "systemic_crypto_failure",
+      "anchor_utc": "2022-11-08T00:00:00+00:00",
+      "pre_window_hours": 168,
+      "post_window_hours": 720,
+      "expected_shape": "exchange insolvency shock and contagion"
+    },
+    {
+      "event_id": "svb_bank_stress_2023_03",
+      "name": "SVB and US bank stress",
+      "archetype": "macro_liquidity_repricing",
+      "anchor_utc": "2023-03-10T00:00:00+00:00",
+      "pre_window_hours": 168,
+      "post_window_hours": 720,
+      "expected_shape": "banking stress with liquidity/rate-path repricing",
+      "source_urls": [
+        "https://www.axios.com/2023/03/18/silicon-valley-bank-timeline",
+        "https://www.axios.com/2023/03/14/bitcoin-prices-banks-crisis-rates-crypto"
+      ]
+    },
+    {
+      "event_id": "blackrock_etf_filing_2023_06",
+      "name": "BlackRock spot BTC ETF filing",
+      "archetype": "institutional_adoption_flow",
+      "anchor_utc": "2023-06-15T00:00:00+00:00",
+      "pre_window_hours": 168,
+      "post_window_hours": 720,
+      "expected_shape": "ETF probability and institutional access repricing"
+    },
+    {
+      "event_id": "country_garden_property_stress_2023_08",
+      "name": "Country Garden and China property stress",
+      "archetype": "china_property_credit_stress",
+      "anchor_utc": "2023-08-18T00:00:00+00:00",
+      "pre_window_hours": 336,
+      "post_window_hours": 720,
+      "expected_shape": "China property/debt stress and global risk-confidence pressure",
+      "source_urls": [
+        "https://www.theguardian.com/world/2023/aug/18/china-property-crisis-deepens-as-developer-country-garden-at-risk-of-default-evergrande",
+        "https://www.cnbc.com/2023/08/18/chinas-property-troubles-worsen-ramping-calls-for-bolder-policy-help.html"
+      ]
+    },
+    {
+      "event_id": "spot_etf_approval_2024_01",
+      "name": "US spot BTC ETF approval",
+      "archetype": "regulatory_regime_shift",
+      "anchor_utc": "2024-01-10T00:00:00+00:00",
+      "pre_window_hours": 720,
+      "post_window_hours": 2160,
+      "expected_shape": "sell-the-news short term, flow repricing longer term"
+    },
+    {
+      "event_id": "etf_inflow_ath_2024_03",
+      "name": "ETF inflow-driven all-time high",
+      "archetype": "institutional_adoption_flow",
+      "anchor_utc": "2024-03-14T00:00:00+00:00",
+      "pre_window_hours": 720,
+      "post_window_hours": 720,
+      "expected_shape": "late-stage momentum and possible exhaustion after strong inflow regime"
+    },
+    {
+      "event_id": "iran_israel_2024_04",
+      "name": "Iran-Israel escalation",
+      "archetype": "geopolitical_risk",
+      "anchor_utc": "2024-04-13T00:00:00+00:00",
+      "pre_window_hours": 168,
+      "post_window_hours": 336,
+      "expected_shape": "risk-off shock with possible reversal after de-escalation"
+    },
+    {
+      "event_id": "halving_2024_04",
+      "name": "Bitcoin 2024 halving",
+      "archetype": "scheduled_supply_narrative",
+      "anchor_utc": "2024-04-20T00:00:00+00:00",
+      "pre_window_hours": 720,
+      "post_window_hours": 2160,
+      "expected_shape": "widely anticipated supply narrative, mostly regime/expectation driven"
+    },
+    {
+      "event_id": "us_election_2024_11",
+      "name": "US election crypto-policy repricing",
+      "archetype": "regulatory_regime_shift",
+      "anchor_utc": "2024-11-05T00:00:00+00:00",
+      "pre_window_hours": 720,
+      "post_window_hours": 2160,
+      "expected_shape": "pro-crypto policy/regulatory regime repricing"
+    },
+    {
+      "event_id": "iran_israel_2025_06",
+      "name": "Israel-Iran escalation and US strikes",
+      "archetype": "geopolitical_risk",
+      "anchor_utc": "2025-06-13T00:00:00+00:00",
+      "pre_window_hours": 336,
+      "post_window_hours": 720,
+      "expected_shape": "geopolitical/oil-risk shock with possible second impulse around US strikes on 2025-06-22",
+      "source_urls": [
+        "https://www.gadgets360.com/cryptocurrency/news/bitcoin-price-today-usd-104000-ether-solana-dogecoin-cardano-losses-israel-iran-tensions-8657783",
+        "https://www.cnbc.com/2025/06/22/bitcoin-iran-attack-crypto-market-sell-off.html"
+      ]
+    },
+    {
+      "event_id": "imf_ai_valuation_warning_2025_10",
+      "name": "IMF warns of disorderly correction and AI valuation risk",
+      "archetype": "macro_liquidity_repricing",
+      "anchor_utc": "2025-10-14T00:00:00+00:00",
+      "pre_window_hours": 336,
+      "post_window_hours": 720,
+      "expected_shape": "risk-asset/AI valuation warning with possible BTC-equity correlation stress",
+      "source_urls": [
+        "https://www.investing.com/news/economy-news/imf-warns-of-rising-odds-of-a-disorderly-global-market-correction-4286568"
+      ]
+    }
+  ]
+}

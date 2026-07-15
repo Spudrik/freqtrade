@@ -10,6 +10,9 @@ from ..services.global_context_service import GlobalContextService
 from ..ui_helpers import labeled_entry, set_tree_rows
 
 
+DEFAULT_FRED_KEY_FILE = r"C:\Users\engin\OneDrive\Desktop\FREDAPI.json"
+
+
 class GlobalContextTab(BaseTab):
     tab_key = "global_context"
     tab_title = "Global Context"
@@ -21,7 +24,7 @@ class GlobalContextTab(BaseTab):
         self.config_path_var = tk.StringVar(value=str(paths["config"]))
         self.data_dir_var = tk.StringVar(value=str(paths["data_dir"]))
         self.db_path_var = tk.StringVar(value=str(paths["db"]))
-        self.key_file_var = tk.StringVar(value="")
+        self.key_file_var = tk.StringVar(value=DEFAULT_FRED_KEY_FILE)
         self.fred_key_json_path_var = tk.StringVar(value="fred.api_key")
         self.enable_fred_var = tk.BooleanVar(value=True)
         self.fred_status_var = tk.StringVar(value="No FRED key file selected")
@@ -325,7 +328,7 @@ class GlobalContextTab(BaseTab):
         self.config_path_var.set(str(state.get("config_path") or paths["config"]))
         self.data_dir_var.set(str(state.get("data_dir") or paths["data_dir"]))
         self.db_path_var.set(str(state.get("db_path") or paths["db"]))
-        self.key_file_var.set(str(state.get("key_file") or ""))
+        self.key_file_var.set(str(state.get("key_file") or DEFAULT_FRED_KEY_FILE))
         self.fred_key_json_path_var.set(str(state.get("fred_key_json_path") or "fred.api_key"))
         self.enable_fred_var.set(bool(state.get("enable_fred", True)))
         self.interval_minutes_var.set(str(state.get("interval_minutes") or "30"))

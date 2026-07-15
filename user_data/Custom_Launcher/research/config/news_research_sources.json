@@ -118,7 +118,7 @@
       "region": "euro_area",
       "topic": "ecb_press",
       "market_relevance": "high",
-      "url": "https://www.ecb.europa.eu/press/rss/press.html",
+      "url": "https://www.ecb.europa.eu/rss/press.html",
       "tags": [
         "source_type:central_bank",
         "source_priority:high",
@@ -135,7 +135,7 @@
       "region": "euro_area",
       "topic": "ecb_statpress",
       "market_relevance": "high",
-      "url": "https://www.ecb.europa.eu/press/rss/statpress.html",
+      "url": "https://www.ecb.europa.eu/rss/statpress.html",
       "tags": [
         "source_type:central_bank",
         "source_priority:high",
@@ -205,7 +205,7 @@
       "region": "us",
       "topic": "cftc_press_releases",
       "market_relevance": "critical",
-      "url": "https://www.cftc.gov/PressRoom/PressReleases/rss",
+      "url": "https://www.cftc.gov/RSS/RSSGP/rssgp.xml",
       "tags": [
         "source_type:regulator",
         "source_priority:critical",
@@ -222,7 +222,7 @@
       "region": "us",
       "topic": "cftc_enforcement",
       "market_relevance": "critical",
-      "url": "https://www.cftc.gov/LawRegulation/EnforcementActions/rss",
+      "url": "https://www.cftc.gov/RSS/RSSENF/rssenf.xml",
       "tags": [
         "source_type:regulator",
         "source_priority:critical",
@@ -239,7 +239,7 @@
       "region": "us",
       "topic": "cftc_speeches_testimony",
       "market_relevance": "high",
-      "url": "https://www.cftc.gov/PressRoom/SpeechesTestimony/rss",
+      "url": "https://www.cftc.gov/RSS/RSSST/rssst.xml",
       "tags": [
         "source_type:regulator",
         "source_priority:high",
@@ -256,7 +256,7 @@
       "region": "uk",
       "topic": "ons_release_calendar",
       "market_relevance": "high",
-      "url": "https://www.ons.gov.uk/releasecalendar",
+      "url": "https://www.ons.gov.uk/releasecalendar?highlight=true&limit=10&page=1&release-type=type-published&rss=&sort=date-newest",
       "tags": [
         "source_type:official_statistics",
         "source_priority:high",
@@ -615,7 +615,8 @@
     {
       "id": "gdelt_crypto_global",
       "type": "gdelt_doc",
-      "enabled": true,
+      "enabled": false,
+      "disabled_reason": "Disabled 2026-05-28: live GDELT DOC polling hit repeated HTTP 429 rate limits; use dedicated GDELT/GKG backfill instead until a throttled live GDELT collector exists.",
       "source_group": "gdelt",
       "region": "global",
       "topic": "gdelt_crypto_global",
@@ -633,7 +634,8 @@
     {
       "id": "gdelt_macro_liquidity",
       "type": "gdelt_doc",
-      "enabled": true,
+      "enabled": false,
+      "disabled_reason": "Disabled 2026-05-28: live GDELT DOC polling hit repeated HTTP 429 rate limits; use dedicated GDELT/GKG backfill instead until a throttled live GDELT collector exists.",
       "source_group": "gdelt",
       "region": "global",
       "topic": "gdelt_macro_liquidity",
@@ -651,7 +653,8 @@
     {
       "id": "gdelt_energy_geopolitics",
       "type": "gdelt_doc",
-      "enabled": true,
+      "enabled": false,
+      "disabled_reason": "Disabled 2026-05-28: live GDELT DOC polling hit repeated HTTP 429 rate limits; use dedicated GDELT/GKG backfill instead until a throttled live GDELT collector exists.",
       "source_group": "gdelt",
       "region": "global",
       "topic": "gdelt_energy_geopolitics",
@@ -670,7 +673,8 @@
     {
       "id": "gdelt_us_china_risk",
       "type": "gdelt_doc",
-      "enabled": true,
+      "enabled": false,
+      "disabled_reason": "Disabled 2026-05-28: live GDELT DOC polling hit repeated HTTP 429 rate limits; use dedicated GDELT/GKG backfill instead until a throttled live GDELT collector exists.",
       "source_group": "gdelt",
       "region": "global",
       "topic": "gdelt_us_china_risk",
@@ -688,7 +692,8 @@
     {
       "id": "gdelt_corporate_risk",
       "type": "gdelt_doc",
-      "enabled": true,
+      "enabled": false,
+      "disabled_reason": "Disabled 2026-05-28: live GDELT DOC polling hit repeated HTTP 429 rate limits; use dedicated GDELT/GKG backfill instead until a throttled live GDELT collector exists.",
       "source_group": "gdelt",
       "region": "global",
       "topic": "gdelt_corporate_risk",
@@ -706,7 +711,8 @@
     {
       "id": "gdelt_semiconductors_ai_supply_chain",
       "type": "gdelt_doc",
-      "enabled": true,
+      "enabled": false,
+      "disabled_reason": "Disabled 2026-05-28: live GDELT DOC polling hit repeated HTTP 429 rate limits; use dedicated GDELT/GKG backfill instead until a throttled live GDELT collector exists.",
       "source_group": "gdelt",
       "region": "global",
       "topic": "gdelt_semiconductors_ai_supply_chain",

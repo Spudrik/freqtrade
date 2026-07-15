@@ -559,6 +559,7 @@ def record_fetch(conn: sqlite3.Connection, fetch_record: dict[str, Any]) -> None
 
 
 def upsert_source_health(conn: sqlite3.Connection, source: dict[str, Any], health: dict[str, Any]) -> None:
+    enabled = 0 if source.get("enabled") is False else 1
     conn.execute(
         """
         INSERT INTO sources(
@@ -588,7 +589,7 @@ def upsert_source_health(conn: sqlite3.Connection, source: dict[str, Any], healt
             str(source.get("id") or ""),
             source.get("source_group"),
             str(source.get("type") or ""),
-            1 if source.get("enabled") else 0,
+            enabled,
             source.get("url") or source.get("query") or source.get("url_or_query"),
             source.get("region"),
             source.get("topic"),
@@ -604,6 +605,33 @@ def upsert_source_health(conn: sqlite3.Connection, source: dict[str, Any], healt
         ),
     )
     conn.commit()
+
+
+def sync_disabled_sources(conn: sqlite3.Connection, sources: list[dict[str, Any]]) -> None:
+    for source in sources:
+        if not isinstance(source, dict) or source.get("enabled", True):
+            continue
+        source_id = str(source.get("id") or "")
+        if not source_id:
+            continue
+        existing = conn.execute(
+            "SELECT last_success_at, avg_items_per_day FROM sources WHERE source_id = ?",
+            (source_id,),
+        ).fetchone()
+        upsert_source_health(
+            conn,
+            source,
+            {
+                "last_success_at": existing[0] if existing else None,
+                "last_failure_at": None,
+                "last_error": None,
+                "last_http_status": None,
+                "items_last_fetch": 0,
+                "inserted_last_fetch": 0,
+                "duplicates_last_fetch": 0,
+                "avg_items_per_day": existing[1] if existing else None,
+            },
+        )
 
 
 def update_status(status_path: Path, status: dict[str, Any]) -> None:

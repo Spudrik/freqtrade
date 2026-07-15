@@ -7,6 +7,7 @@ from tkinter import messagebox, scrolledtext, ttk
 from ..base_tab import BaseTab
 from ..services.data_tools_watchdog_service import (
     DEFAULT_CHECK_INTERVAL_MINUTES,
+    DEFAULT_OPERATOR_NOTE,
     DEFAULT_TASK_NAME,
     SERVICE_KEYS,
     DataToolsWatchdogService,
@@ -24,6 +25,7 @@ class DataWatchdogTab(BaseTab):
         self.task_name_var = tk.StringVar(value=DEFAULT_TASK_NAME)
         self.check_interval_minutes_var = tk.StringVar(value=str(DEFAULT_CHECK_INTERVAL_MINUTES))
         self.heartbeat_stale_minutes_var = tk.StringVar(value="10")
+        self.operator_note_var = tk.StringVar(value=DEFAULT_OPERATOR_NOTE)
         self.restart_dead_var = tk.BooleanVar(value=True)
         self.service_vars = {key: tk.BooleanVar(value=True) for key in SERVICE_KEYS}
         self.status_var = tk.StringVar(value="Not checked")
@@ -65,6 +67,7 @@ class DataWatchdogTab(BaseTab):
         }
         for column, key in enumerate(SERVICE_KEYS):
             ttk.Checkbutton(services_frame, text=labels[key], variable=self.service_vars[key], command=self.refresh_command).grid(row=0, column=column, sticky="w", padx=8, pady=4)
+        ttk.Label(settings, textvariable=self.operator_note_var, wraplength=1100).grid(row=3, column=0, columnspan=4, sticky="w", padx=8, pady=4)
         for var in (self.task_name_var, self.check_interval_minutes_var, self.heartbeat_stale_minutes_var):
             var.trace_add("write", lambda *_: self.refresh_command())
 
@@ -131,6 +134,7 @@ class DataWatchdogTab(BaseTab):
             "heartbeat_stale_minutes": self.heartbeat_stale_minutes_var.get(),
             "restart_dead": self.restart_dead_var.get(),
             "services": [key for key, var in self.service_vars.items() if var.get()],
+            "operator_note": self.operator_note_var.get(),
         }
 
     def refresh_command(self) -> None:
@@ -235,6 +239,7 @@ class DataWatchdogTab(BaseTab):
         self.task_name_var.set(str(normalized.get("task_name") or DEFAULT_TASK_NAME))
         self.check_interval_minutes_var.set(str(normalized.get("check_interval_minutes") or str(DEFAULT_CHECK_INTERVAL_MINUTES)))
         self.heartbeat_stale_minutes_var.set(str(normalized.get("heartbeat_stale_minutes") or "10"))
+        self.operator_note_var.set(str(normalized.get("operator_note") or DEFAULT_OPERATOR_NOTE))
         self.restart_dead_var.set(bool(normalized.get("restart_dead", True)))
         selected = set(normalized.get("services") or SERVICE_KEYS)
         for key, var in self.service_vars.items():
