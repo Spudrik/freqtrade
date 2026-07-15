@@ -68,7 +68,7 @@ from user_data.Indicators.complex_volume_profile import add_volume_profile
 
 ENTRY_TAG = "multi2_tlv2_vp_res_break_vp_bullctx_long_1h"
 STATE_KEY = "sieve3_v2_tlv2_vp_long"
-STATE_VERSION = 1
+STATE_VERSION = 2
 LEVEL_BAND = 0.005
 MIN_TARGET_MOVE = 0.002
 PARTIAL_TAGS = {"s3v2_partial_target", "s3v2_partial_invalidation"}
@@ -474,7 +474,7 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
     stoploss = -0.99
     use_exit_signal = True
     use_custom_stoploss = True
-    use_custom_roi = False
+    use_custom_roi = True
     position_adjustment_enable = True
     max_entry_position_adjustment = 0
     trailing_stop = False
@@ -1018,11 +1018,12 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
             "structural_support": support,
             "targets": targets,
             "target_providers": providers,
-            "target_1_touched": False,
-            "target_2_touched": False,
+            "target_1_touched_at": None,
+            "target_2_touched_at": None,
             "partial_filled": False,
             "partial_filled_at": None,
             "partial_tag": None,
+            "stop_floor": None,
         }
 
     @staticmethod
@@ -1040,19 +1041,15 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
 
     @staticmethod
     def _has_open_order(trade: Any) -> bool:
-        return any(
-            str(getattr(order, "status", "")).lower() == "open"
-            for order in (getattr(trade, "orders", None) or ())
-        )
+        return bool(trade.open_orders)
 
     @staticmethod
     def _has_pending_partial(trade: Any) -> bool:
         exit_side = getattr(trade, "exit_side", None)
         return any(
-            str(getattr(order, "status", "")).lower() == "open"
-            and getattr(order, "ft_order_side", None) == exit_side
+            getattr(order, "ft_order_side", None) == exit_side
             and str(getattr(order, "ft_order_tag", None) or "") in PARTIAL_TAGS
-            for order in (getattr(trade, "orders", None) or ())
+            for order in trade.open_orders
         )
 
     def order_filled(
@@ -1079,9 +1076,10 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
         ):
             state = self._state(trade)
             if state is not None and not state.get("partial_filled"):
+                filled_at = getattr(order, "order_filled_utc", None) or current_time
                 state["partial_filled"] = True
                 state["partial_tag"] = tag
-                state["partial_filled_at"] = self._utc(current_time).isoformat()
+                state["partial_filled_at"] = self._utc(filled_at).isoformat()
                 state["phase"] = "REMAINDER"
                 self._save_state(trade, state)
         return None
@@ -1091,29 +1089,45 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
         needed = max(1, int(count))
         return len(condition) >= needed and bool(condition.tail(needed).fillna(False).all())
 
-    @staticmethod
+    @classmethod
     def _confirmation(
+        cls,
         frame: DataFrame,
         target: float | None,
         confirmation: str,
-        touched_before: bool,
+        touched_at: Any,
         band: float,
-    ) -> tuple[bool, bool]:
-        if target is None or frame.empty:
-            return touched_before, False
-        recent = frame.tail(4)
-        touched_now = bool(_num(recent, "high").max() >= target * (1.0 - band))
-        touched = touched_before or touched_now
-        if not touched:
-            return False, False
+        entry_rate: float,
+    ) -> tuple[str | None, bool]:
+        prior_touch = cls._utc(touched_at)
+        prior_touch_iso = prior_touch.isoformat() if prior_touch is not None else None
+        if target is None or frame.empty or entry_rate <= 0.0 or "date" not in frame.columns:
+            return prior_touch_iso, False
+
+        dates = pd.to_datetime(frame["date"], utc=True, errors="coerce")
+        touch_threshold = max(
+            target * (1.0 - band),
+            entry_rate * (1.0 + MIN_TARGET_MOVE),
+        )
+        if prior_touch is None:
+            touched_rows = _num(frame, "high").ge(touch_threshold) & dates.notna()
+            positions = np.flatnonzero(touched_rows.to_numpy())
+            if len(positions) == 0:
+                return None, False
+            prior_touch = cls._utc(dates.iloc[int(positions[0])])
+            prior_touch_iso = prior_touch.isoformat() if prior_touch is not None else None
+
+        post_touch = frame.loc[dates.ge(prior_touch)]
+        if post_touch.empty:
+            return prior_touch_iso, False
         if confirmation == "touch":
-            return True, True
-        opposite = _num(recent, "close").lt(_num(recent, "open"))
+            return prior_touch_iso, True
+        opposite = _num(post_touch, "close").lt(_num(post_touch, "open"))
         if confirmation == "reversal1":
-            return True, bool(opposite.tail(1).all())
+            return prior_touch_iso, bool(opposite.tail(1).all())
         if confirmation == "reversal2of3":
-            return True, len(opposite) >= 3 and int(opposite.tail(3).sum()) >= 2
-        return True, False
+            return prior_touch_iso, len(opposite) >= 3 and int(opposite.tail(3).sum()) >= 2
+        return prior_touch_iso, False
 
     @staticmethod
     def _invalidation_event(
@@ -1148,12 +1162,14 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
             target_frame = frame.loc[
                 pd.to_datetime(frame["date"], utc=True, errors="coerce").gt(entry_candle)
             ]
-        touched_1, confirmed_1 = self._confirmation(
+        entry_rate = float(state.get("entry_rate") or 0.0)
+        touched_1_at, confirmed_1 = self._confirmation(
             target_frame,
             _finite_float(targets.get(plan.target_1)) if plan.target_1 else None,
             plan.confirmation,
-            bool(state.get("target_1_touched")),
+            state.get("target_1_touched_at"),
             plan.target_band,
+            entry_rate,
         )
         target_2_frame = target_frame
         partial_filled_at = self._utc(state.get("partial_filled_at"))
@@ -1164,18 +1180,22 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
                 )
             ]
         if state.get("partial_filled"):
-            touched_2, confirmed_2 = self._confirmation(
+            touched_2_at, confirmed_2 = self._confirmation(
                 target_2_frame,
                 _finite_float(targets.get(plan.target_2)) if plan.target_2 else None,
                 "touch",
-                bool(state.get("target_2_touched")),
+                state.get("target_2_touched_at"),
                 plan.target_band,
+                entry_rate,
             )
         else:
-            touched_2, confirmed_2 = False, False
-        state["target_1_touched"] = touched_1
-        state["target_2_touched"] = touched_2
-        if touched_1 and state.get("phase") not in {"REALIZATION_PENDING", "REMAINDER"}:
+            touched_2_at, confirmed_2 = None, False
+        state["target_1_touched_at"] = touched_1_at
+        state["target_2_touched_at"] = touched_2_at
+        if touched_1_at is not None and state.get("phase") not in {
+            "REALIZATION_PENDING",
+            "REMAINDER",
+        }:
             state["phase"] = "TARGET_ZONE"
 
         close = _num(frame, "close")
@@ -1205,9 +1225,12 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
         if opened is not None and now is not None:
             age_minutes = max(0.0, (now - opened).total_seconds() / 60.0)
             age_candles = int(age_minutes // timeframe_to_minutes(self.timeframe))
-        max_rate = float(getattr(trade, "max_rate", current_rate) or current_rate)
-        entry_rate = float(state.get("entry_rate") or 0.0)
-        favorable = max_rate / entry_rate - 1.0 if entry_rate > 0.0 else 0.0
+        progress_high = _finite_float(_num(target_frame, "high").max())
+        favorable = (
+            progress_high / entry_rate - 1.0
+            if progress_high is not None and entry_rate > 0.0
+            else 0.0
+        )
         time_failure = bool(
             plan.progress_candles and age_candles >= plan.progress_candles and favorable < 0.01
         )
@@ -1221,7 +1244,6 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
             "target_1": confirmed_1,
             "target_2": confirmed_2,
             "time_failure": time_failure,
-            "baseline_target": bool(plan.fixed_tp and current_profit >= plan.fixed_tp),
         }, state
 
     @staticmethod
@@ -1232,14 +1254,12 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
     ) -> ExitDecision:
         if events.get("hard_invalidation"):
             return ExitDecision("full", "s3v2_hard_invalidation")
+        if state.get("partial_pending"):
+            return ExitDecision("hold")
         if plan.invalidation_action == "full" and events.get("invalidation"):
             return ExitDecision("full", "s3v2_plan_invalidation")
         if events.get("time_failure"):
             return ExitDecision("full", "s3v2_progress_failure")
-        if plan.role == "baseline" and events.get("baseline_target"):
-            return ExitDecision("full", "s3v2_baseline_tp3")
-        if state.get("partial_pending"):
-            return ExitDecision("hold")
         if bool(state.get("partial_filled")) and events.get("target_2"):
             return ExitDecision("full", "s3v2_second_target")
         if plan.target_action == "full" and events.get("target_1"):
@@ -1311,6 +1331,24 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
         decision = context[3]
         return decision.tag if decision.action == "full" else None
 
+    def custom_roi(
+        self,
+        pair: str,
+        trade: Any,
+        current_time: datetime,
+        trade_duration: int,
+        entry_tag: str | None,
+        side: str,
+        **kwargs: Any,
+    ) -> float | None:
+        _ = pair, current_time, trade_duration, entry_tag, side, kwargs
+        state = self._state(trade)
+        plan_name = (state or {}).get("plan")
+        if plan_name not in EXIT_PLANS:
+            plan_name = str(self.exit_policy_plan.value)
+        plan = EXIT_PLANS[plan_name]
+        return plan.fixed_tp if plan.role == "baseline" and plan.fixed_tp > 0.0 else None
+
     def adjust_trade_position(
         self,
         trade: Any,
@@ -1366,7 +1404,7 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
         after_fill: bool,
         **kwargs: Any,
     ) -> float | None:
-        _ = current_profit, after_fill, kwargs
+        _ = after_fill, kwargs
         state = self._state(trade)
         entry_rate = float(
             (state or {}).get("entry_rate")
@@ -1404,7 +1442,12 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
                     if current_rate > entry_rate:
                         stop_price = max(stop_price, entry_rate * 1.001)
 
-        stop_price = min(stop_price, current_rate * 0.999)
+        persisted_floor = _finite_float((state or {}).get("stop_floor"))
+        if persisted_floor is not None:
+            stop_price = max(stop_price, persisted_floor)
+        if state is not None and (persisted_floor is None or stop_price > persisted_floor):
+            state["stop_floor"] = stop_price
+            self._save_state(trade, state)
         return stoploss_from_absolute(
             stop_price,
             current_rate=current_rate,
