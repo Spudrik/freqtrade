@@ -687,6 +687,10 @@ def metric_summary(metrics: dict[str, Any]) -> dict[str, Any]:
         "market_change",
     ]
     summary = {key: metrics.get(key) for key in keys if key in metrics}
+    if not isinstance(summary.get("profit_total_pct"), (int, float)):
+        profit_total = summary.get("profit_total")
+        if isinstance(profit_total, (int, float)):
+            summary["profit_total_pct"] = float(profit_total) * 100.0
     pair_summary = pair_robustness_summary(metrics)
     summary.update({key: value for key, value in pair_summary.items() if value not in ("", None)})
     return summary
