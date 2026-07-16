@@ -1928,9 +1928,6 @@ def _adaptive_hyperopt_jobs(
     max_backtest_lanes = max(0, min(backtest_worker_count, max_cores_allowed - 1))
     if max_backtest_lanes <= 0:
         return max_jobs
-    backlog_floor = max(1, (max_backtest_lanes + 1) // 2)
-    if backlog < backlog_floor:
-        return max_jobs
     backtest_lanes = min(backlog, max_backtest_lanes)
     jobs = max_cores_allowed - backtest_lanes
     return max(1, min(max_jobs, jobs))

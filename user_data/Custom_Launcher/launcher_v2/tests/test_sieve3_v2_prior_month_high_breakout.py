@@ -1451,7 +1451,7 @@ def test_pending_hard_invalidation_keeps_legacy_compatibility() -> None:
     ) == ExitDecision("full", "s3v2_hard_invalidation")
 
 
-def test_fixed_controls_profit_state_and_progress_failure() -> None:
+def test_all_plans_have_roi_fallback_bounded_hold_and_progress_failure() -> None:
     strategy = _strategy()
     trade = FakeTrade()
     for plan_name, expected in (("baseline_3_3", 0.03), ("promotion_2_2", 0.02)):
@@ -1480,8 +1480,19 @@ def test_fixed_controls_profit_state_and_progress_failure() -> None:
             None,
             "long",
         )
-        is None
+        == 0.08
     )
+    for name, plan in EXIT_PLANS.items():
+        if plan.role == "baseline":
+            assert plan.max_hold_candles == 0, name
+        else:
+            assert plan.fixed_tp == 0.08, name
+            assert plan.max_hold_candles == 720, name
+    assert Sieve3V2IntegratedFromPriorMonthHighBreakoutLong.evaluate_policy(
+        EXIT_PLANS["swing48_touch_full"],
+        {"partial_pending": False, "partial_filled": False},
+        {"max_hold": True},
+    ) == ExitDecision("full", "s3v2_max_hold")
 
     target_plan = EXIT_PLANS["period_nearest_touch_p33_be_boundary2"]
     assert Sieve3V2IntegratedFromPriorMonthHighBreakoutLong.evaluate_policy(

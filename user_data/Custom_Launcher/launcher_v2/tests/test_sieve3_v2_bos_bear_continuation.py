@@ -1061,7 +1061,7 @@ def test_entry_driving_and_target_indicators_are_prefix_invariant() -> None:
             )
 
 
-def test_fixed_controls_use_native_roi_and_other_plans_disable_it() -> None:
+def test_all_plans_have_native_roi_fallback_and_bounded_hold() -> None:
     strategy = _strategy()
     trade = FakeTrade()
     for plan_name, expected in (("baseline_3_3", 0.03), ("promotion_2_2", 0.02)):
@@ -1075,5 +1075,16 @@ def test_fixed_controls_use_native_roi_and_other_plans_disable_it() -> None:
     )
     assert (
         strategy.custom_roi(trade.pair, trade, datetime.now(UTC), 10, ENTRY_TAG, "short")
-        is None
+        == 0.08
     )
+    for name, plan in EXIT_PLANS.items():
+        if plan.role == "baseline":
+            assert plan.max_hold_candles == 0, name
+        else:
+            assert plan.fixed_tp == 0.08, name
+            assert plan.max_hold_candles == 336, name
+    assert Sieve3V2IntegratedFromBosBearContinuationShort1H.evaluate_policy(
+        EXIT_PLANS["measured_half_touch_full"],
+        {"partial_pending": False, "partial_filled": False},
+        {"max_hold": True},
+    ) == ExitDecision("full", "s3v2_max_hold")

@@ -117,6 +117,10 @@ def _finite_float(value: Any) -> float | None:
     return float(numeric)
 
 
+DEFAULT_FALLBACK_ROI = 0.12
+DEFAULT_MAX_HOLD_CANDLES = 336
+
+
 class ExitPlan:
     __slots__ = (
         "confirmation",
@@ -124,6 +128,7 @@ class ExitPlan:
         "hard_stop",
         "invalidation",
         "invalidation_action",
+        "max_hold_candles",
         "partial_fraction",
         "progress_candles",
         "remainder",
@@ -148,7 +153,8 @@ class ExitPlan:
         progress_candles: int = 0,
         target_band: float = 0.01,
         hard_stop: float = 0.05,
-        fixed_tp: float = 0.0,
+        fixed_tp: float | None = None,
+        max_hold_candles: int | None = None,
     ) -> None:
         self.role = role
         self.target_1 = target_1
@@ -162,7 +168,16 @@ class ExitPlan:
         self.progress_candles = int(progress_candles)
         self.target_band = float(target_band)
         self.hard_stop = float(hard_stop)
-        self.fixed_tp = float(fixed_tp)
+        self.fixed_tp = float(
+            DEFAULT_FALLBACK_ROI
+            if fixed_tp is None and role != "baseline"
+            else fixed_tp or 0.0
+        )
+        self.max_hold_candles = int(
+            DEFAULT_MAX_HOLD_CANDLES
+            if max_hold_candles is None and role != "baseline"
+            else max_hold_candles or 0
+        )
 
     def _values(self) -> tuple[Any, ...]:
         return tuple(getattr(self, name) for name in self.__slots__)
@@ -1284,6 +1299,9 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
         time_failure = bool(
             plan.progress_candles and age_candles >= plan.progress_candles and favorable < 0.01
         )
+        max_hold = bool(
+            plan.max_hold_candles and age_candles >= plan.max_hold_candles
+        )
         return {
             "hard_invalidation": (
                 False if plan.role == "baseline" else support_failure or (level_2 and context_1)
@@ -1294,6 +1312,7 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
             "target_1": confirmed_1,
             "target_2": confirmed_2,
             "time_failure": time_failure,
+            "max_hold": max_hold,
             "profit_bucket": (
                 "loss"
                 if current_profit < -0.005
@@ -1356,6 +1375,8 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
             return ExitDecision("tighten", tighten="target")
         if plan.invalidation_action == "tighten" and events.get("invalidation"):
             return ExitDecision("tighten", tighten="invalidation")
+        if events.get("max_hold"):
+            return ExitDecision("full", "s3v2_max_hold")
         return ExitDecision("hold")
 
     def _decision_context(
@@ -1428,7 +1449,7 @@ class Sieve3V2IntegratedFromMulti2Tlv2VpResBreakVpBullctxLong1H(IStrategy):
         if plan_name not in EXIT_PLANS:
             plan_name = str(self.exit_policy_plan.value)
         plan = EXIT_PLANS[plan_name]
-        return plan.fixed_tp if plan.role == "baseline" and plan.fixed_tp > 0.0 else None
+        return plan.fixed_tp if plan.fixed_tp > 0.0 else None
 
     def adjust_trade_position(
         self,
