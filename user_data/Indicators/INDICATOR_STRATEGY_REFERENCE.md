@@ -57,7 +57,15 @@ Initial hyperopt surface:
 ## Trendline V2
 
 Main purpose:
-- Ranked support and resistance trendlines from cleaned pivots.
+- Ranked support and resistance trendlines from cleaned, confirmed pivots.
+
+Construction and causality contract:
+- A confirmed pivot pair is an internal provisional hypothesis, not a normal trading output.
+- A third nearby confirmed pivot promotes compatible pair seeds into a confirmed trendline family.
+- Confirmed families use an ATR-scaled best fit through three to six explicit pivots, so a human-style rough touch can support the same line without requiring identical prices.
+- A line version becomes available only on the candle where its newest required pivot is confirmed. Later pivots, refits, breaks, or replacements never rewrite earlier dataframe rows.
+- Active pair seeds and confirmed families are hard-bounded per side. This replaces the previous all-candidate joining and absorption scans with work that remains bounded per candle.
+- Main ranked outputs contain confirmed three-plus-pivot families. Two-pivot outputs are opt-in and use the separate `tlv2_provisional_*` namespace.
 
 Primary outputs:
 - `tlv2_support_line_rank0`
@@ -67,11 +75,25 @@ Primary outputs:
 - `tlv2_resistance_score_rank0`
 - `tlv2_resistance_distance_atr_rank0`
 
+Rank meaning:
+- Rank `0` is the strongest currently usable line after quality and proximity ranking; ranks `1` and `2` are alternative active lines.
+- A rank is not a pivot count or confirmation tier. Use `tlv2_<side>_pivot_count_rankN` for explicit pivot count and `tlv2_<side>_line_id_rankN` to track a family when its displayed rank changes.
+- `*_score_rankN` measures line quality. `*_distance_atr_rankN` measures the current candle's distance from the projected line. Strategies should normally gate both rather than treating line presence as an entry signal.
+
+Optional provisional outputs:
+- Set `include_provisional_pair_outputs=True` to expose `tlv2_provisional_support_*` and `tlv2_provisional_resistance_*` columns.
+- These outputs contain exactly two explicit pivots and are intended for indicator composition or developing-structure context, not as confirmed general trading lines.
+
+Shared-state integration:
+- `build_trendline_projection_v2_state(...)` builds pivots, provisional seeds, and confirmed families once.
+- Pass that state to both `add_trendline_projection_v2(..., state=state)` and `add_pattern_geometry_v2(..., trendline_state=state)` when both outputs are required. Geometry consumes the candidate state directly; provisional columns do not need to be exported first.
+- Input history length is controlled by the caller. The indicator does not silently truncate a backtest dataframe. A live integration that wants a rolling few-hundred-candle calculation must provide that bounded window with sufficient pivot warm-up.
+
 Initial hyperopt surface:
 - `timeframe`: strategy-selected active timeframe values, commonly `1h`, `4h`, `8h`, `1d`
 - `min_output_line_score`: `0.35-0.80`
-- `min_output_active_bars`: `2-24`
-- `max_active_line_distance_atr_mult`: `3.0-10.0`
+- `min_output_active_bars`: `1-8`
+- `max_active_line_distance_atr_mult`: `1.5-4.0`
 - `proximity_rank_weight`: `0.00-0.20`
 - `proximity_rank_distance_cap_atr`: `3.0-10.0`
 
@@ -81,6 +103,8 @@ Second-pass construction surface:
 - `max_anchor_bars`: `40-140`
 - `max_slope_atr_per_bar`: `0.15-0.70`
 - `max_projection_bars`: `40-160`
+- `family_touch_tolerance_atr_mult`: `0.40-0.80`
+- `family_fit_tolerance_atr_mult`: `0.35-0.75`
 - `raw_line_output_count`: `1-3`
 
 ## Geometry V2
@@ -90,6 +114,9 @@ Main purpose:
 
 Family-level outputs:
 - `pg2_<family>_pattern_present`
+- `pg2_<family>_provisional_pattern_present`
+- `pg2_<family>_partial_pattern_present`
+- `pg2_<family>_confirmation_tier`
 - `pg2_<family>_indicator_score`
 - `pg2_<family>_direction`
 - `pg2_<family>_width_atr`
@@ -104,6 +131,12 @@ Family names:
 - `rectangle`
 - `ascending_channel`
 - `descending_channel`
+
+Confirmation contract:
+- Geometry pairs active resistance and support candidates from the reusable TLV2 state, including optional two-pivot hypotheses without requiring provisional dataframe columns.
+- Tier `1` means both rails are still two-pivot hypotheses. Tier `2` means one rail has at least three explicit pivots. Tier `3` means both rails have at least three explicit pivots.
+- `pg2_<family>_pattern_present` is strategy-facing and is true only for tier `3`. The provisional and partial presence columns retain developing geometry without presenting it as confirmed.
+- `pg2_slot_*` columns may contain all three tiers for plotting and indicator composition.
 
 Initial family gates:
 - `include_triangle_patterns`: `true/false`
@@ -136,7 +169,7 @@ Initial channel/rectangle surface:
 
 Slot columns:
 - `pg2_slot_*` columns describe concrete overlapping candidates.
-- Start strategy logic from family-level columns, then add slot columns only when a strategy needs multiple simultaneous structures.
+- Start general trading logic from confirmed family-level `pattern_present` columns. Use provisional/partial family columns or slots only when the strategy explicitly intends to consume developing structure.
 
 ## Volume Profile
 

@@ -74,7 +74,7 @@ Do not add archive history to this file. If a module is archived or removed, new
 - Do not route pattern detectors through TLV2 pivot columns just to get pivots.
 - Do not route Trendline V2 through Pattern columns.
 - Do not create hidden dependency chains that work only because another indicator happens to re-emit foundation columns.
-- Cross-indicator inputs are allowed only when the actual concept is being consumed, for example Geometry V2 using TLV2 ranked lines as trendline evidence.
+- Cross-indicator inputs are allowed only when the actual concept is being consumed, for example Geometry V2 using the reusable TLV2 candidate state as trendline evidence.
 - Cross-indicator inputs are not allowed as plumbing shortcuts for pivots, volume, ATR, or other shared base data.
 
 ## Height And Level Scaling Hard Rule

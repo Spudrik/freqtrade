@@ -29,11 +29,11 @@ Confirmed pivots converted into BOS/CHoCH event context. It emits event flags, s
 
 `complex_trendline_projection_v2.py`
 
-Ranked support and resistance trendline evidence derived from confirmed pivots. Main strategy-facing values are line price, line score, and distance in ATR units for support/resistance ranks.
+Ranked support and resistance trendline evidence derived from confirmed pivots. Canonical ranks contain causal three-to-six-pivot proximity families; optional `tlv2_provisional_*` outputs contain exactly two pivots and are separate developing evidence. Rank `0` is the strongest current candidate, not a confirmation tier. Main strategy-facing values are line price, line score, distance in ATR units, pivot count, and stable line identity.
 
 `pattern_geometry_v2.py`
 
-Line-pair geometry evidence for triangle, wedge, compression, rectangle, ascending-channel, and descending-channel families. Main strategy-facing values are family presence, score, direction, width, squeeze state, upper rail, and lower rail.
+Line-pair geometry evidence for triangle, wedge, compression, rectangle, ascending-channel, and descending-channel families. Geometry consumes the reusable TLV2 candidate state directly. Main `pattern_present` outputs require at least three explicit pivots on both rails; separate provisional, partial, and confirmation-tier outputs preserve developing structures for composition without representing them as confirmed trading patterns.
 
 `complex_volume_profile.py`
 

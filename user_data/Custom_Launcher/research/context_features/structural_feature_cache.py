@@ -15,7 +15,10 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from user_data.Indicators.complex_trendline_projection_v2 import add_trendline_projection_v2
+from user_data.Indicators.complex_trendline_projection_v2 import (
+    add_trendline_projection_v2,
+    build_trendline_projection_v2_state,
+)
 from user_data.Indicators.complex_volume_profile import add_volume_profile
 from user_data.Indicators.pattern_bos_choch import add_bos_choch
 from user_data.Indicators.pattern_geometry_v2 import add_pattern_geometry_v2
@@ -285,7 +288,7 @@ def load_ohlcv(path: Path, timeframe: str, start: pd.Timestamp | None = None, en
 
 def add_indicator_family(frame: DataFrame, timeframe: str, include_geometry: bool) -> DataFrame:
     out = add_volume_profile(frame, prefix="vp", window=96, bins=48, value_area_pct=0.70, price_source="hlc3")
-    out = add_trendline_projection_v2(
+    trendline_state = build_trendline_projection_v2_state(
         out,
         timeframe=timeframe,
         output_prefix="tlv2",
@@ -293,9 +296,24 @@ def add_indicator_family(frame: DataFrame, timeframe: str, include_geometry: boo
         min_output_line_score=0.50,
         include_diagnostics=False,
     )
+    out = add_trendline_projection_v2(
+        out,
+        timeframe=timeframe,
+        output_prefix="tlv2",
+        raw_line_output_count=1,
+        min_output_line_score=0.50,
+        include_diagnostics=False,
+        state=trendline_state,
+    )
     out = add_bos_choch(out, prefix="ms", include_sequence=True, include_diagnostics=True)
     if include_geometry:
-        out = add_pattern_geometry_v2(out, timeframe=timeframe, output_prefix="pg2", output_slots=2)
+        out = add_pattern_geometry_v2(
+            out,
+            timeframe=timeframe,
+            output_prefix="pg2",
+            output_slots=2,
+            trendline_state=trendline_state,
+        )
     return out
 
 

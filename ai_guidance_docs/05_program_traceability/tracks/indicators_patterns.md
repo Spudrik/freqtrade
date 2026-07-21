@@ -4,7 +4,7 @@ default_read: no
 owner: user+agent
 purpose: Milestone traceability for rare pattern-indicator families and their separate research requirements.
 do_not_use_for: Generic pattern scoring, routine Sieve result review, or moving active Freqtrade strategies out of their required directory.
-last_rebuilt: 2026-07-13
+last_rebuilt: 2026-07-21
 ---
 
 # Track - Pattern Indicators
@@ -17,6 +17,7 @@ This is the logically separate lane for geometry, reversal, continuation, multi-
 
 - Pattern modules were split because each family needs different identity, confirmation, scoring, invalidation, and exit geometry.
 - Geometry covers triangles, wedges, channels, and rectangles.
+- Geometry V2 now consumes the reusable TLV2 candidate state directly. Two-pivot rails remain provisional, one confirmed rail is partial, and normal `pattern_present` outputs require three or more explicit pivots on both rails.
 - Reversal and multi-peak work covers head-and-shoulders and double/triple tops/bottoms with family-specific identity and thresholds.
 - Continuation and Wolfe families have separate confirmation/reaction contracts.
 - Some selected pattern baselines show useful win rate, payoff, and drawdown, but many very high win rates came from only `2-11` trades.
@@ -31,10 +32,12 @@ This is the logically separate lane for geometry, reversal, continuation, multi-
 | 14 May | Pattern-specific filters refined | Added reversal scaling/H&S filters, dynamic multi-peak identity, and Wolfe reaction filtering. | Git history; score guide. |
 | Sieve1/Sieve2 | Rare patterns tested as exact entry concepts | Some credible rows emerged, but sparse samples prevented broad promotion claims. | Sieve2 baseline lookup. |
 | Sieve3 | Family-specific exit contracts required | Necklines, boundaries, measured moves, reaction points, and pattern failure must drive exit hypotheses. | Sieve3 exit/regeneration rules. |
+| 21 July 2026 | Geometry confirmation tiers aligned with causal TLV2 | Geometry gained direct access to both provisional and confirmed TLV2 pools without exporting pair lines as general trading data. Tier changes now start new causal output segments, while strategy-facing family presence remains restricted to three-plus pivots on both rails. Multi-market plots found coherent but sparse confirmed geometry; no strategy files were run or changed. | Current geometry/TLV2 code and detailed redesign commit. |
 
 ## 4. Current conclusions
 
 - **Demonstrated:** pattern families require separate contracts and coverage handling.
+- **Demonstrated:** provisional and partial rail evidence can be retained without allowing a two-pivot rail pair to masquerade as a confirmed strategy pattern.
 - **Promising:** selected complete triangles, double bottoms, wedges, and rectangles with adequate samples.
 - **Insufficient evidence:** extreme win-rate rows supported by only a few trades.
 - **Avoid:** vague aggregate labels such as one generic rare-pattern or "sunflower" family when exact pattern names exist.
@@ -45,6 +48,7 @@ This is the logically separate lane for geometry, reversal, continuation, multi-
 - Validate pair/window coverage before any exit-stage judgment.
 - Compare pattern-specific target/failure logic rather than cloning generic exits.
 - Keep a pattern candidate reviewable when its logic is sound but sample coverage is insufficient.
+- Treat Geometry V2's confirmed output as selective context until downstream strategy tests establish a stronger role; the isolated review produced no confirmed geometry for one of the sampled 1h markets.
 - Record a milestone only for a completed family redesign, adequate validation stage, or durable conclusion.
 
 ## 6. Canonical evidence
@@ -54,4 +58,3 @@ This is the logically separate lane for geometry, reversal, continuation, multi-
 - Sieve2 baseline lookup: `../../04_results/sieve3_sieve2_baseline_lookup.md`
 - Sieve3 exit rules: `../../02_rules/rules_sieve3_exit_hyperopt.md`
 - Regeneration guidance: `../../02_rules/rules_sieve3_exit_regeneration_agent.md`
-

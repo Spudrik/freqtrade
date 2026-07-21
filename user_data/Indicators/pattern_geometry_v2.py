@@ -700,9 +700,11 @@ def _geometry_v2_arrays(
     for field in ("avoid_long", "avoid_short"):
         out[field] = np.zeros(rows, dtype=bool)
 
-    # TLV2 is the primary line supply. Geometry consumes the already-built
-    # candidate state and asks whether one active upper and lower rail form a
-    # provisional, partial, or confirmed pattern right now.
+    # TLV2 is the primary line supply. Geometry consumes both candidate pools:
+    # provisional two-pivot hypotheses and confirmed three-plus-pivot families.
+    # The explicit pivot counts keep those sources separate in the geometry
+    # confirmation tier, so provisional rails can inform pattern construction
+    # without being exported as a confirmed strategy-facing pattern.
     #
     # Example: if TLV2 has a resistance line from highs at candles 20 and 42
     # and a support line from lows at candles 25 and 44, geometry v2 can start
@@ -710,7 +712,16 @@ def _geometry_v2_arrays(
     # That avoids drawing hypothetical future patterns before both rails have
     # been confirmed.
     base = trendline_state.base
-    candidates = trendline_state.candidates
+    candidate_pools = (
+        trendline_state.candidates,
+        trendline_state.provisional_candidates,
+    )
+    available_pools = [pool for pool in candidate_pools if not pool.empty]
+    candidates = (
+        pd.concat(available_pools, ignore_index=True, sort=False)
+        if available_pools
+        else trendline_state.candidates.head(0).copy()
+    )
     body_high = base["body_high"].to_numpy(dtype="float64")
     body_low = base["body_low"].to_numpy(dtype="float64")
     high = base["high"].to_numpy(dtype="float64")
@@ -2109,7 +2120,7 @@ def _empty_slot_arrays(rows: int, slot_count: int) -> dict[str, np.ndarray]:
 
 
 def _suppress_short_output_segments(out: dict[str, np.ndarray], slot_count: int, min_output_bars: int) -> None:
-    """Causally expose a stable segment from its confirmation row onward."""
+    """Causally expose a stable family/tier segment from its confirmation row onward."""
 
     if min_output_bars <= 1:
         return
@@ -2118,12 +2129,17 @@ def _suppress_short_output_segments(out: dict[str, np.ndarray], slot_count: int,
         if not np.any(active):
             continue
         family = np.asarray(out[f"slot_{slot}_family"], dtype="int8")
+        confirmation_tier = np.asarray(
+            out[f"slot_{slot}_confirmation_tier"],
+            dtype="int8",
+        )
         start_index = np.asarray(out[f"slot_{slot}_start_index"], dtype="float64")
         same_previous = np.zeros(len(active), dtype=bool)
         same_previous[1:] = (
             active[1:]
             & active[:-1]
             & (family[1:] == family[:-1])
+            & (confirmation_tier[1:] == confirmation_tier[:-1])
             & np.isfinite(start_index[1:])
             & np.isfinite(start_index[:-1])
             & (np.abs(start_index[1:] - start_index[:-1]) < 0.5)
