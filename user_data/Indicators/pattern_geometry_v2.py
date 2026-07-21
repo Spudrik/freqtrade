@@ -39,15 +39,13 @@ from pandas import DataFrame, Series
 
 try:
     from .complex_trendline_projection_v2 import (
-        _base_inputs,
-        _build_sequence_candidate_table,
-        _resolve_config as _resolve_trendline_v2_config,
+        TrendlineProjectionV2State,
+        resolve_trendline_projection_v2_state,
     )
 except Exception:  # pragma: no cover - standalone review scripts import this module directly
     from complex_trendline_projection_v2 import (  # type: ignore[no-redef]
-        _base_inputs,
-        _build_sequence_candidate_table,
-        _resolve_config as _resolve_trendline_v2_config,
+        TrendlineProjectionV2State,
+        resolve_trendline_projection_v2_state,
     )
 
 
@@ -102,6 +100,7 @@ _SLOT_FIELDS = (
     "width_atr",
     "upper_pivots",
     "lower_pivots",
+    "confirmation_tier",
 )
 _ROW_FIELDS = (
     "best_position",
@@ -260,7 +259,8 @@ class PatternGeometryV2Config:
     The first group of levers controls the mature compression engine. The
     process is:
 
-    1. TLV2 supplies already-filtered resistance and support lines.
+    1. TLV2 supplies one reusable state containing provisional and confirmed
+       resistance/support candidates.
     2. This file pairs active upper/lower lines.
     3. The pair is accepted only if the rails are close enough in ATR terms,
        locally narrowing, recently touched on both sides, and containing candle
@@ -342,6 +342,7 @@ class PatternGeometryV2Config:
     min_slope_atr_per_bar: float = 0.010
     flat_slope_atr_per_bar: float = 0.015
     min_total_pivots: int = 4
+    confirmed_min_side_pivots: int = 3
     impulse_min_span_bars: int = 16
     impulse_max_slope_atr_per_bar: float = 0.10
 
@@ -373,6 +374,8 @@ class _PivotEvents:
 def add_pattern_geometry_v2(
     dataframe: DataFrame,
     config: PatternGeometryV2Config | None = None,
+    *,
+    trendline_state: TrendlineProjectionV2State | None = None,
     **overrides: object,
 ) -> DataFrame:
     """Append geometry v2 columns to an OHLCV frame.
@@ -394,7 +397,8 @@ def add_pattern_geometry_v2(
     _validate_config(cfg)
     _validate_dataframe(dataframe)
 
-    arrays = _geometry_v2_arrays(dataframe, cfg)
+    tlv2_state = _geometry_trendline_state(dataframe, cfg, trendline_state)
+    arrays = _geometry_v2_arrays(dataframe, cfg, tlv2_state)
     p = cfg.output_prefix
     columns: dict[str, Series] = {}
     for slot in range(1, int(cfg.output_slots) + 1):
@@ -403,7 +407,7 @@ def add_pattern_geometry_v2(
             value = arrays[f"slot_{slot}_{field}"]
             if field == "active":
                 columns[key] = pd.Series(value, index=dataframe.index, dtype="bool").fillna(False)
-            elif field in {"family", "direction"}:
+            elif field in {"family", "direction", "confirmation_tier"}:
                 columns[key] = pd.Series(value, index=dataframe.index, dtype="int8")
             else:
                 columns[key] = pd.Series(value, index=dataframe.index, dtype="float64")
@@ -419,7 +423,9 @@ def add_pattern_geometry_v2(
     source = dataframe.copy()
     existing = [col for col in source.columns if str(col).startswith(f"{p}_")]
     clean = source.drop(columns=existing).copy() if existing else source.copy()
-    return pd.concat([clean, pd.DataFrame(columns, index=dataframe.index)], axis=1)
+    result = pd.concat([clean, pd.DataFrame(columns, index=dataframe.index)], axis=1)
+    tlv2_state.attach_to(result)
+    return result
 
 
 def _family_strategy_columns(
@@ -431,18 +437,20 @@ def _family_strategy_columns(
 ) -> dict[str, Series]:
     """Expose one compact strategy-facing row per geometry family.
 
-    Slots remain available for detailed plotting and overlap analysis. These
-    family columns give strategies a stable contract that matches the other
-    pattern indicators: presence, score, direction, current rails, width, and
-    per-family squeeze state. When several slots contain the same family on one
-    row, the highest line score wins and the losing overlaps stay available in
-    the slot columns.
+    Slots retain provisional, partial, and confirmed patterns for plotting and
+    indicator composition. The existing family ``pattern_present`` column is
+    strategy-facing and now selects only patterns with three explicit pivots on
+    both rails. Separate provisional/partial presence columns preserve earlier
+    structural evidence without presenting it as confirmed.
     """
 
     rows = len(index)
     columns: dict[str, Series] = {}
     for family, code in _FAMILY_CODE.items():
         present = np.zeros(rows, dtype=bool)
+        provisional_present = np.zeros(rows, dtype=bool)
+        partial_present = np.zeros(rows, dtype=bool)
+        confirmation_tier = np.zeros(rows, dtype="int8")
         direction = np.zeros(rows, dtype="int8")
         score = np.zeros(rows, dtype="float64")
         upper = np.full(rows, np.nan, dtype="float64")
@@ -453,10 +461,18 @@ def _family_strategy_columns(
         for slot in range(1, slot_count + 1):
             active = np.asarray(arrays[f"slot_{slot}_active"], dtype=bool)
             family_match = np.asarray(arrays[f"slot_{slot}_family"], dtype="int8") == int(code)
+            slot_tier = np.asarray(arrays[f"slot_{slot}_confirmation_tier"], dtype="int8")
+            family_active = active & family_match
+            provisional_present |= family_active & (slot_tier == 1)
+            partial_present |= family_active & (slot_tier == 2)
+            confirmation_tier = np.maximum(
+                confirmation_tier,
+                np.where(family_active, slot_tier, 0).astype("int8"),
+            )
             slot_score = np.asarray(arrays[f"slot_{slot}_line_score"], dtype="float64")
             slot_containment = np.asarray(arrays[f"slot_{slot}_containment"], dtype="float64")
             rank = np.nan_to_num(slot_score, nan=-np.inf) + 0.001 * np.nan_to_num(slot_containment, nan=0.0)
-            update = active & family_match & (rank > best_rank)
+            update = family_active & (slot_tier >= 3) & (rank > best_rank)
             if not np.any(update):
                 continue
             best_rank[update] = rank[update]
@@ -469,6 +485,21 @@ def _family_strategy_columns(
             width_atr[update] = slot_width[update]
             squeeze_active[update] = slot_width[update] <= float(cfg.squeeze_active_width_atr)
         columns[f"{prefix}_{family}_pattern_present"] = pd.Series(present, index=index, dtype="bool")
+        columns[f"{prefix}_{family}_provisional_pattern_present"] = pd.Series(
+            provisional_present,
+            index=index,
+            dtype="bool",
+        )
+        columns[f"{prefix}_{family}_partial_pattern_present"] = pd.Series(
+            partial_present,
+            index=index,
+            dtype="bool",
+        )
+        columns[f"{prefix}_{family}_confirmation_tier"] = pd.Series(
+            confirmation_tier,
+            index=index,
+            dtype="int8",
+        )
         columns[f"{prefix}_{family}_indicator_score"] = pd.Series(score, index=index, dtype="float64")
         columns[f"{prefix}_{family}_direction"] = pd.Series(direction, index=index, dtype="int8")
         columns[f"{prefix}_{family}_upper"] = pd.Series(upper, index=index, dtype="float64")
@@ -482,6 +513,8 @@ def add_pattern_geometry_family_v2(
     dataframe: DataFrame,
     family: str,
     config: PatternGeometryV2Config | None = None,
+    *,
+    trendline_state: TrendlineProjectionV2State | None = None,
     **overrides: object,
 ) -> DataFrame:
     """Append geometry v2 columns for exactly one requested family.
@@ -495,55 +528,108 @@ def add_pattern_geometry_family_v2(
     family_name = _normalize_family_name(family)
     family_overrides = dict(overrides)
     family_overrides.update(_single_family_overrides(family_name))
-    return add_pattern_geometry_v2(dataframe, config, **family_overrides)
+    return add_pattern_geometry_v2(
+        dataframe,
+        config,
+        trendline_state=trendline_state,
+        **family_overrides,
+    )
 
 
 def add_triangle_geometry_v2(
     dataframe: DataFrame,
     config: PatternGeometryV2Config | None = None,
+    *,
+    trendline_state: TrendlineProjectionV2State | None = None,
     **overrides: object,
 ) -> DataFrame:
-    return add_pattern_geometry_family_v2(dataframe, "triangle", config, **overrides)
+    return add_pattern_geometry_family_v2(
+        dataframe,
+        "triangle",
+        config,
+        trendline_state=trendline_state,
+        **overrides,
+    )
 
 
 def add_wedge_geometry_v2(
     dataframe: DataFrame,
     config: PatternGeometryV2Config | None = None,
+    *,
+    trendline_state: TrendlineProjectionV2State | None = None,
     **overrides: object,
 ) -> DataFrame:
-    return add_pattern_geometry_family_v2(dataframe, "wedge", config, **overrides)
+    return add_pattern_geometry_family_v2(
+        dataframe,
+        "wedge",
+        config,
+        trendline_state=trendline_state,
+        **overrides,
+    )
 
 
 def add_compression_geometry_v2(
     dataframe: DataFrame,
     config: PatternGeometryV2Config | None = None,
+    *,
+    trendline_state: TrendlineProjectionV2State | None = None,
     **overrides: object,
 ) -> DataFrame:
-    return add_pattern_geometry_family_v2(dataframe, "compression", config, **overrides)
+    return add_pattern_geometry_family_v2(
+        dataframe,
+        "compression",
+        config,
+        trendline_state=trendline_state,
+        **overrides,
+    )
 
 
 def add_rectangle_geometry_v2(
     dataframe: DataFrame,
     config: PatternGeometryV2Config | None = None,
+    *,
+    trendline_state: TrendlineProjectionV2State | None = None,
     **overrides: object,
 ) -> DataFrame:
-    return add_pattern_geometry_family_v2(dataframe, "rectangle", config, **overrides)
+    return add_pattern_geometry_family_v2(
+        dataframe,
+        "rectangle",
+        config,
+        trendline_state=trendline_state,
+        **overrides,
+    )
 
 
 def add_ascending_channel_geometry_v2(
     dataframe: DataFrame,
     config: PatternGeometryV2Config | None = None,
+    *,
+    trendline_state: TrendlineProjectionV2State | None = None,
     **overrides: object,
 ) -> DataFrame:
-    return add_pattern_geometry_family_v2(dataframe, "ascending_channel", config, **overrides)
+    return add_pattern_geometry_family_v2(
+        dataframe,
+        "ascending_channel",
+        config,
+        trendline_state=trendline_state,
+        **overrides,
+    )
 
 
 def add_descending_channel_geometry_v2(
     dataframe: DataFrame,
     config: PatternGeometryV2Config | None = None,
+    *,
+    trendline_state: TrendlineProjectionV2State | None = None,
     **overrides: object,
 ) -> DataFrame:
-    return add_pattern_geometry_family_v2(dataframe, "descending_channel", config, **overrides)
+    return add_pattern_geometry_family_v2(
+        dataframe,
+        "descending_channel",
+        config,
+        trendline_state=trendline_state,
+        **overrides,
+    )
 
 
 def _normalize_family_name(value: str) -> str:
@@ -587,33 +673,44 @@ def _any_family_enabled(cfg: PatternGeometryV2Config) -> bool:
     )
 
 
-def _geometry_v2_arrays(frame: DataFrame, cfg: PatternGeometryV2Config) -> dict[str, np.ndarray]:
+def _geometry_trendline_state(
+    frame: DataFrame,
+    cfg: PatternGeometryV2Config,
+    state: TrendlineProjectionV2State | None,
+) -> TrendlineProjectionV2State:
+    base_config = state.config if state is not None else None
+    return resolve_trendline_projection_v2_state(
+        frame,
+        base_config,
+        state=state,
+        timeframe=str(cfg.timeframe),
+        pivot_strength=int(cfg.pivot_strength),
+        min_candidate_line_score=0.0,
+    )
+
+
+def _geometry_v2_arrays(
+    frame: DataFrame,
+    cfg: PatternGeometryV2Config,
+    trendline_state: TrendlineProjectionV2State,
+) -> dict[str, np.ndarray]:
     rows = len(frame)
     out = _empty_slot_arrays(rows, int(cfg.output_slots))
     out["best_position"] = np.full(rows, np.nan, dtype="float64")
     for field in ("avoid_long", "avoid_short"):
         out[field] = np.zeros(rows, dtype=bool)
 
-    # TLV2 is the primary line supply. The geometry layer does not rediscover
-    # mature trendlines from scratch for compression patterns; it consumes the
-    # TLV2 candidate table and asks a narrower question: "Can one active upper
-    # line and one active lower line form a tradable pattern right now?"
+    # TLV2 is the primary line supply. Geometry consumes the already-built
+    # candidate state and asks whether one active upper and lower rail form a
+    # provisional, partial, or confirmed pattern right now.
     #
     # Example: if TLV2 has a resistance line from highs at candles 20 and 42
     # and a support line from lows at candles 25 and 44, geometry v2 can start
     # evaluating the pair only once both lines are active on the current row.
     # That avoids drawing hypothetical future patterns before both rails have
     # been confirmed.
-    tl_cfg = _resolve_trendline_v2_config(
-        None,
-        {
-            "timeframe": str(cfg.timeframe),
-            "pivot_strength": int(cfg.pivot_strength),
-            "min_candidate_line_score": float(cfg.min_line_score),
-        },
-    )
-    base = _base_inputs(frame.copy(), tl_cfg)
-    candidates = _build_sequence_candidate_table(base, tl_cfg)
+    base = trendline_state.base
+    candidates = trendline_state.candidates
     body_high = base["body_high"].to_numpy(dtype="float64")
     body_low = base["body_low"].to_numpy(dtype="float64")
     high = base["high"].to_numpy(dtype="float64")
@@ -631,8 +728,20 @@ def _geometry_v2_arrays(frame: DataFrame, cfg: PatternGeometryV2Config) -> dict[
         resistance_lines: list[_LineCandidate] = []
         support_lines: list[_LineCandidate] = []
     else:
-        resistance_lines = _line_candidates_from_frame(candidates, "resistance", atr, atr_finite_prefix)
-        support_lines = _line_candidates_from_frame(candidates, "support", atr, atr_finite_prefix)
+        resistance_lines = _line_candidates_from_frame(
+            candidates,
+            "resistance",
+            atr,
+            atr_finite_prefix,
+            min_score=float(cfg.min_line_score),
+        )
+        support_lines = _line_candidates_from_frame(
+            candidates,
+            "support",
+            atr,
+            atr_finite_prefix,
+            min_score=float(cfg.min_line_score),
+        )
 
     channel_state: dict[str, float] | None = None
     expire_channel_after_row = False
@@ -643,8 +752,8 @@ def _geometry_v2_arrays(frame: DataFrame, cfg: PatternGeometryV2Config) -> dict[
         if not np.isfinite(close[row]):
             continue
         pattern_candidates: list[dict[str, float]] = []
-        # Stage A: pair live TLV2 resistance/support lines. This is where the
-        # mature triangle, wedge, and compression outputs usually come from.
+        # Stage A: pair live TLV2 resistance/support lines. Explicit pivot
+        # counts determine the resulting confirmation tier.
         # The same pair can also classify as a channel if the rails are nearly
         # parallel rather than converging.
         if resistance_lines and support_lines:
@@ -721,6 +830,7 @@ def _geometry_v2_arrays(frame: DataFrame, cfg: PatternGeometryV2Config) -> dict[
             out[f"slot_{slot}_width_atr"][row] = float(candidate["width_atr"])
             out[f"slot_{slot}_upper_pivots"][row] = float(candidate["upper_pivots"])
             out[f"slot_{slot}_lower_pivots"][row] = float(candidate["lower_pivots"])
+            out[f"slot_{slot}_confirmation_tier"][row] = int(candidate["confirmation_tier"])
     _suppress_short_output_segments(out, int(cfg.output_slots), int(cfg.min_output_bars))
     _update_row_outputs(out, close, atr, cfg, int(cfg.output_slots))
     return out
@@ -731,8 +841,13 @@ def _line_candidates_from_frame(
     side: str,
     atr: np.ndarray,
     atr_finite_prefix: np.ndarray,
+    *,
+    min_score: float,
 ) -> list[_LineCandidate]:
     frame = candidates[candidates["side"].eq(side)]
+    if not frame.empty:
+        score = pd.to_numeric(frame["score"], errors="coerce").fillna(0.0)
+        frame = frame[score.ge(float(min_score))]
     if frame.empty:
         return []
     lines: list[_LineCandidate] = []
@@ -773,6 +888,16 @@ def _line_candidates_from_frame(
 def _active_lines_for_row(lines: list[_LineCandidate], row: int) -> list[_LineCandidate]:
     value = float(row)
     return [line for line in lines if line.active_start <= value <= line.projection_end]
+
+
+def _geometry_confirmation_tier(upper_pivots: float, lower_pivots: float, confirmed_minimum: int) -> int:
+    upper_confirmed = float(upper_pivots) >= float(confirmed_minimum)
+    lower_confirmed = float(lower_pivots) >= float(confirmed_minimum)
+    if upper_confirmed and lower_confirmed:
+        return 3
+    if upper_confirmed or lower_confirmed:
+        return 2
+    return 1
 
 
 def _pivot_events(pivot: np.ndarray, pivot_index: np.ndarray) -> _PivotEvents:
@@ -856,10 +981,15 @@ def _pair_lines_as_pattern(
     )
 
     line_score = min(float(upper.score), float(lower_line.score))
-    upper_pivots = float(max(getattr(upper, "absorbed_pivot_count", getattr(upper, "pivot_count", 2.0)), 2.0))
-    lower_pivots = float(max(getattr(lower_line, "absorbed_pivot_count", getattr(lower_line, "pivot_count", 2.0)), 2.0))
+    upper_pivots = float(max(getattr(upper, "pivot_count", 2.0), 2.0))
+    lower_pivots = float(max(getattr(lower_line, "pivot_count", 2.0), 2.0))
     if upper_pivots + lower_pivots < float(cfg.min_total_pivots):
         return None
+    confirmation_tier = _geometry_confirmation_tier(
+        upper_pivots,
+        lower_pivots,
+        int(cfg.confirmed_min_side_pivots),
+    )
     if _pair_fails_impulse_filter(upper, lower_line, atr, cfg):
         return None
 
@@ -968,6 +1098,7 @@ def _pair_lines_as_pattern(
         "channel_drift_width_ratio": float(channel_drift_width_ratio),
         "upper_pivots": float(upper_pivots),
         "lower_pivots": float(lower_pivots),
+        "confirmation_tier": float(confirmation_tier),
         "upper_touch_age": float(upper_touch_age),
         "lower_touch_age": float(lower_touch_age),
         "span": float(span),
@@ -1158,6 +1289,13 @@ def _channel_envelope_candidates(
                 "channel_drift_width_ratio": float(channel_drift_width_ratio),
                 "upper_pivots": float(len(high_x)),
                 "lower_pivots": float(len(low_x)),
+                "confirmation_tier": float(
+                    _geometry_confirmation_tier(
+                        float(len(high_x)),
+                        float(len(low_x)),
+                        int(cfg.confirmed_min_side_pivots),
+                    )
+                ),
                 "upper_touch_age": float(upper_touch_age),
                 "lower_touch_age": float(lower_touch_age),
                 "span": float(span),
@@ -1696,6 +1834,7 @@ def _channel_state_from_candidate(candidate: dict[str, float]) -> dict[str, floa
             "containment",
             "upper_pivots",
             "lower_pivots",
+            "confirmation_tier",
             "shape_score",
             "channel_drift_width_ratio",
         )
@@ -1817,6 +1956,16 @@ def _project_channel_state(
         "channel_drift_width_ratio": float(channel_drift_width_ratio),
         "upper_pivots": float(channel_state.get("upper_pivots", 2.0)),
         "lower_pivots": float(channel_state.get("lower_pivots", 2.0)),
+        "confirmation_tier": float(
+            channel_state.get(
+                "confirmation_tier",
+                _geometry_confirmation_tier(
+                    float(channel_state.get("upper_pivots", 2.0)),
+                    float(channel_state.get("lower_pivots", 2.0)),
+                    int(cfg.confirmed_min_side_pivots),
+                ),
+            )
+        ),
         "upper_touch_age": float(upper_touch_age),
         "lower_touch_age": float(lower_touch_age),
         "span": float(span),
@@ -1952,7 +2101,7 @@ def _empty_slot_arrays(rows: int, slot_count: int) -> dict[str, np.ndarray]:
             key = f"slot_{slot}_{field}"
             if field == "active":
                 out[key] = np.zeros(rows, dtype=bool)
-            elif field in {"family", "direction"}:
+            elif field in {"family", "direction", "confirmation_tier"}:
                 out[key] = np.zeros(rows, dtype="int8")
             else:
                 out[key] = np.full(rows, np.nan, dtype="float64")
@@ -1960,32 +2109,31 @@ def _empty_slot_arrays(rows: int, slot_count: int) -> dict[str, np.ndarray]:
 
 
 def _suppress_short_output_segments(out: dict[str, np.ndarray], slot_count: int, min_output_bars: int) -> None:
+    """Causally expose a stable segment from its confirmation row onward."""
+
     if min_output_bars <= 1:
         return
     for slot in range(1, slot_count + 1):
-        active = out[f"slot_{slot}_active"]
-        family = out[f"slot_{slot}_family"]
-        start_index = out[f"slot_{slot}_start_index"]
-        segment_start: int | None = None
-        for row in range(len(active) + 1):
-            is_active = row < len(active) and bool(active[row])
-            same_prev = False
-            if row > 0 and is_active and segment_start is not None:
-                same_prev = (
-                    bool(active[row - 1])
-                    and int(family[row]) == int(family[row - 1])
-                    and abs(float(start_index[row]) - float(start_index[row - 1])) < 0.5
-                )
-            if segment_start is None:
-                if is_active:
-                    segment_start = row
-                continue
-            if is_active and same_prev:
-                continue
-            segment_end = row - 1
-            if segment_end - segment_start + 1 < min_output_bars:
-                _clear_slot_range(out, slot, segment_start, segment_end)
-            segment_start = row if is_active else None
+        active = np.asarray(out[f"slot_{slot}_active"], dtype=bool)
+        if not np.any(active):
+            continue
+        family = np.asarray(out[f"slot_{slot}_family"], dtype="int8")
+        start_index = np.asarray(out[f"slot_{slot}_start_index"], dtype="float64")
+        same_previous = np.zeros(len(active), dtype=bool)
+        same_previous[1:] = (
+            active[1:]
+            & active[:-1]
+            & (family[1:] == family[:-1])
+            & np.isfinite(start_index[1:])
+            & np.isfinite(start_index[:-1])
+            & (np.abs(start_index[1:] - start_index[:-1]) < 0.5)
+        )
+        segment_start = active & ~same_previous
+        positions = np.arange(len(active), dtype="int64")
+        last_start = np.maximum.accumulate(np.where(segment_start, positions, -1))
+        run_lengths = positions - last_start + 1
+        suppress = active & (run_lengths < int(min_output_bars))
+        _clear_slot_mask(out, slot, suppress)
 
 
 def _clear_slot_range(out: dict[str, np.ndarray], slot: int, start: int, end: int) -> None:
@@ -1996,10 +2144,23 @@ def _clear_slot_range(out: dict[str, np.ndarray], slot: int, start: int, end: in
         values = out[key]
         if field == "active":
             values[start : end + 1] = False
-        elif field in {"family", "direction"}:
+        elif field in {"family", "direction", "confirmation_tier"}:
             values[start : end + 1] = 0
         else:
             values[start : end + 1] = np.nan
+
+
+def _clear_slot_mask(out: dict[str, np.ndarray], slot: int, mask: np.ndarray) -> None:
+    if not np.any(mask):
+        return
+    for field in _SLOT_FIELDS:
+        values = out[f"slot_{slot}_{field}"]
+        if field == "active":
+            values[mask] = False
+        elif field in {"family", "direction", "confirmation_tier"}:
+            values[mask] = 0
+        else:
+            values[mask] = np.nan
 
 
 def _update_row_outputs(
@@ -2200,6 +2361,8 @@ def _validate_config(cfg: PatternGeometryV2Config) -> None:
         raise ValueError("flat_slope_atr_per_bar must be positive")
     if int(cfg.min_total_pivots) < 4:
         raise ValueError("min_total_pivots must be at least 4")
+    if int(cfg.confirmed_min_side_pivots) < 3:
+        raise ValueError("confirmed_min_side_pivots must be at least 3")
     if int(cfg.impulse_min_span_bars) < 1:
         raise ValueError("impulse_min_span_bars must be at least 1")
     if float(cfg.impulse_max_slope_atr_per_bar) <= 0.0:
