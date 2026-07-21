@@ -135,6 +135,10 @@ class TrendlineProjectionV2Config:
       tolerance. The break-confirmation candle remains visible; later candles
       do not revise earlier output.
     - ``min_output_*``: direct-output quality controls for the ranked slots.
+    - ``forecast_*``: select a stable confirmed support below price and
+      resistance above price, wrap each projected line in a fit/ATR-scaled
+      price zone, and estimate a causal interaction window from the recent
+      rate at which price-to-zone distance is closing.
     - ``proximity_rank_weight``: strategy-facing ranking tilt. Candidate
       quality remains the main gate, but a positive value lets nearer lines
       outrank equally credible distant lines. A useful first strategy test is
@@ -150,6 +154,10 @@ class TrendlineProjectionV2Config:
       pivots. Channels and higher-level patterns are separate consumers.
     - ``*_provisional_*``: optional two-anchor hypotheses for other indicators.
       They never compete with the confirmed ranks.
+    - ``*_forecast_resistance_*`` / ``*_forecast_support_*``: the next stable
+      confirmed zone on each side, including current/estimated-contact prices,
+      approach timing, neutral contact/cross state, and family identity. These
+      are evidence for strategy decisions, not breakout/rejection advice.
     - ``*_score_rankN`` is the underlying line quality score, while
       ``*_distance_atr_rankN`` is the current candle's distance from the line in
       ATR units. Strategies can hyperopt these together, for example by using
@@ -193,6 +201,22 @@ class TrendlineProjectionV2Config:
     min_output_active_bars: int = 1
     proximity_rank_weight: float = 0.05
     proximity_rank_distance_cap_atr: float = 6.0
+
+    include_forecast_zones: bool = True
+    forecast_min_line_score: float = 0.50
+    forecast_horizon_bars: int = 24
+    forecast_max_distance_atr_mult: float = 6.0
+    forecast_watch_distance_atr_mult: float = 2.0
+    forecast_zone_min_width_atr_mult: float = 0.20
+    forecast_zone_max_width_atr_mult: float = 0.75
+    forecast_approach_lookback_bars: int = 8
+    forecast_min_approach_rate_atr_per_bar: float = 0.03
+    forecast_min_approach_quality: float = 0.15
+    forecast_eta_residual_uncertainty_mult: float = 1.50
+    forecast_eta_min_window_bars: int = 2
+    forecast_eta_min_window_ratio: float = 0.35
+    forecast_replacement_distance_margin_atr: float = 0.75
+    forecast_replacement_score_tolerance: float = 0.10
 
 
 @dataclass(frozen=True, eq=False)
@@ -316,6 +340,23 @@ def add_trendline_projection_v2(
     )
     new_cols.update(raw_resistance_cols)
     new_cols.update(raw_support_cols)
+    if bool(cfg.include_forecast_zones):
+        new_cols.update(
+            _forecast_zone_columns(
+                sequence_candidates,
+                base,
+                "resistance",
+                cfg,
+            )
+        )
+        new_cols.update(
+            _forecast_zone_columns(
+                sequence_candidates,
+                base,
+                "support",
+                cfg,
+            )
+        )
     if bool(cfg.include_provisional_pair_outputs):
         provisional_prefix = f"{p}_provisional"
         provisional_candidates = _filter_candidate_score(
@@ -1138,6 +1179,453 @@ def _filter_candidate_score(candidates: DataFrame, minimum: float) -> DataFrame:
     return candidates[score.ge(float(minimum))].reset_index(drop=True)
 
 
+@dataclass(frozen=True)
+class _ForecastLine:
+    side: LineSide
+    family_id: str
+    line_id: float
+    slope: float
+    intercept: float
+    line_scale: float
+    half_width: float
+    score: float
+    pivot_count: float
+    absorbed_pivot_count: float
+    span: float
+    live_start: int
+    projection_end: int
+    projection_cap: int
+
+
+@dataclass(frozen=True)
+class _ForecastPosition:
+    center: float
+    lower: float
+    upper: float
+    half_width_atr: float
+    distance_atr: float
+    contact: bool
+    crossed: bool
+
+
+_FORECAST_FLOAT_FIELDS = (
+    "zone_center",
+    "zone_lower",
+    "zone_upper",
+    "zone_half_width_atr",
+    "distance_atr",
+    "approach_rate_atr_per_bar",
+    "approach_quality",
+    "eta_early_bars",
+    "eta_bars",
+    "eta_late_bars",
+    "eta_zone_center",
+    "eta_zone_lower",
+    "eta_zone_upper",
+    "score",
+    "pivot_count",
+    "absorbed_pivot_count",
+    "line_id",
+    "slope",
+    "last_confirm_index",
+    "projection_end_index",
+    "selection_age_bars",
+)
+_FORECAST_BOOL_FIELDS = (
+    "active",
+    "watch_active",
+    "zone_contact",
+    "zone_crossed",
+    "new_zone",
+)
+
+
+def _forecast_zone_columns(
+    candidates: DataFrame,
+    base: dict[str, Series],
+    side: LineSide,
+    cfg: TrendlineProjectionV2Config,
+) -> dict[str, Series]:
+    """Select one stable upcoming zone without changing historical rows.
+
+    The forecast sweep is stateful because an incumbent zone must survive
+    minor ranking changes while a strategy waits for price interaction. Active
+    candidates are bounded by the TLV2 construction state, so this adds only a
+    small fixed amount of work per candle.
+    """
+
+    index = base["close"].index
+    rows = len(index)
+    stem = f"{cfg.output_prefix}_forecast_{side}"
+    float_out = {
+        field: np.full(rows, np.nan, dtype="float64") for field in _FORECAST_FLOAT_FIELDS
+    }
+    bool_out = {field: np.zeros(rows, dtype=bool) for field in _FORECAST_BOOL_FIELDS}
+    lines = _forecast_lines(candidates, side, cfg, rows)
+    if rows == 0 or not lines:
+        return _forecast_arrays_to_columns(index, stem, float_out, bool_out)
+
+    starts: list[list[_ForecastLine]] = [[] for _ in range(rows)]
+    for line in lines:
+        starts[line.live_start].append(line)
+
+    close = base["close"].to_numpy(dtype="float64")
+    high = base["high"].to_numpy(dtype="float64")
+    low = base["low"].to_numpy(dtype="float64")
+    atr = base["atr"].to_numpy(dtype="float64")
+    active: list[_ForecastLine] = []
+    incumbent_family: str | None = None
+    selection_start = 0
+
+    # Selection persistence depends on the prior candle. The active set is
+    # already hard-bounded by max_active_families_per_side.
+    for row in range(rows):
+        active = [line for line in active if row <= line.projection_end]
+        active.extend(starts[row])
+        if not active or not np.isfinite(close[row]) or not np.isfinite(atr[row]) or atr[row] <= 0:
+            incumbent_family = None
+            continue
+
+        positioned = [
+            (line, _forecast_position(line, row, close[row], high[row], low[row], atr[row], cfg))
+            for line in active
+        ]
+        incumbent = _current_forecast_incumbent(positioned, incumbent_family)
+        eligible = [
+            item
+            for item in positioned
+            if not item[1].contact
+            and not item[1].crossed
+            and item[1].distance_atr <= float(cfg.forecast_max_distance_atr_mult)
+        ]
+        challenger = _best_forecast_candidate(eligible, exclude_family=incumbent_family)
+
+        selected = incumbent
+        if incumbent is None:
+            selected = _best_forecast_candidate(eligible)
+        elif (
+            incumbent[1].distance_atr > float(cfg.forecast_max_distance_atr_mult)
+            and not incumbent[1].contact
+            and not incumbent[1].crossed
+        ):
+            selected = challenger
+        elif challenger is not None and _forecast_challenger_replaces(
+            incumbent,
+            challenger,
+            cfg,
+        ):
+            selected = challenger
+
+        if selected is None:
+            incumbent_family = None
+            continue
+
+        line, position = selected
+        changed = line.family_id != incumbent_family
+        if changed:
+            incumbent_family = line.family_id
+            selection_start = row
+        approach = _forecast_approach_metrics(
+            line,
+            position,
+            row,
+            close,
+            atr,
+            cfg,
+        )
+        rate, quality, eta_early, eta, eta_late = approach
+        eta_center = eta_lower = eta_upper = np.nan
+        if np.isfinite(eta):
+            eta_center = line.intercept + line.slope * (float(row) + float(eta))
+            width = _forecast_zone_half_width(line, cfg, atr[row])
+            eta_lower = eta_center - width
+            eta_upper = eta_center + width
+
+        watch_active = bool(
+            position.contact
+            or position.crossed
+            or position.distance_atr <= float(cfg.forecast_watch_distance_atr_mult)
+            or (
+                np.isfinite(eta_early)
+                and eta_early <= float(cfg.forecast_horizon_bars)
+                and quality >= float(cfg.forecast_min_approach_quality)
+            )
+        )
+        bool_out["active"][row] = True
+        bool_out["watch_active"][row] = watch_active
+        bool_out["zone_contact"][row] = position.contact
+        bool_out["zone_crossed"][row] = position.crossed
+        bool_out["new_zone"][row] = changed
+        values = {
+            "zone_center": position.center,
+            "zone_lower": position.lower,
+            "zone_upper": position.upper,
+            "zone_half_width_atr": position.half_width_atr,
+            "distance_atr": position.distance_atr,
+            "approach_rate_atr_per_bar": rate,
+            "approach_quality": quality,
+            "eta_early_bars": eta_early,
+            "eta_bars": eta,
+            "eta_late_bars": eta_late,
+            "eta_zone_center": eta_center,
+            "eta_zone_lower": eta_lower,
+            "eta_zone_upper": eta_upper,
+            "score": line.score,
+            "pivot_count": line.pivot_count,
+            "absorbed_pivot_count": line.absorbed_pivot_count,
+            "line_id": line.line_id,
+            "slope": line.slope,
+            "last_confirm_index": float(line.live_start),
+            # Only the cap is knowable when the current family version confirms.
+            "projection_end_index": float(line.projection_cap),
+            "selection_age_bars": float(row - selection_start),
+        }
+        for field, value in values.items():
+            float_out[field][row] = float(value)
+
+    return _forecast_arrays_to_columns(index, stem, float_out, bool_out)
+
+
+def _forecast_lines(
+    candidates: DataFrame,
+    side: LineSide,
+    cfg: TrendlineProjectionV2Config,
+    rows: int,
+) -> list[_ForecastLine]:
+    if rows <= 0 or candidates.empty:
+        return []
+    side_candidates = candidates[candidates["side"].eq(side)].copy()
+    if side_candidates.empty:
+        return []
+    pivots = pd.to_numeric(side_candidates["pivot_count"], errors="coerce").fillna(0.0)
+    scores = pd.to_numeric(side_candidates["score"], errors="coerce").fillna(0.0)
+    side_candidates = side_candidates[
+        pivots.ge(float(cfg.confirmed_min_pivots))
+        & scores.ge(float(cfg.forecast_min_line_score))
+    ]
+    lines: list[_ForecastLine] = []
+    for _, candidate in side_candidates.iterrows():
+        live_start = max(0, int(np.ceil(float(candidate["live_start"]))))
+        projection_end = min(rows - 1, int(np.floor(float(candidate["projection_end"]))))
+        if projection_end < live_start or live_start >= rows:
+            continue
+        lines.append(
+            _ForecastLine(
+                side=side,
+                family_id=str(candidate["family_id"]),
+                line_id=_stable_line_id(candidate),
+                slope=float(candidate["slope"]),
+                intercept=float(candidate["intercept"]),
+                line_scale=max(float(candidate["line_scale"]), 1e-9),
+                half_width=max(float(candidate.get("half_width", 0.0)), 0.0),
+                score=float(candidate["score"]),
+                pivot_count=float(candidate["pivot_count"]),
+                absorbed_pivot_count=float(
+                    candidate.get("absorbed_pivot_count", candidate["pivot_count"])
+                ),
+                span=float(candidate["span"]),
+                live_start=live_start,
+                projection_end=projection_end,
+                projection_cap=int(
+                    np.floor(float(candidate.get("projection_cap", candidate["projection_end"])))
+                ),
+            )
+        )
+    return lines
+
+
+def _forecast_zone_half_width(
+    line: _ForecastLine,
+    cfg: TrendlineProjectionV2Config,
+    current_atr: float | None = None,
+) -> float:
+    scale = line.line_scale
+    if current_atr is not None and np.isfinite(current_atr) and current_atr > 0.0:
+        scale = float(current_atr)
+    minimum = scale * float(cfg.forecast_zone_min_width_atr_mult)
+    maximum = scale * float(cfg.forecast_zone_max_width_atr_mult)
+    return float(np.clip(max(line.half_width, minimum), minimum, maximum))
+
+
+def _forecast_position(
+    line: _ForecastLine,
+    row: int,
+    close: float,
+    high: float,
+    low: float,
+    atr: float,
+    cfg: TrendlineProjectionV2Config,
+) -> _ForecastPosition:
+    center = line.intercept + line.slope * float(row)
+    half_width = _forecast_zone_half_width(line, cfg, atr)
+    lower = center - half_width
+    upper = center + half_width
+    if line.side == "resistance":
+        distance = max(lower - close, 0.0) / max(atr, 1e-9)
+        crossed = bool(close > upper)
+    else:
+        distance = max(close - upper, 0.0) / max(atr, 1e-9)
+        crossed = bool(close < lower)
+    contact = bool(np.isfinite(high) and np.isfinite(low) and high >= lower and low <= upper)
+    half_width_atr = float(
+        np.clip(
+            half_width / max(atr, 1e-9),
+            float(cfg.forecast_zone_min_width_atr_mult),
+            float(cfg.forecast_zone_max_width_atr_mult),
+        )
+    )
+    return _ForecastPosition(
+        center=float(center),
+        lower=float(lower),
+        upper=float(upper),
+        half_width_atr=half_width_atr,
+        distance_atr=float(distance),
+        contact=contact,
+        crossed=crossed,
+    )
+
+
+def _current_forecast_incumbent(
+    positioned: list[tuple[_ForecastLine, _ForecastPosition]],
+    family_id: str | None,
+) -> tuple[_ForecastLine, _ForecastPosition] | None:
+    if family_id is None:
+        return None
+    matches = [item for item in positioned if item[0].family_id == family_id]
+    if not matches:
+        return None
+    return max(matches, key=lambda item: (item[0].live_start, item[0].pivot_count, item[0].score))
+
+
+def _best_forecast_candidate(
+    positioned: list[tuple[_ForecastLine, _ForecastPosition]],
+    exclude_family: str | None = None,
+) -> tuple[_ForecastLine, _ForecastPosition] | None:
+    available = [
+        item for item in positioned if exclude_family is None or item[0].family_id != exclude_family
+    ]
+    if not available:
+        return None
+    return min(
+        available,
+        key=lambda item: (
+            item[1].distance_atr,
+            -item[0].pivot_count,
+            -item[0].score,
+            -item[0].span,
+            -item[0].live_start,
+        ),
+    )
+
+
+def _forecast_challenger_replaces(
+    incumbent: tuple[_ForecastLine, _ForecastPosition],
+    challenger: tuple[_ForecastLine, _ForecastPosition],
+    cfg: TrendlineProjectionV2Config,
+) -> bool:
+    incumbent_line, incumbent_position = incumbent
+    challenger_line, challenger_position = challenger
+    if incumbent_position.contact or incumbent_position.crossed:
+        return False
+    materially_closer = (
+        challenger_position.distance_atr
+        + float(cfg.forecast_replacement_distance_margin_atr)
+        < incumbent_position.distance_atr
+    )
+    credible_enough = (
+        challenger_line.score + float(cfg.forecast_replacement_score_tolerance)
+        >= incumbent_line.score
+    )
+    return bool(materially_closer and credible_enough)
+
+
+def _forecast_approach_metrics(
+    line: _ForecastLine,
+    position: _ForecastPosition,
+    row: int,
+    close: np.ndarray,
+    atr: np.ndarray,
+    cfg: TrendlineProjectionV2Config,
+) -> tuple[float, float, float, float, float]:
+    if position.contact or position.crossed or position.distance_atr <= 0.0:
+        return 0.0, 1.0, 0.0, 0.0, 0.0
+
+    lookback = int(cfg.forecast_approach_lookback_bars)
+    start = max(0, row - lookback + 1)
+    indexes = np.arange(start, row + 1, dtype="float64")
+    close_values = close[start : row + 1]
+    atr_values = atr[start : row + 1]
+    center = line.intercept + line.slope * indexes
+    width = _forecast_zone_half_width(line, cfg, atr[row])
+    if line.side == "resistance":
+        gaps = (center - width - close_values) / np.maximum(atr_values, 1e-9)
+    else:
+        gaps = (close_values - (center + width)) / np.maximum(atr_values, 1e-9)
+    valid = np.isfinite(gaps) & np.isfinite(atr_values) & (atr_values > 0.0)
+    gaps = gaps[valid]
+    if len(gaps) < 4:
+        return np.nan, np.nan, np.nan, np.nan, np.nan
+
+    x = np.arange(len(gaps), dtype="float64")
+    x_center = x - float(x.mean())
+    denominator = float(x_center.dot(x_center))
+    if denominator <= 0.0:
+        return np.nan, np.nan, np.nan, np.nan, np.nan
+    gap_center = gaps - float(gaps.mean())
+    slope = float(x_center.dot(gap_center) / denominator)
+    fitted = float(gaps.mean()) + slope * x_center
+    residual = gaps - fitted
+    total = float(gap_center.dot(gap_center))
+    quality = 1.0 - float(residual.dot(residual)) / total if total > 1e-12 else 0.0
+    quality = float(np.clip(quality, 0.0, 1.0))
+    approach_rate = float(-slope)
+    minimum_rate = float(cfg.forecast_min_approach_rate_atr_per_bar)
+    if approach_rate < minimum_rate:
+        return approach_rate, quality, np.nan, np.nan, np.nan
+
+    residual_rmse = float(np.sqrt(max(float(residual.dot(residual)) / len(gaps), 0.0)))
+    eta = position.distance_atr / approach_rate
+    limit = float(min(int(cfg.forecast_horizon_bars), max(line.projection_cap - row, 0)))
+    if not np.isfinite(eta) or eta < 0.0 or eta > limit:
+        return approach_rate, quality, np.nan, np.nan, np.nan
+    uncertainty = max(
+        float(cfg.forecast_eta_min_window_bars),
+        float(eta) * float(cfg.forecast_eta_min_window_ratio),
+        float(cfg.forecast_eta_residual_uncertainty_mult)
+        * residual_rmse
+        / max(approach_rate, minimum_rate),
+    )
+    eta_early = max(float(eta) - uncertainty, 0.0)
+    eta_late = min(float(eta) + uncertainty, limit)
+
+    return (
+        approach_rate,
+        quality,
+        float(eta_early),
+        float(eta),
+        float(eta_late),
+    )
+
+
+def _forecast_arrays_to_columns(
+    index: pd.Index,
+    stem: str,
+    float_out: dict[str, np.ndarray],
+    bool_out: dict[str, np.ndarray],
+) -> dict[str, Series]:
+    columns = {
+        f"{stem}_{field}": pd.Series(values, index=index, dtype="float64")
+        for field, values in float_out.items()
+    }
+    columns.update(
+        {
+            f"{stem}_{field}": pd.Series(values, index=index, dtype="bool")
+            for field, values in bool_out.items()
+        }
+    )
+    return columns
+
+
 def _rank_sequence_candidate_columns(
     candidates: DataFrame,
     base: dict[str, Series],
@@ -1649,6 +2137,40 @@ def _validate_config(cfg: TrendlineProjectionV2Config) -> None:  # noqa: C901
         raise ValueError("proximity_rank_weight must be non-negative")
     if float(cfg.proximity_rank_distance_cap_atr) <= 0.0:
         raise ValueError("proximity_rank_distance_cap_atr must be positive")
+    if not 0.0 <= float(cfg.forecast_min_line_score) <= 1.0:
+        raise ValueError("forecast_min_line_score must be between 0 and 1")
+    if int(cfg.forecast_horizon_bars) < 1:
+        raise ValueError("forecast_horizon_bars must be positive")
+    if float(cfg.forecast_max_distance_atr_mult) <= 0.0:
+        raise ValueError("forecast_max_distance_atr_mult must be positive")
+    if float(cfg.forecast_watch_distance_atr_mult) <= 0.0:
+        raise ValueError("forecast_watch_distance_atr_mult must be positive")
+    if float(cfg.forecast_watch_distance_atr_mult) > float(cfg.forecast_max_distance_atr_mult):
+        raise ValueError("forecast_watch_distance_atr_mult cannot exceed forecast maximum distance")
+    if float(cfg.forecast_zone_min_width_atr_mult) < 0.0:
+        raise ValueError("forecast_zone_min_width_atr_mult must be non-negative")
+    if float(cfg.forecast_zone_max_width_atr_mult) <= 0.0:
+        raise ValueError("forecast_zone_max_width_atr_mult must be positive")
+    if float(cfg.forecast_zone_max_width_atr_mult) < float(
+        cfg.forecast_zone_min_width_atr_mult
+    ):
+        raise ValueError("forecast zone maximum width cannot be smaller than minimum width")
+    if int(cfg.forecast_approach_lookback_bars) < 4:
+        raise ValueError("forecast_approach_lookback_bars must be at least 4")
+    if float(cfg.forecast_min_approach_rate_atr_per_bar) <= 0.0:
+        raise ValueError("forecast_min_approach_rate_atr_per_bar must be positive")
+    if not 0.0 <= float(cfg.forecast_min_approach_quality) <= 1.0:
+        raise ValueError("forecast_min_approach_quality must be between 0 and 1")
+    if float(cfg.forecast_eta_residual_uncertainty_mult) < 0.0:
+        raise ValueError("forecast_eta_residual_uncertainty_mult must be non-negative")
+    if int(cfg.forecast_eta_min_window_bars) < 0:
+        raise ValueError("forecast_eta_min_window_bars must be non-negative")
+    if not 0.0 <= float(cfg.forecast_eta_min_window_ratio) <= 1.0:
+        raise ValueError("forecast_eta_min_window_ratio must be between 0 and 1")
+    if float(cfg.forecast_replacement_distance_margin_atr) < 0.0:
+        raise ValueError("forecast_replacement_distance_margin_atr must be non-negative")
+    if float(cfg.forecast_replacement_score_tolerance) < 0.0:
+        raise ValueError("forecast_replacement_score_tolerance must be non-negative")
 
 
 __all__ = [
