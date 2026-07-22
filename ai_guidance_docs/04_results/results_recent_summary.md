@@ -4,10 +4,52 @@ default_read: routed
 owner: agent
 purpose: Concise recent evidence summary.
 do_not_use_for: Full detailed historical log.
-last_rebuilt: 2026-06-11
+last_rebuilt: 2026-07-22
 ---
 
 # Recent Results Summary
+
+## Sieve3 V2 Checkpoint - 22 July 2026
+
+### Active research surface
+
+- `599` standalone active `sieve3_V2_*.py` strategies from `134` fixed entry sources.
+- Five focused exit families: three general families (`134` files each), source target/full-or-zone reversal (`100` files), and target-partial/invalidation-remainder (`97` files).
+- `66` ordered batches: `47` standard plus `19` rare-pattern batches.
+- Queue coverage is exact: `599` queued references, `599` unique active files, no duplicates.
+- Exit Hyperopt uses `spaces=sell`, `control_entry_exits=false`, and `MultiMetricHyperOptLoss`.
+
+The current V2 surface replaces the unfinished legacy broad Sieve3 sweep. Pre-refinement V2 files/results remain exploratory evidence only; they include user-rejected AI-generated concepts such as trailing-only and fixed-RR control families.
+
+### Authoritative refined batches
+
+| Batch | Result file | Status | Main observation |
+|---|---|---:|---|
+| `001` | `20260720T163241_entry_sieve3_v2_exit_batch_005.jsonl` | `10/10` clean | Crash-flush variants were weak; the liquidity-sweep source produced only two validation trades and remains sparse evidence. |
+| `002` | `20260721T025852_entry_sieve3_v2_refined_standard_batch_002_sparse10_retry.jsonl` | `10/10` clean | D1 midline-reject short was profitable across all five exits; the equal-highs source produced one validation trade per exit and remains sparse evidence. |
+| `003` | `20260722T003752_entry_sieve3_v2_refined_standard_batch_003_tlv2_repair_retry2.jsonl` | `10/10` clean | MTFX prior-high short lost across all five exits; repaired TLV2/VP bull-context long produced three promising low-drawdown profit-ladder rows. |
+
+### Current individual leads
+
+These are observations, not promotions:
+
+| Entry / exit | Trades | Win rate | Profit | Max DD | Profit factor |
+|---|---:|---:|---:|---:|---:|
+| D1 midline reject short / no-ratchet ladder | 13 | 46.2% | +6.799% | 1.9% | 4.499 |
+| D1 midline reject short / target partial + invalidation | 13 | 38.5% | +6.778% | 1.8% | 4.294 |
+| D1 midline reject short / profit full-or-ladder | 13 | 53.8% | +6.282% | 1.6% | 3.670 |
+| D1 midline reject short / ratchet ladder | 13 | 53.8% | +6.135% | 1.5% | 3.709 |
+| TLV2/VP bull-context long / profit full-or-ladder | 21 | 81.0% | +3.448% | 0.670% | 3.440 |
+| TLV2/VP bull-context long / ratchet ladder | 21 | 81.0% | +3.031% | 0.671% | 3.145 |
+| TLV2/VP bull-context long / no-ratchet ladder | 21 | 61.9% | +2.328% | 0.735% | 2.341 |
+
+### Indicator and runtime boundary
+
+- Pattern geometry and TLV2 calculations were changed to remove future-data dependence.
+- TLV2 was then rebuilt as a bounded causal upcoming-zone implementation in commits `4eb7e7962`, `2d9a3facc`, and `37a6f6957`.
+- Results produced before the repaired TLV2 boundary are not directly comparable with post-fix TLV2 strategies.
+- `market_state.py` is a shared vectorized indicator dependency used by market-guard V2 strategies; it replaced duplicated strategy-local market-state calculations.
+- The next V2 change is performance-only: reuse one context per trade/candle and remove unnecessary dataframe scans from percentage ladders while preserving selected parameters and trade decisions.
 
 ## Current Direction
 
