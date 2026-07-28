@@ -2,6 +2,7 @@ from __future__ import annotations
 import math
 import pandas as pd
 from collections.abc import Mapping
+from copy import deepcopy
 from datetime import datetime
 from typing import Any
 from pandas import DataFrame, Series
@@ -450,7 +451,10 @@ class Sieve3V2TargetPartialInvalidationRemainderFromMtfxH4IhsLong1HBreakout(IStr
         return {'action': action, 'tag': tag, 'stage': stage, 'fraction': float(fraction)}
 
     def _focused_state(self, trade: Any) -> dict[str, Any] | None:
-        state = trade.get_custom_data(key=self.FOCUSED_STATE_KEY)
+        cache_attr = f'_sieve3_v2_state_cache_{self.FOCUSED_STATE_KEY}'
+        state = getattr(trade, cache_attr, None)
+        if state is None:
+            state = trade.get_custom_data(key=self.FOCUSED_STATE_KEY)
         if state is None:
             return None
         if not isinstance(state, dict):
@@ -459,10 +463,15 @@ class Sieve3V2TargetPartialInvalidationRemainderFromMtfxH4IhsLong1HBreakout(IStr
             raise ValueError('focused exit trade state version mismatch')
         if state.get('contract') != self.FOCUSED_EXIT_CONTRACT:
             raise ValueError('focused exit trade state contract mismatch')
-        return dict(state)
+        if getattr(trade, cache_attr, None) is None:
+            setattr(trade, cache_attr, deepcopy(state))
+        return deepcopy(state)
 
     def _focused_save_state(self, trade: Any, state: Mapping[str, Any]) -> None:
-        trade.set_custom_data(key=self.FOCUSED_STATE_KEY, value=dict(state))
+        cache_attr = f'_sieve3_v2_state_cache_{self.FOCUSED_STATE_KEY}'
+        snapshot = deepcopy(dict(state))
+        setattr(trade, cache_attr, snapshot)
+        trade.set_custom_data(key=self.FOCUSED_STATE_KEY, value=deepcopy(snapshot))
 
     def _focused_side_binding(self, role: str, side: str, slot: str | None=None) -> Mapping[str, Any] | None:
         if role == 'target':

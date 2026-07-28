@@ -2,6 +2,7 @@ from __future__ import annotations
 import math
 import pandas as pd
 from collections.abc import Mapping
+from copy import deepcopy
 from datetime import datetime
 from typing import Any
 from pandas import DataFrame, Series
@@ -230,7 +231,10 @@ class Sieve3V2ProfitLevelFullOrLadderFromLoosenGeometryTriangleSqueezeBreakoutLo
         return {'action': action, 'tag': tag, 'stage': stage, 'fraction': float(fraction)}
 
     def _focused_state(self, trade: Any) -> dict[str, Any] | None:
-        state = trade.get_custom_data(key=self.FOCUSED_STATE_KEY)
+        cache_attr = f'_sieve3_v2_state_cache_{self.FOCUSED_STATE_KEY}'
+        state = getattr(trade, cache_attr, None)
+        if state is None:
+            state = trade.get_custom_data(key=self.FOCUSED_STATE_KEY)
         if state is None:
             return None
         if not isinstance(state, dict):
@@ -239,10 +243,15 @@ class Sieve3V2ProfitLevelFullOrLadderFromLoosenGeometryTriangleSqueezeBreakoutLo
             raise ValueError('focused exit trade state version mismatch')
         if state.get('contract') != self.FOCUSED_EXIT_CONTRACT:
             raise ValueError('focused exit trade state contract mismatch')
-        return dict(state)
+        if getattr(trade, cache_attr, None) is None:
+            setattr(trade, cache_attr, deepcopy(state))
+        return deepcopy(state)
 
     def _focused_save_state(self, trade: Any, state: Mapping[str, Any]) -> None:
-        trade.set_custom_data(key=self.FOCUSED_STATE_KEY, value=dict(state))
+        cache_attr = f'_sieve3_v2_state_cache_{self.FOCUSED_STATE_KEY}'
+        snapshot = deepcopy(dict(state))
+        setattr(trade, cache_attr, snapshot)
+        trade.set_custom_data(key=self.FOCUSED_STATE_KEY, value=deepcopy(snapshot))
 
     def _focused_side_binding(self, role: str, side: str, slot: str | None=None) -> Mapping[str, Any] | None:
         if role == 'target':
@@ -278,40 +287,21 @@ class Sieve3V2ProfitLevelFullOrLadderFromLoosenGeometryTriangleSqueezeBreakoutLo
         return level if valid else None
 
     def _focused_new_state(self, pair: str, trade: Any, current_time: Any, order: Any | None=None) -> dict[str, Any] | None:
+        _ = pair
         side = self._focused_side(trade)
         order_rate = self._focused_float(getattr(order, 'safe_price', None)) if order else None
         entry_rate = order_rate or self._focused_float(getattr(trade, 'open_rate', None))
         if entry_rate is None or entry_rate <= 0.0:
             raise ValueError('focused exit runtime requires a positive entry rate')
         freeze_time = (getattr(order, 'order_date_utc', None) if order is not None else None) or (getattr(order, 'order_date', None) if order is not None else None) or getattr(trade, 'open_date_utc', None) or getattr(trade, 'date_entry_fill_utc', None) or current_time
-        frame = self._focused_closed_frame(self._focused_analyzed_frame(pair, freeze_time), freeze_time)
-        if frame.empty:
-            return None
-        self._focused_require_columns(frame)
-        row = frame.iloc[-1]
-        levels: dict[str, float | None] = {}
-        target_specs = self.FOCUSED_SOURCE_PROFILE.get('targets', {})
-        if isinstance(target_specs, Mapping):
-            for slot in target_specs:
-                levels[str(slot)] = self._focused_frozen_level(row, self._focused_side_binding('target', side, str(slot)), side, entry_rate, 'target')
-        invalidation_binding = self._focused_side_binding('invalidation', side)
-        levels['invalidation'] = self._focused_frozen_level(row, invalidation_binding, side, entry_rate, 'invalidation')
-        invalidation_level = levels.get('invalidation')
-        for slot in ('target_1', 'target_2'):
-            target_level = levels.get(slot)
-            if target_level is not None and invalidation_level is not None and math.isclose(target_level, invalidation_level, rel_tol=0.0, abs_tol=1e-12):
-                raise ValueError(f'resolved {slot} equals the source invalidation level')
-        first = levels.get('target_1')
-        second = levels.get('target_2')
-        if first is not None and second is not None:
-            ordered = second < first if side == 'short' else second > first
-            if not ordered:
-                raise ValueError('entry-frozen target_2 must be beyond target_1')
+        freeze_timestamp = self._focused_utc(freeze_time)
+        timeframe_minutes = max(1, int(timeframe_to_minutes(self.timeframe)))
+        snapshot_date = (freeze_timestamp - pd.Timedelta(minutes=timeframe_minutes)).floor(f'{timeframe_minutes}min') if freeze_timestamp is not None else None
+        levels: dict[str, float | None] = {'invalidation': None}
         selected_plan = str(self.exit_plan)
         plan = self._focused_plan({'plan': selected_plan})
         fill_time = (getattr(order, 'order_filled_utc', None) if order is not None else None) or getattr(trade, 'date_entry_fill_utc', None) or getattr(trade, 'open_date_utc', None) or current_time
         fill_timestamp = self._focused_utc(fill_time)
-        snapshot_date = self._focused_utc(row['date'])
         stages = {f'stage_{index + 1}': {'status': 'ready', 'fraction': float(fraction), 'tag': f'focused_partial_stage_{index + 1}', 'requested_at': None, 'target_stake': None, 'credited_stake': 0.0, 'filled_at': None} for index, fraction in enumerate(plan.get('partial_fractions', ()))}
         return {'version': self.FOCUSED_STATE_VERSION, 'contract': self.FOCUSED_EXIT_CONTRACT, 'plan': selected_plan, 'side': side, 'phase': 'pre_target', 'entry_rate': float(entry_rate), 'entry_filled_at': fill_timestamp.isoformat() if fill_timestamp is not None else None, 'entry_snapshot_candle': snapshot_date.isoformat() if snapshot_date is not None else None, 'levels': levels, 'target_states': {slot: {'status': 'available' if value is not None else 'unavailable', 'touched_at': None} for slot, value in levels.items() if slot.startswith('target_')}, 'invalidation_seen': False, 'guard_state': 'unknown', 'trigger_state': 'unknown', 'stages': stages, 'initial_stake': self._focused_float(getattr(trade, 'stake_amount', None)), 'favorable_rate': float(entry_rate), 'stop_price': None, 'terminal_pending': False, 'terminal_tag': None}
 
@@ -555,10 +545,16 @@ class Sieve3V2ProfitLevelFullOrLadderFromLoosenGeometryTriangleSqueezeBreakoutLo
 
     def adjust_trade_position(self, trade: Any, current_time: datetime, current_rate: float, current_profit: float, min_stake: float | None, max_stake: float, current_entry_rate: float, current_exit_rate: float, current_entry_profit: float, current_exit_profit: float, **kwargs: Any) -> float | None | tuple[float | None, str | None]:
         _ = (max_stake, current_entry_rate, current_exit_rate, current_entry_profit, current_exit_profit, kwargs)
+        if bool(getattr(trade, 'has_open_orders', False)):
+            return None
+        plan = self._focused_plan()
+        if int(plan['exit_steps']) == 1:
+            return None
+        completed = int(getattr(trade, 'nr_of_successful_exits', 0) or 0)
+        if completed >= 1 or current_profit < float(plan['target_1_ratio']):
+            return None
         _, state, _, decision = self._focused_context(str(getattr(trade, 'pair', '')), trade, current_time, current_rate, current_profit)
         if not state:
-            return None
-        if trade.has_open_orders:
             return None
         if decision['action'] != 'partial' or not decision.get('stage'):
             return None
