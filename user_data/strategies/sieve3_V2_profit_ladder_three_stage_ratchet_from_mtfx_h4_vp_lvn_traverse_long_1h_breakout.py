@@ -405,10 +405,15 @@ class Sieve3V2ProfitLadderThreeStageRatchetFromMtfxH4VpLvnTraverseLong1hBreakout
         return closed.sort_values('date').drop_duplicates('date', keep='last')
 
     def _focused_analyzed_frame(self, pair: str, current_time: Any) -> DataFrame:
+        _ = current_time
         if getattr(self, 'dp', None) is None:
             raise RuntimeError("focused exit runtime requires Freqtrade's data provider")
         frame, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
-        return self._focused_closed_frame(frame, current_time)
+        if frame is None or frame.empty:
+            raise RuntimeError('focused exit runtime requires a non-empty analyzed dataframe')
+        if 'date' not in frame.columns:
+            raise KeyError('focused exit runtime requires the dataframe date column')
+        return frame
 
     def _focused_require_columns(self, frame: DataFrame) -> None:
         missing = sorted(set(self.FOCUSED_REQUIRED_COLUMNS) - set(frame.columns))
@@ -495,7 +500,7 @@ class Sieve3V2ProfitLadderThreeStageRatchetFromMtfxH4VpLvnTraverseLong1hBreakout
         if entry_rate is None or entry_rate <= 0.0:
             raise ValueError('focused exit runtime requires a positive entry rate')
         freeze_time = (getattr(order, 'order_date_utc', None) if order is not None else None) or (getattr(order, 'order_date', None) if order is not None else None) or getattr(trade, 'open_date_utc', None) or getattr(trade, 'date_entry_fill_utc', None) or current_time
-        frame = self._focused_analyzed_frame(pair, freeze_time)
+        frame = self._focused_closed_frame(self._focused_analyzed_frame(pair, freeze_time), freeze_time)
         if frame.empty:
             return None
         self._focused_require_columns(frame)
@@ -536,11 +541,21 @@ class Sieve3V2ProfitLadderThreeStageRatchetFromMtfxH4VpLvnTraverseLong1hBreakout
         return state
 
     def _focused_post_entry(self, frame: DataFrame, state: Mapping[str, Any]) -> DataFrame:
+        cursor = self._focused_utc(state.get('last_processed_candle') or state.get('entry_snapshot_candle'))
+        if cursor is None:
+            raise ValueError('focused exit state has no processed-candle cursor')
         filled_at = self._focused_utc(state.get('entry_filled_at'))
         if filled_at is None:
             raise ValueError('focused exit state has no entry fill timestamp')
-        dates = pd.to_datetime(frame['date'], utc=True, errors='raise')
-        return frame.loc[dates.ge(filled_at)]
+        latest = self._focused_utc(frame['date'].iat[-1])
+        if latest is None or latest <= cursor:
+            return frame.iloc[0:0]
+        fill_start = int(frame['date'].searchsorted(filled_at, side='left'))
+        start = max(
+            int(frame['date'].searchsorted(cursor, side='right')),
+            fill_start,
+        )
+        return frame.iloc[start:]
 
     def _focused_update_favorable(self, post_entry: DataFrame, state: dict[str, Any]) -> None:
         entry_rate = float(state['entry_rate'])
@@ -600,21 +615,35 @@ class Sieve3V2ProfitLadderThreeStageRatchetFromMtfxH4VpLvnTraverseLong1hBreakout
         if state is None:
             return (self._focused_plan(), {}, {}, self._focused_decision())
         before = repr(state)
-        if state.get('stages'):
-            self._focused_sync_partial_stages(trade, state, current_time)
         plan = self._focused_plan(state)
-        frame = self._focused_analyzed_frame(pair, current_time)
-        self._focused_require_columns(frame)
-        post_entry = self._focused_post_entry(frame, state)
-        self._focused_update_favorable(post_entry, state)
-        events = {}
-        events['age_candles'] = len(post_entry)
-        events['favorable_move'] = self._focused_favorable_move(state)
+
+        stages = state.get('stages', {})
+        if isinstance(stages, Mapping):
+            requested = self._focused_requested_stage(state)
+            filled = sum(1 for stage in stages.values() if isinstance(stage, Mapping) and stage.get('status') == 'filled')
+            native_filled = int(getattr(trade, 'nr_of_successful_exits', 0) or 0)
+            if requested is not None or native_filled > filled:
+                self._focused_sync_partial_stages(trade, state, current_time)
+
+        now = self._focused_utc(current_time)
+        filled_at = self._focused_utc(state.get('entry_filled_at'))
+        if now is not None and filled_at is not None:
+            timeframe_seconds = max(60, int(timeframe_to_minutes(self.timeframe)) * 60)
+            age_candles = max(0, int((now - filled_at).total_seconds() // timeframe_seconds))
+        else:
+            age_candles = int(state.get('age_candles') or 0)
+
+        side = str(state['side'])
+        entry_rate = float(state['entry_rate'])
+        favorable = self._focused_float(getattr(trade, 'min_rate' if side == 'short' else 'max_rate', None)) or entry_rate
+        favorable_move = max(0.0, 1.0 - favorable / entry_rate) if side == 'short' else max(0.0, favorable / entry_rate - 1.0)
+        events = {'age_candles': age_candles, 'favorable_move': favorable_move}
+
         if self._focused_hard_stop_breached(plan, state, float(current_rate)):
             decision = self._focused_decision('full', 'focused_hard_stop')
         else:
             decision = self._focused_contract_decision(state, plan, events, current_profit)
-        if decision['action'] == 'hold' and events['age_candles'] >= int(plan['max_hold_candles']):
+        if decision['action'] == 'hold' and age_candles >= int(plan['max_hold_candles']):
             decision = self._focused_decision('full', 'focused_max_hold')
         if state.get('terminal_pending') and self._focused_requested_stage(state) is None:
             decision = self._focused_decision('full', str(state.get('terminal_tag') or 'focused_deferred_full'))
@@ -634,21 +663,24 @@ class Sieve3V2ProfitLadderThreeStageRatchetFromMtfxH4VpLvnTraverseLong1hBreakout
         return str(decision['tag']) if decision['action'] == 'full' else None
 
     def custom_stoploss(self, pair: str, trade: Any, current_time: datetime, current_rate: float, current_profit: float, after_fill: bool, **kwargs: Any) -> float | None:
-        _ = (after_fill, kwargs)
-        plan, state, _, decision = self._focused_context(pair, trade, current_time, current_rate, current_profit)
-        if not state:
+        _ = (pair, current_time, current_profit, after_fill, kwargs)
+        if bool(getattr(trade, 'has_open_orders', False)):
             return None
-        if decision['action'] == 'full' or self._focused_requested_stage(state) is not None:
+        plan = self._focused_plan()
+        entry_rate = self._focused_float(getattr(trade, 'open_rate', None))
+        if entry_rate is None or entry_rate <= 0.0:
+            raise ValueError('focused exit runtime requires a positive trade open rate')
+        is_short = bool(getattr(trade, 'is_short', False))
+        stop_price = entry_rate * (1.0 + float(plan['hard_stop_ratio']) if is_short else 1.0 - float(plan['hard_stop_ratio']))
+        exits = int(getattr(trade, 'nr_of_successful_exits', 0) or 0)
+        if exits >= 1:
+            stop_price = entry_rate
+        if exits >= 2:
+            target_1 = float(plan['target_1_ratio'])
+            stop_price = entry_rate * (1.0 - target_1 if is_short else 1.0 + target_1)
+        if (is_short and stop_price <= current_rate) or (not is_short and stop_price >= current_rate):
             return None
-        desired = self._focused_stop_overlay(plan, state, current_profit)
-        persisted = self._focused_float(state.get('stop_price'))
-        stop_price = desired if persisted is None else self._focused_tighter_stop(str(state['side']), persisted, desired)
-        if state['side'] == 'short' and stop_price <= current_rate or (state['side'] == 'long' and stop_price >= current_rate):
-            return None
-        if persisted is None or not math.isclose(stop_price, persisted, rel_tol=0.0, abs_tol=1e-12):
-            state['stop_price'] = stop_price
-            self._focused_save_state(trade, state)
-        return stoploss_from_absolute(stop_price, current_rate=current_rate, is_short=state['side'] == 'short', leverage=float(getattr(trade, 'leverage', 1.0) or 1.0))
+        return stoploss_from_absolute(stop_price, current_rate=current_rate, is_short=is_short, leverage=float(getattr(trade, 'leverage', 1.0) or 1.0))
 
 
     def _focused_contract_decision(self, state: dict[str, Any], plan: Mapping[str, Any], events: Mapping[str, Any], current_profit: float) -> dict[str, Any]:

@@ -410,10 +410,15 @@ class Sieve3V2TargetPartialInvalidationRemainderFromMtfxH4IhsLong1HBreakout(IStr
         return closed.sort_values('date').drop_duplicates('date', keep='last')
 
     def _focused_analyzed_frame(self, pair: str, current_time: Any) -> DataFrame:
+        _ = current_time
         if getattr(self, 'dp', None) is None:
             raise RuntimeError("focused exit runtime requires Freqtrade's data provider")
         frame, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
-        return self._focused_closed_frame(frame, current_time)
+        if frame is None or frame.empty:
+            raise RuntimeError('focused exit runtime requires a non-empty analyzed dataframe')
+        if 'date' not in frame.columns:
+            raise KeyError('focused exit runtime requires the dataframe date column')
+        return frame
 
     def _focused_require_columns(self, frame: DataFrame) -> None:
         missing = sorted(set(self.FOCUSED_REQUIRED_COLUMNS) - set(frame.columns))
@@ -499,7 +504,7 @@ class Sieve3V2TargetPartialInvalidationRemainderFromMtfxH4IhsLong1HBreakout(IStr
         if entry_rate is None or entry_rate <= 0.0:
             raise ValueError('focused exit runtime requires a positive entry rate')
         freeze_time = (getattr(order, 'order_date_utc', None) if order is not None else None) or (getattr(order, 'order_date', None) if order is not None else None) or getattr(trade, 'open_date_utc', None) or getattr(trade, 'date_entry_fill_utc', None) or current_time
-        frame = self._focused_analyzed_frame(pair, freeze_time)
+        frame = self._focused_closed_frame(self._focused_analyzed_frame(pair, freeze_time), freeze_time)
         if frame.empty:
             return None
         self._focused_require_columns(frame)
@@ -540,10 +545,22 @@ class Sieve3V2TargetPartialInvalidationRemainderFromMtfxH4IhsLong1HBreakout(IStr
         return state
 
     def _focused_post_entry(self, frame: DataFrame, state: Mapping[str, Any]) -> DataFrame:
+        cursor = self._focused_utc(state.get('last_processed_candle') or state.get('entry_snapshot_candle'))
+        if cursor is None:
+            raise ValueError('focused exit state has no processed-candle cursor')
         filled_at = self._focused_utc(state.get('entry_filled_at'))
         if filled_at is None:
             raise ValueError('focused exit state has no entry fill timestamp')
-        return frame.loc[self._focused_close_times(frame).gt(filled_at)]
+        latest = self._focused_utc(frame['date'].iat[-1])
+        if latest is None or latest <= cursor:
+            return frame.iloc[0:0]
+        fill_cursor = filled_at - pd.Timedelta(minutes=timeframe_to_minutes(self.timeframe))
+        fill_start = int(frame['date'].searchsorted(fill_cursor, side='right'))
+        start = max(
+            int(frame['date'].searchsorted(cursor, side='right')),
+            fill_start,
+        )
+        return frame.iloc[start:]
 
     def _focused_update_favorable(self, post_entry: DataFrame, state: dict[str, Any]) -> None:
         entry_rate = float(state['entry_rate'])
@@ -563,12 +580,6 @@ class Sieve3V2TargetPartialInvalidationRemainderFromMtfxH4IhsLong1HBreakout(IStr
         if state['side'] == 'short':
             return max(0.0, 1.0 - favorable / entry_rate)
         return max(0.0, favorable / entry_rate - 1.0)
-
-    @staticmethod
-    def _focused_last_n(condition: Series, count: int) -> bool:
-        needed = max(1, int(count))
-        return len(condition) >= needed and bool(condition.tail(needed).fillna(False).all())
-
 
     @staticmethod
     def _focused_stage_filled(state: Mapping[str, Any], stage: str) -> bool:
@@ -607,21 +618,67 @@ class Sieve3V2TargetPartialInvalidationRemainderFromMtfxH4IhsLong1HBreakout(IStr
         if state is None:
             return (self._focused_plan(), {}, {}, self._focused_decision())
         before = repr(state)
-        if state.get('stages'):
-            self._focused_sync_partial_stages(trade, state, current_time)
         plan = self._focused_plan(state)
-        frame = self._focused_analyzed_frame(pair, current_time)
-        self._focused_require_columns(frame)
-        post_entry = self._focused_post_entry(frame, state)
-        self._focused_update_favorable(post_entry, state)
-        events = self._focused_contract_events(post_entry, state, plan, current_profit)
-        events['age_candles'] = len(post_entry)
-        events['favorable_move'] = self._focused_favorable_move(state)
+
+        stages = state.get('stages', {})
+        if isinstance(stages, Mapping):
+            requested = self._focused_requested_stage(state)
+            filled = sum(1 for stage in stages.values() if isinstance(stage, Mapping) and stage.get('status') == 'filled')
+            native_filled = int(getattr(trade, 'nr_of_successful_exits', 0) or 0)
+            if requested is not None or native_filled > filled:
+                self._focused_sync_partial_stages(trade, state, current_time)
+
+        now = self._focused_utc(current_time)
+        filled_at = self._focused_utc(state.get('entry_filled_at'))
+        if now is not None and filled_at is not None:
+            timeframe_seconds = max(60, int(timeframe_to_minutes(self.timeframe)) * 60)
+            age_candles = max(0, int((now - filled_at).total_seconds() // timeframe_seconds))
+        else:
+            age_candles = int(state.get('age_candles') or 0)
+
+        side = str(state['side'])
+        entry_rate = float(state['entry_rate'])
+        favorable = self._focused_float(getattr(trade, 'min_rate' if side == 'short' else 'max_rate', None)) or entry_rate
+        adverse = self._focused_float(getattr(trade, 'max_rate' if side == 'short' else 'min_rate', None)) or entry_rate
+        favorable_move = max(0.0, 1.0 - favorable / entry_rate) if side == 'short' else max(0.0, favorable / entry_rate - 1.0)
+
+        levels = state.get('levels', {})
+        target = self._focused_float(levels.get('target_1')) if isinstance(levels, Mapping) else None
+        invalidation = self._focused_float(levels.get('invalidation')) if isinstance(levels, Mapping) else None
+        target_state = (state.get('target_states') or {}).get('target_1', {})
+        target_status = str(target_state.get('status') or 'unavailable') if isinstance(target_state, Mapping) else 'unavailable'
+        target_done = target_status in {'accepted', 'rejected', 'confirmed'}
+        stage_1 = stages.get('stage_1', {}) if isinstance(stages, Mapping) else {}
+        partial_done = isinstance(stage_1, Mapping) and stage_1.get('status') == 'filled'
+
+        target_near = False
+        if target is not None and not target_done and not partial_done:
+            threshold = target * (1.0 + float(plan.get('target_band') or 0.0)) if side == 'short' else target * (1.0 - float(plan.get('target_band') or 0.0))
+            target_near = target_status == 'touched' or (favorable <= threshold if side == 'short' else favorable >= threshold)
+
+        invalidation_near = False
+        if invalidation is not None and not state.get('invalidation_seen'):
+            threshold = invalidation * (1.0 + float(plan.get('invalidation_band') or 0.0)) if side == 'short' else invalidation * (1.0 - float(plan.get('invalidation_band') or 0.0))
+            invalidation_near = int(state.get('invalidation_streak') or 0) > 0 or (adverse >= threshold if side == 'short' else adverse <= threshold)
+
+        if target_near or invalidation_near:
+            frame = self._focused_analyzed_frame(pair, current_time)
+            self._focused_require_columns(frame)
+            post_entry = self._focused_post_entry(frame, state)
+            events = self._focused_contract_events(post_entry, state, plan, current_profit)
+            if not post_entry.empty:
+                processed = self._focused_utc(post_entry['date'].iat[-1])
+                state['last_processed_candle'] = processed.isoformat() if processed is not None else None
+        else:
+            events = {'invalidation': bool(state.get('invalidation_seen')), 'target_1': target_done}
+
+        events['age_candles'] = age_candles
+        events['favorable_move'] = favorable_move
         if self._focused_hard_stop_breached(plan, state, float(current_rate)):
             decision = self._focused_decision('full', 'focused_hard_stop')
         else:
             decision = self._focused_contract_decision(state, plan, events, current_profit)
-        if decision['action'] == 'hold' and events['age_candles'] >= int(plan['max_hold_candles']):
+        if decision['action'] == 'hold' and age_candles >= int(plan['max_hold_candles']):
             decision = self._focused_decision('full', 'focused_max_hold')
         if state.get('terminal_pending') and self._focused_requested_stage(state) is None:
             decision = self._focused_decision('full', str(state.get('terminal_tag') or 'focused_deferred_full'))
@@ -641,72 +698,79 @@ class Sieve3V2TargetPartialInvalidationRemainderFromMtfxH4IhsLong1HBreakout(IStr
         return str(decision['tag']) if decision['action'] == 'full' else None
 
     def custom_stoploss(self, pair: str, trade: Any, current_time: datetime, current_rate: float, current_profit: float, after_fill: bool, **kwargs: Any) -> float | None:
-        _ = (after_fill, kwargs)
-        plan, state, _, decision = self._focused_context(pair, trade, current_time, current_rate, current_profit)
-        if not state:
+        _ = (pair, current_time, current_profit, after_fill, kwargs)
+        if bool(getattr(trade, 'has_open_orders', False)):
             return None
-        if decision['action'] == 'full' or self._focused_requested_stage(state) is not None:
+        plan = self._focused_plan()
+        entry_rate = self._focused_float(getattr(trade, 'open_rate', None))
+        if entry_rate is None or entry_rate <= 0.0:
+            raise ValueError('focused exit runtime requires a positive trade open rate')
+        is_short = bool(getattr(trade, 'is_short', False))
+        stop_price = entry_rate * (1.0 + float(plan['hard_stop_ratio']) if is_short else 1.0 - float(plan['hard_stop_ratio']))
+        exits = int(getattr(trade, 'nr_of_successful_exits', 0) or 0)
+        if exits >= 1 and str(plan['stop_after_partial']) == 'entry':
+            stop_price = entry_rate
+        state = self._focused_state(trade)
+        if state is not None and (state.get('invalidation_seen') or state.get('terminal_pending')):
             return None
-        desired = self._focused_stop_overlay(plan, state, current_profit)
-        persisted = self._focused_float(state.get('stop_price'))
-        stop_price = desired if persisted is None else self._focused_tighter_stop(str(state['side']), persisted, desired)
-        if state['side'] == 'short' and stop_price <= current_rate or (state['side'] == 'long' and stop_price >= current_rate):
+        if (is_short and stop_price <= current_rate) or (not is_short and stop_price >= current_rate):
             return None
-        if persisted is None or not math.isclose(stop_price, persisted, rel_tol=0.0, abs_tol=1e-12):
-            state['stop_price'] = stop_price
-            self._focused_save_state(trade, state)
-        return stoploss_from_absolute(stop_price, current_rate=current_rate, is_short=state['side'] == 'short', leverage=float(getattr(trade, 'leverage', 1.0) or 1.0))
+        return stoploss_from_absolute(stop_price, current_rate=current_rate, is_short=is_short, leverage=float(getattr(trade, 'leverage', 1.0) or 1.0))
 
     def _focused_target_event(self, post_entry: DataFrame, state: dict[str, Any], plan: Mapping[str, Any], slot: str) -> bool:
         target = self._focused_float((state.get('levels') or {}).get(slot))
         target_states = state.setdefault('target_states', {})
         target_state = target_states.setdefault(slot, {'status': 'unavailable', 'touched_at': None})
-        if target is None or post_entry.empty:
-            target_state['status'] = 'unavailable'
-            return False
         if target_state.get('status') in {'accepted', 'rejected', 'confirmed'}:
             return True
+        if target is None:
+            target_state['status'] = 'unavailable'
+            return False
+        if post_entry.empty:
+            return False
         band = float(plan.get('target_band') or 0.0)
         close_times = self._focused_close_times(post_entry)
-        if state['side'] == 'short':
-            touched = self._focused_number(post_entry, 'low').le(target * (1.0 + band))
-        else:
-            touched = self._focused_number(post_entry, 'high').ge(target * (1.0 - band))
-        touched_at = self._focused_utc(target_state.get('touched_at'))
-        if touched_at is None:
-            positions = [index for index, value in enumerate(touched.fillna(False).tolist()) if value]
-            if not positions:
-                target_state['status'] = 'available'
-                return False
-            touched_at = self._focused_utc(close_times.iloc[positions[0]])
-            target_state['touched_at'] = touched_at.isoformat() if touched_at is not None else None
-            target_state['status'] = 'touched'
-            state['phase'] = f'{slot}_zone'
         confirmation = str(plan.get('target_confirmation') or 'touch')
-        if confirmation == 'touch':
-            target_state['status'] = 'confirmed'
-            return True
-        after_touch = post_entry.loc[close_times.ge(touched_at) if confirmation == 'close' else close_times.gt(touched_at)]
-        if after_touch.empty:
-            return False
-        close = self._focused_number(after_touch, 'close')
-        open_ = self._focused_number(after_touch, 'open')
-        if confirmation == 'close':
-            accepted = close.le(target * (1.0 + band)) if state['side'] == 'short' else close.ge(target * (1.0 - band))
-            if bool(accepted.fillna(False).any()):
-                target_state['status'] = 'accepted'
-                return True
-            return False
-        reversal = close.gt(open_) & close.gt(target * (1.0 - band)) if state['side'] == 'short' else close.lt(open_) & close.lt(target * (1.0 + band))
-        if confirmation == 'reversal_1':
-            confirmed = self._focused_last_n(reversal, 1)
-        elif confirmation == 'reversal_2_of_3':
-            confirmed = len(reversal) >= 3 and int(reversal.tail(3).fillna(False).sum()) >= 2
-        else:
+        touched_at = self._focused_utc(target_state.get('touched_at'))
+        if confirmation not in {'touch', 'close', 'reversal_1', 'reversal_2_of_3'}:
             raise ValueError(f'unsupported target confirmation: {confirmation}')
-        if confirmed:
-            target_state['status'] = 'rejected'
-        return confirmed
+        window = [bool(value) for value in target_state.get('reversal_window', [])][-2:]
+        for position in range(len(post_entry)):
+            row = post_entry.iloc[position]
+            candle_close = self._focused_utc(close_times.iloc[position])
+            low = self._focused_float(row['low'])
+            high = self._focused_float(row['high'])
+            touched = low is not None and low <= target * (1.0 + band) if state['side'] == 'short' else high is not None and high >= target * (1.0 - band)
+            if touched_at is None and touched:
+                touched_at = candle_close
+                target_state['touched_at'] = touched_at.isoformat() if touched_at is not None else None
+                target_state['status'] = 'touched'
+                state['phase'] = f'{slot}_zone'
+                if confirmation == 'touch':
+                    target_state['status'] = 'confirmed'
+                    return True
+            if touched_at is None or candle_close is None:
+                continue
+            close = self._focused_float(row['close'])
+            if confirmation == 'close':
+                accepted = close is not None and (close <= target * (1.0 + band) if state['side'] == 'short' else close >= target * (1.0 - band))
+                if candle_close >= touched_at and accepted:
+                    target_state['status'] = 'accepted'
+                    return True
+                continue
+            if candle_close <= touched_at:
+                continue
+            open_ = self._focused_float(row['open'])
+            reversal = close is not None and open_ is not None and (close > open_ and close > target * (1.0 - band) if state['side'] == 'short' else close < open_ and close < target * (1.0 + band))
+            window = (window + [bool(reversal)])[-3:]
+            target_state['reversal_window'] = window
+            confirmed = bool(reversal) if confirmation == 'reversal_1' else len(window) >= 3 and sum(window) >= 2
+            if confirmed:
+                target_state['status'] = 'rejected'
+                return True
+        if touched_at is None:
+            target_state['status'] = 'available'
+        return False
 
     def _focused_invalidation_event(self, post_entry: DataFrame, state: dict[str, Any], plan: Mapping[str, Any]) -> bool:
         if state.get('invalidation_seen'):
@@ -724,11 +788,15 @@ class Sieve3V2TargetPartialInvalidationRemainderFromMtfxH4IhsLong1HBreakout(IStr
         else:
             level_condition = close.lt(level * (1.0 - band))
         confirmations = int(plan.get('invalidation_confirmations') or 1)
-        confirmed = self._focused_last_n(level_condition, confirmations)
-        if confirmed:
-            state['invalidation_seen'] = True
-            state['phase'] = 'invalidated'
-        return confirmed
+        streak = int(state.get('invalidation_streak') or 0)
+        for value in level_condition.fillna(False).tolist():
+            streak = streak + 1 if bool(value) else 0
+            state['invalidation_streak'] = streak
+            if streak >= confirmations:
+                state['invalidation_seen'] = True
+                state['phase'] = 'invalidated'
+                return True
+        return False
 
     def _focused_contract_events(self, post_entry: DataFrame, state: dict[str, Any], plan: Mapping[str, Any], current_profit: float) -> dict[str, Any]:
         _ = current_profit
@@ -849,7 +917,6 @@ class Sieve3V2TargetPartialInvalidationRemainderFromMtfxH4IhsLong1HBreakout(IStr
         tolerance = max(1e-9, target_stake * 1e-9)
         if remaining_stake <= tolerance:
             stage['status'] = 'filled'
-            stage['request_stake'] = None
             state['phase'] = 'remainder' if stage_name == 'stage_1' else 'runner'
             self._focused_save_state(trade, state)
             return None
