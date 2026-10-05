@@ -4,7 +4,7 @@ default_read: routed
 owner: user
 purpose: Codebase-aware development workflow.
 do_not_use_for: Replacing task-specific objectives.
-last_rebuilt: 2026-06-10
+last_rebuilt: 2026-10-05
 ---
 
 # Rules - Codebase Workflow
@@ -17,12 +17,17 @@ Before writing code or implementation instructions:
 2. Identify exact existing functions/classes/modules that already perform part of the behaviour.
 3. Prefer reading current files over relying on memory or old docs.
 4. Treat previous versions and previous instructions as stale unless verified.
+5. Trace mapping, configuration, and state inconsistencies to their authoritative/shared source. Avoid caller-local workarounds, rescue logic, and silent fallback behaviour by default.
 
 ## Reuse before adding
 
 1. Reuse existing parsing, validation, scoring, state, metadata, command-building, save/load, JSON writing, and reporting helpers where possible.
 2. Do not duplicate validation, scoring, backtest parsing, JSON save/load, or report-writing logic.
 3. If the feature can be implemented as post-processing on existing summary data, prefer that over a parallel pipeline.
+
+## Upstream core protection details
+
+Follow the protected-file boundary and approval process in the repo-root `AGENTS.md`. Formatting-only edits to protected core files also require explicit approval. Agents may inspect those files and propose an exact patch, but must wait for approval before applying it. If an upstream change conflicts with the historical Bybit integration, prefer proposing extraction into a standalone `user_data/**` tool before modifying upstream code further.
 
 
 ## Runtime/path discipline
@@ -47,7 +52,7 @@ Do not automatically refactor the whole codebase. Recommend either a minimal saf
 
 ## Preserve behaviour
 
-Do not change acceptance logic, trading logic, scoring formulas, validation tables, UI behaviour, file formats, presets, or strategy behaviour unless the task explicitly requires it.
+Follow repo-root `AGENTS.md` §9 for behaviour-preservation requirements.
 
 ## Minimise impact
 
@@ -65,7 +70,8 @@ Do not change acceptance logic, trading logic, scoring formulas, validation tabl
 4. Launcher preset fields must stay aligned with runner CLI args.
 5. Any new UI field must have a preset key and command-building behaviour.
 6. Any new runner feature must have dry-run/no-apply behaviour.
+7. When launcher, UI, preset, and runner settings drift apart, fix the shared source rather than patching only one caller.
 
 ## Indicator performance
 
-Indicators must use vectorized pandas/NumPy operations for heavy computation. Avoid row loops and avoid `.apply()` where vectorized alternatives exist.
+Follow repo-root `AGENTS.md` §9 for indicator-vectorization requirements.

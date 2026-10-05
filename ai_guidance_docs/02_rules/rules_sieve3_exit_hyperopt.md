@@ -4,7 +4,7 @@ default_read: routed
 owner: user+agent
 purpose: Current Sieve3 V2 exit-family, Hyperopt, smoke, queue, and result rules.
 do_not_use_for: Entry discovery, historical V1/V2 reconstruction, or non-Sieve Hyperopt packages.
-last_rebuilt: 2026-08-07
+last_rebuilt: 2026-10-05
 ---
 
 # Rules - Sieve3 V2 Exit Hyperopt
@@ -97,6 +97,13 @@ These families encode conclusions from the completed FreqAI level-reaction/readi
 Do not create a target family from keyword guesses, arbitrary OHLC columns, or a generic fallback target. Missing target/invalidation coverage is a generation problem to resolve, not a runtime fallback to fixed percentages.
 
 Trailing-only, fixed-RR control, generic breakeven-only, and broad mixed exit families are not part of the current V2 set. Add them only if the user explicitly reopens those theories.
+
+## Promoted-entry parity and training-sample gate
+
+1. A promoted Sieve3 branch must carry forward the exact selected Sieve2 `buy` parameter values. Embed them as strategy defaults or provide an explicit params overlay that Freqtrade loads for every Sieve3 run; copying a Python strategy alone does not preserve selected values.
+2. Before launching exit-stage batches, audit at least one branch per source entry stem and confirm its resolved `buy` defaults or loaded params match the promoted Sieve2 result. If the mapping is missing, ambiguous, or mismatched, stop that branch group and resolve it before running exit tests.
+3. Keep the promoted entry fixed while optimizing only exit/risk parameters. Do not reduce sparse, MTF, structure, or pattern entries to BTC-only unless the source is known to trade frequently on BTC alone; use enough pairs and windows to provide meaningful training trades.
+4. Zero- or very-low-trade training surfaces are a blocking setup error, not evidence about exit quality. Broaden the pair/window coverage before judging the result. If the first live Hyperopt window for a sparse or pattern branch has fewer than roughly `10` training trades, stop that batch and restart with broader coverage before accepting any result.
 
 ## Coverage Invariants
 

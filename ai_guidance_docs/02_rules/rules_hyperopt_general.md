@@ -4,14 +4,14 @@ default_read: routed
 owner: user
 purpose: General Hyperopt design and reporting rules, routed through Sieve by default.
 do_not_use_for: Non-Sieve Hyperopt packages unless the user explicitly approves them.
-last_rebuilt: 2026-07-20
+last_rebuilt: 2026-10-05
 ---
 
 # Hyperopt General Rules
 
 ## Core Rule
 
-Sieve is the only approved Hyperopt/discovery system for this project unless the user explicitly approves a non-Sieve exception.
+Follow repo-root `AGENTS.md` §7 for the Sieve invariant and the boundary for separately approved research.
 
 Use these rules to design Sieve Hyperopt batches for entries, exits, partial exits, stop movement, trailing, position adjustment, staking, and risk management.
 
@@ -104,3 +104,7 @@ Each Hyperopt summary should include:
 ## Backtest Boundary
 
 Agents should bring the user the strongest Sieve Hyperopt candidates and ask which candidates should be backtested unless the user has already authorized validation backtests for the task.
+
+## Promotion Parameter Preservation
+
+When promoting a Sieve strategy, preserve the exact selected Hyperopt parameters that justified its promotion.

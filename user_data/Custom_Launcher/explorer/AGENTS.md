@@ -17,6 +17,4 @@ Do not use trade count as an acceptance gate.
 Do not use losing-window count as an acceptance gate.
 Trade count and losing-window count are display-only diagnostics.
 Drawdown is the primary hard risk limiter.
-Root-cause first: fix mapping/config/state issues at source before adding fallback/workaround code.
-Do not add runtime rescue logic by default; use one-time migration when needed.
-If a workaround is truly unavoidable, stop and ask for explicit approval before adding it.
+For general repository safety and root-cause/workaround policy, follow repo-root `AGENTS.md` and `ai_guidance_docs/02_rules/rules_codebase_workflow.md`.

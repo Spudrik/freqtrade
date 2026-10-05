@@ -19,7 +19,4 @@
 - Preferred Sieve guards are active project indicator outputs, directional volume pressure, accumulation/distribution pressure, relative or rising volume, candle body direction, close-vs-previous-close direction, and simple reclaim/rejection/cross/follow-through behaviour around project-indicator levels.
 - Daily TOP10 strategy files should normally be kept out of Sieve1 runs by targeted `sieve1_*.py` filtering because they contain broader strategy-management scaffolding, not just entry-condition refinement.
 - Before editing sieve or strategy infrastructure, check that local definitions for "sieve", "strategy", "entry", "exit", "guard", "acceptance", and result interpretation are still accurate. Report deviations or stale instructions to the user instead of silently coding against outdated definitions.
-- Root-cause first: before adding fallback/workaround code, identify and fix the underlying mapping/config/state issue.
-- Do not add defensive or rescue code by default to "make it work".
-- Prefer one-time data/state/path migrations over persistent runtime workaround logic.
-- If a workaround seems unavoidable, stop and ask for explicit approval before adding it.
+- For general repository safety and root-cause/workaround policy, follow repo-root `AGENTS.md` and `ai_guidance_docs/02_rules/rules_codebase_workflow.md`.

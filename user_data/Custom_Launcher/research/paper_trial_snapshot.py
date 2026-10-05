@@ -34,9 +34,39 @@ def read_json(path):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _web_headline_window():
+    path = ROOT/"user_data"/"Custom_Launcher"/"research"/"config"/"web_research_sources.json"
+    config = read_json(path)
+    if not isinstance(config, dict):
+        raise ValueError(f"Web research config must be an object: {path}")
+    seconds = config.get("poll_interval_seconds")
+    if type(seconds) is not int or seconds <= 0:
+        raise ValueError(f"Web research poll_interval_seconds must be a positive integer: {path}")
+    try:
+        return timedelta(seconds=seconds), seconds
+    except OverflowError as exc:
+        raise ValueError(f"Web research poll_interval_seconds is out of range: {path}") from exc
+
+
+def _timestamp_age(value, now):
+    if not isinstance(value, str) or not value.strip():
+        return None, "missing", None
+    try:
+        timestamp = _utc(value)
+    except (AttributeError, TypeError, ValueError, OverflowError):
+        return None, "invalid", None
+    age = now - timestamp
+    if age < timedelta(0):
+        return None, "future", timestamp
+    return round(age.total_seconds()/3600, 2), "known", timestamp
+
+
 def source_snapshot(now):
     output, headlines, seen, titles = {}, [], set(), {}
-    cutoff = (now-timedelta(hours=4)).isoformat()
+    if now.tzinfo is None:
+        raise ValueError("Source snapshot clock must be timezone-aware")
+    now = now.astimezone(timezone.utc)
+    web_window, web_window_seconds = _web_headline_window()
     for key, folder in (("news","research_news_data/news"),("web","research_news_data/web"),
                         ("global","research_news_data/global_context"),("orderbook","orderbook_data/live")):
         path = ROOT/"user_data"/folder/"collector_status.json"
@@ -44,27 +74,37 @@ def source_snapshot(now):
             output[key] = {"status":"missing"}; continue
         status = read_json(path)
         output[key] = {name:status.get(name) for name in ("status","heartbeat_at","last_fetch_at","last_message_at","last_error","sources_enabled","sources_total","capacity_level") if name in status}
+        if key == "web":
+            output[key]["headline_window_seconds"] = web_window_seconds
         db = Path(status["db_path"]).resolve()
         with closing(sqlite3.connect(db.as_uri()+"?mode=ro",uri=True,timeout=2)) as con:
             con.row_factory = sqlite3.Row
             if key in {"news","web"}:
+                window = timedelta(hours=4) if key == "news" else web_window
+                cutoff = (now-window).isoformat()
                 rows = con.execute("SELECT title,canonical_url,source_url,published_at,collected_at,source_group FROM articles WHERE collected_at>=? ORDER BY collected_at DESC LIMIT 16",(cutoff,)).fetchall()
                 for row in rows:
                     item=dict(row); url=item["canonical_url"] or item["source_url"]
+                    collected_age, collected_status, collected_at = _timestamp_age(item["collected_at"], now)
+                    if collected_status != "known" or now-collected_at > window:
+                        continue
                     if not url or url in seen:
                         continue
                     seen.add(url)
                     title = " ".join(str(item["title"] or "").casefold().split())
                     if not title:
                         continue
+                    published_age, published_status, _ = _timestamp_age(item["published_at"], now)
+                    clocks = {"published_age_hours":published_age,"published_age_status":published_status,
+                              "collected_age_hours":collected_age,"collected_age_status":collected_status}
                     duplicate = titles.get(title)
                     if duplicate is not None:
                         duplicate["additional_sources"].append({"url":url,"published_at":item["published_at"],
-                            "collected_at":item["collected_at"],"source_group":item["source_group"]})
+                            "collected_at":item["collected_at"],"source_group":item["source_group"],**clocks})
                         continue
                     entry = {"collector":key,"title":item["title"],"url":url,
                         "published_at":item["published_at"],"collected_at":item["collected_at"],
-                        "source_group":item["source_group"],"additional_sources":[]}
+                        "source_group":item["source_group"],"additional_sources":[],**clocks}
                     titles[title] = entry
                     headlines.append(entry)
             elif key=="global":
@@ -265,7 +305,124 @@ def _worker_log_health(spec, tree, now, lifecycle="ACTIVE"):
         "ambiguous_local_clock_in_tail":ambiguous,"tail_limit_bytes":65536,"path":str(path)}
 
 
-def account_snapshot(prices=False):
+_FIRST_RECORDED_RUN_SPAN_ACCOUNTS = frozenset({
+    "fast_auto", "fast_context", "sieve_pivot_partial", "sieve_d1_vp_bos_short",
+    "sieve_d1_support_break_long", "sieve_h4_vp_lvn_long",
+})
+
+
+def _utc_datetime(value):
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(timezone.utc)
+
+
+def _runtime_span(record, spec, now):
+    info = account_record(record, spec)
+    recorded_start = info.get("started_at_utc")
+    start = _utc_datetime(recorded_start)
+    start_source = "account_started_at_utc" if start else None
+    events = record.get("process_recovery", {}).get("events", [])
+    if "started_at_utc" not in info and spec.key in _FIRST_RECORDED_RUN_SPAN_ACCOUNTS:
+        first = [(_utc_datetime(event.get("at_utc")), event) for event in events
+                 if isinstance(event, dict) and event.get("account") == spec.key
+                 and event.get("status") == "running"]
+        first = [(clock, event) for clock, event in first if clock is not None]
+        if first:
+            start = min(clock for clock, _ in first)
+            start_source = "first_recorded_running_event_not_guaranteed_original_start"
+    if start is None or start > now:
+        return {"status": "unknown", "elapsed_seconds": None,
+                "start_source": start_source or "no_valid_account_start",
+                "end_source": None, "started_at_utc": None if start is None else start.isoformat(),
+                "ended_at_utc": None}
+
+    lifecycle = lifecycle_for(record, spec)
+    end, end_source = now, "snapshot_time_active"
+    if lifecycle == "DRAINING":
+        boundary = _utc_datetime(info.get("lifecycle_changed_at_utc"))
+        if boundary is None or boundary > now:
+            return {"status": "unknown", "elapsed_seconds": None, "start_source": start_source,
+                    "end_source": "invalid_or_future_draining_lifecycle_boundary",
+                    "started_at_utc": start.isoformat(), "ended_at_utc": None}
+        pauses = [(_utc_datetime(event.get("at_utc")), event) for event in events
+                  if isinstance(event, dict) and event.get("account") == spec.key
+                  and event.get("status") == "draining_paused"]
+        pauses = [(clock, event) for clock, event in pauses if clock is not None
+                  and boundary <= clock <= now]
+        if not pauses:
+            return {"status": "unknown", "elapsed_seconds": None, "start_source": start_source,
+                    "end_source": "no_pause_confirmation_after_lifecycle_boundary",
+                    "started_at_utc": start.isoformat(), "ended_at_utc": None}
+        end = min(clock for clock, _ in pauses)
+        end_source = "first_recorded_draining_paused_confirmation_observed_not_exact_onset"
+    elif lifecycle == "PARKED":
+        current = _utc_datetime(info.get("lifecycle_changed_at_utc"))
+        if current is None or current > now:
+            return {"status": "unknown", "elapsed_seconds": None, "start_source": start_source,
+                    "end_source": "invalid_or_future_parked_lifecycle_boundary",
+                    "started_at_utc": start.isoformat(), "ended_at_utc": None}
+        parked = [(_utc_datetime(event.get("at_utc")), event) for event in events
+                  if isinstance(event, dict) and event.get("account") == spec.key
+                  and event.get("status") == "parked_flat"]
+        parked = [(clock, event) for clock, event in parked if clock is not None
+                  and current <= clock <= now]
+        if parked:
+            end = min(clock for clock, _ in parked)
+            end_source = "recorded_parked_flat_stop"
+        elif (info.get("last_recovery", {}).get("status") == "parked_flat"
+              and _utc_datetime(info.get("last_recovery", {}).get("at_utc")) == current):
+            end = current
+            end_source = "current_verified_parked_flat_lifecycle_change"
+        else:
+            return {"status": "unknown", "elapsed_seconds": None, "start_source": start_source,
+                    "end_source": "no_verified_parked_flat_stop", "started_at_utc": start.isoformat(),
+                    "ended_at_utc": None}
+    if end < start:
+        return {"status": "unknown", "elapsed_seconds": None, "start_source": start_source,
+                "end_source": "endpoint_precedes_start", "started_at_utc": start.isoformat(),
+                "ended_at_utc": end.isoformat()}
+    return {"status": "known", "elapsed_seconds": (end-start).total_seconds(),
+            "start_source": start_source, "end_source": end_source,
+            "started_at_utc": start.isoformat(), "ended_at_utc": end.isoformat(),
+            "meaning": "elapsed trial span including downtime; not continuous uptime"}
+
+
+def _profit_factor(positive, negative, closed_count, invalid=None):
+    if invalid:
+        return {"value": None, "status": invalid}
+    if closed_count == 0:
+        return {"value": None, "status": "no_closed_trades"}
+    if positive is None or negative is None:
+        return {"value": None, "status": "missing_closed_profit"}
+    if not isfinite(positive) or not isfinite(negative):
+        return {"value": None, "status": "nonfinite_closed_profit"}
+    if negative == 0:
+        return {"value": None, "status": "no_loss_trades"}
+    try:
+        factor = positive / abs(negative)
+    except (OverflowError, ZeroDivisionError):
+        factor = float("inf")
+    if not isfinite(factor):
+        return {"value": None, "status": "nonfinite_profit_factor"}
+    return {"value": factor, "status": "ok"}
+
+
+def _finite_sum(values):
+    total = sum(values)
+    return total if isfinite(total) else None
+
+
+def account_snapshot(prices=False, now=None):
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        raise ValueError("Account snapshot requires a timezone-aware clock")
     record=read_json(RECORD); processes=process_inventory(); quotes={}
     if prices:
         with urlopen("https://fapi.binance.com/fapi/v1/ticker/price",timeout=12) as response:
@@ -277,10 +434,13 @@ def account_snapshot(prices=False):
         lifecycle=lifecycle_for(record,spec)
         if not path.is_file() and spec.new_identity and not row.get("database_initialized_at_utc"):
             output.append({"account":spec.key,"lifecycle":lifecycle,"database_state":"not_initialized",
-                "running_exact_tree":tree is not None,"worker_log":_worker_log_health(spec,tree,datetime.now(timezone.utc),lifecycle),
+                "running_exact_tree":tree is not None,"worker_log":_worker_log_health(spec,tree,now,lifecycle),
                 "open_longs":None,"open_shorts":None,"closed_longs":None,"closed_shorts":None,
                 "wins":None,"losses":None,"banked_pnl_usdt":None,"estimated_open_pnl_usdt":None,
-                "open_order_count":None,"protection_issue_count":None,"open_positions":None})
+                "open_order_count":None,"protection_issue_count":None,"open_positions":None,
+                "database_trade_count":None,"trades_per_day":None,"trades_per_day_status":"database_not_initialized",
+                "profit_factor":{"value":None,"status":"database_not_initialized"},
+                "runtime_span":_runtime_span(record,spec,now)})
             continue
         if spec.new_identity and path.is_file() and not row.get("database_initialized_at_utc"):
             raise ValueError(f"{spec.key}: DB exists without a registered successful initialization")
@@ -288,23 +448,164 @@ def account_snapshot(prices=False):
         with Session(engine) as session:
             trades=list(session.scalars(select(Trade))); opened=[t for t in trades if t.is_open]; closed=[t for t in trades if not t.is_open]
             banked=sum(float(t.close_profit_abs or 0) for t in closed)+sum(float(t.realized_profit or 0) for t in opened)
+            if not isfinite(banked): banked=None
+            closed_profit_values=[]; invalid_closed_profit=None
+            for trade in closed:
+                value=trade.close_profit_abs
+                if value is None:
+                    invalid_closed_profit="missing_closed_profit"; continue
+                try: value=float(value)
+                except (TypeError,ValueError):
+                    invalid_closed_profit="missing_closed_profit"; continue
+                if not isfinite(value):
+                    invalid_closed_profit="nonfinite_closed_profit"; continue
+                closed_profit_values.append(value)
+            positive=_finite_sum(value for value in closed_profit_values if value>0)
+            negative=_finite_sum(value for value in closed_profit_values if value<0)
+            if positive is None or negative is None:
+                invalid_closed_profit = "nonfinite_closed_profit"
+                positive = negative = None
+            pf=_profit_factor(positive,negative,len(closed),invalid_closed_profit)
+            span=_runtime_span(record,spec,now)
+            trades_per_day=(len(trades)/(span["elapsed_seconds"]/86400)
+                            if span["status"]=="known" and span["elapsed_seconds"] and span["elapsed_seconds"]>0 else None)
             unrealized=sum(t.calculate_profit(quotes[t.pair.split(':')[0].replace('/','')]).profit_abs for t in opened) if prices else (0. if not opened else None)
+            if unrealized is not None and not isfinite(unrealized): unrealized=None
             positions=[{"pair":t.pair,"short":t.is_short,"leverage":t.leverage,"stop_price":t.stop_loss,
                 "margin":t.stake_amount,"protection_state":_protection_state(t,session)} for t in opened]
             open_order_count=session.scalar(select(func.count(Order.id)).where(Order.ft_is_open.is_(True)))
             output.append({"account":spec.key,"lifecycle":lifecycle,"database_state":"initialized","running_exact_tree":tree is not None,
-                "worker_log":_worker_log_health(spec,tree,datetime.now(timezone.utc),lifecycle),
+                "worker_log":_worker_log_health(spec,tree,now,lifecycle),
                 "open_order_count":open_order_count,
                 "open_longs":sum(not t.is_short for t in opened),"open_shorts":sum(t.is_short for t in opened),
                 "closed_longs":sum(not t.is_short for t in closed),"closed_shorts":sum(t.is_short for t in closed),
                 "wins":sum(float(t.close_profit_abs or 0)>0 for t in closed),"losses":sum(float(t.close_profit_abs or 0)<0 for t in closed),
                 "banked_pnl_usdt":banked,"estimated_open_pnl_usdt":unrealized,
+                "database_trade_count":len(trades),"trades_per_day":trades_per_day,
+                "trades_per_day_status":"ok" if trades_per_day is not None else "unknown_runtime_or_zero_duration",
+                "closed_profit_positive_usdt":positive if not invalid_closed_profit else None,
+                "closed_profit_negative_usdt":negative if not invalid_closed_profit else None,
+                "profit_factor":pf,"runtime_span":span,
                 "protection_issue_count":sum(p["protection_state"]!="stored_valid" for p in positions),
                 "parked_activity_issue":lifecycle=="PARKED" and (bool(opened) or bool(open_order_count)),
                 "parked_process_issue":lifecycle=="PARKED" and tree is not None,
                 "open_positions":positions})
         engine.dispose()
     return output
+
+
+def _table_number(value, digits=2):
+    return "—" if value is None or not isinstance(value, (int, float)) or not isfinite(value) else f"{value:.{digits}f}"
+
+
+def _runtime_label(span):
+    if span.get("status") != "known":
+        return "unknown"
+    seconds = int(span["elapsed_seconds"])
+    days, remainder = divmod(seconds, 86400)
+    hours = remainder // 3600
+    return f"{days}d {hours}h"
+
+
+def _pooled_factor(accounts):
+    if any(row.get("profit_factor", {}).get("status") == "database_not_initialized" for row in accounts):
+        return {"value": None, "status": "database_not_initialized"}
+    if any(row.get("profit_factor", {}).get("status") in {"missing_closed_profit", "nonfinite_closed_profit"} for row in accounts):
+        return {"value": None, "status": "incomplete_closed_profit"}
+    if any(row.get("closed_longs") is None or row.get("closed_shorts") is None for row in accounts):
+        return {"value": None, "status": "incomplete_account_coverage"}
+    closed = sum(row.get("closed_longs", 0) + row.get("closed_shorts", 0) for row in accounts)
+    if not closed:
+        return {"value": None, "status": "no_closed_trades"}
+    positive_values = [row.get("closed_profit_positive_usdt") for row in accounts]
+    negative_values = [row.get("closed_profit_negative_usdt") for row in accounts]
+    if any(value is None or not isinstance(value, (int, float)) or not isfinite(value)
+           for value in positive_values + negative_values):
+        return {"value": None, "status": "incomplete_closed_profit"}
+    positive = _finite_sum(positive_values)
+    negative = _finite_sum(negative_values)
+    if positive is None or negative is None:
+        return {"value": None, "status": "nonfinite_closed_profit"}
+    return _profit_factor(positive, negative, closed)
+
+
+def format_account_table(accounts, observed_at_utc):
+    """Pure formatter: no disk, network, process, or database reads."""
+    count_fields = ("open_longs", "open_shorts", "closed_longs", "closed_shorts", "wins", "losses")
+    pnl_fields = ("banked_pnl_usdt", "estimated_open_pnl_usdt")
+    header = ("| Account | Runtime | Trades/day | PF (closed) | Open L/S | Closed L/S | W/L | "
+              "Banked USDT | Open P/L USDT | Lifecycle |")
+    separator = "|---|---:|---:|---:|---:|---:|---:|---:|---:|---|"
+
+    def render_row(row):
+        pf = row.get("profit_factor", {})
+        factor = _table_number(pf.get("value"), 3) if pf.get("status") == "ok" else "—"
+        if pf.get("status") == "no_loss_trades": factor = "no losses"
+        account = row.get("account", "?")
+        if row.get("database_state") == "not_initialized":
+            account += " (DB not initialized)"
+        return "| {account} | {runtime} | {rate} | {factor} | {ol}/{os} | {cl}/{cs} | {wins}/{losses} | {banked} | {open_pnl} | {lifecycle} |".format(
+            account=account, runtime=_runtime_label(row.get("runtime_span", {})),
+            rate=_table_number(row.get("trades_per_day")), factor=factor,
+            ol=row.get("open_longs") if row.get("open_longs") is not None else "—",
+            os=row.get("open_shorts") if row.get("open_shorts") is not None else "—",
+            cl=row.get("closed_longs") if row.get("closed_longs") is not None else "—",
+            cs=row.get("closed_shorts") if row.get("closed_shorts") is not None else "—",
+            wins=row.get("wins") if row.get("wins") is not None else "—",
+            losses=row.get("losses") if row.get("losses") is not None else "—",
+            banked=_table_number(row.get("banked_pnl_usdt")),
+            open_pnl=_table_number(row.get("estimated_open_pnl_usdt")), lifecycle=row.get("lifecycle", "unknown"))
+
+    groups = (("ACTIVE", "Active"), ("DRAINING", "Draining — new entries paused"),
+              ("PARKED", "Parked — stopped"))
+    categorized = {key: [] for key, _ in groups}
+    unknown = []
+    for row in accounts:
+        lifecycle = row.get("lifecycle")
+        (categorized[lifecycle] if lifecycle in categorized else unknown).append(row)
+
+    def runtime_sort_key(row):
+        span = row.get("runtime_span", {})
+        seconds = span.get("elapsed_seconds") if span.get("status") == "known" else None
+        known = isinstance(seconds, (int, float)) and isfinite(seconds)
+        return (not known, -seconds if known else 0, str(row.get("account", "?")).casefold())
+
+    lines = [f"Paper account snapshot — {observed_at_utc}", ""]
+    for key, title in groups:
+        if not categorized[key]:
+            continue
+        lines.extend([f"## {title}", "", header, separator])
+        lines.extend(render_row(row) for row in sorted(categorized[key], key=runtime_sort_key))
+        lines.append("")
+    if unknown:
+        lines.extend(["## Unknown lifecycle", "", header, separator])
+        lines.extend(render_row(row) for row in sorted(unknown, key=runtime_sort_key))
+        lines.append("")
+    total = {}
+    for field in count_fields + pnl_fields:
+        values = [row.get(field) for row in accounts]
+        total[field] = sum(values) if values and all(value is not None for value in values) else None
+    total.update({"account": "TOTAL", "lifecycle": "—", "runtime_span": {"status": "unknown"},
+                  "trades_per_day": None, "profit_factor": _pooled_factor(accounts)})
+    pf = total["profit_factor"]
+    factor = _table_number(pf.get("value"), 3) if pf.get("status") == "ok" else "—"
+    if pf.get("status") == "no_loss_trades": factor = "no losses"
+    lines.extend(["## Overall totals", "", header, separator])
+    lines.append("| TOTAL | — | — | {factor} | {ol}/{os} | {cl}/{cs} | {wins}/{losses} | {banked} | {open_pnl} | — |".format(
+        factor=factor, ol=total["open_longs"] if total["open_longs"] is not None else "—",
+        os=total["open_shorts"] if total["open_shorts"] is not None else "—",
+        cl=total["closed_longs"] if total["closed_longs"] is not None else "—",
+        cs=total["closed_shorts"] if total["closed_shorts"] is not None else "—",
+        wins=total["wins"] if total["wins"] is not None else "—",
+        losses=total["losses"] if total["losses"] is not None else "—",
+        banked=_table_number(total["banked_pnl_usdt"]), open_pnl=_table_number(total["estimated_open_pnl_usdt"])))
+    lines.append("")
+    lines.append("Runtime is elapsed span (downtime included), not continuous uptime; draining ends at observed PAUSED confirmation, not exact pause onset. DRAINING blocks new entries, but existing positions remain protected and may close after entry pause. PF uses recorded closed-trade close_profit_abs only (not open/partial realized P/L or a cost-completeness claim); ‘no losses’ is undefined, not infinite. Trades/day counts database trades opened, including open trades.")
+    lines.append("A dash means unavailable/unknown (including missing or non-finite closed profit); PF with no closed trades is shown as a dash, while all-loss PF is zero. Banked P/L may include recorded open-trade realized P/L and must not be read as closed-only PF.")
+    sources = sorted({span.get("start_source") for row in accounts if (span := row.get("runtime_span", {})).get("start_source") == "first_recorded_running_event_not_guaranteed_original_start"})
+    if sources:
+        lines.append("First-recorded-running spans are not guaranteed original starts: " + ", ".join(row["account"] for row in accounts if row.get("runtime_span", {}).get("start_source") in sources) + ".")
+    return "\n".join(lines)
 
 
 def _finite_number(value, label):
@@ -658,6 +959,7 @@ def main():
     parser.add_argument("--higher",action="store_true",help="Only if local BTC/ETH 4h/daily candles are unavailable: four public requests")
     parser.add_argument("--accounts",action="store_true")
     parser.add_argument("--prices",action="store_true")
+    parser.add_argument("--account-table",action="store_true",help="Print the account table as Markdown; optionally include --prices")
     parser.add_argument("--learning-review",action="store_true",help="User-requested read-only manual learning/accounting review; local databases and journals only")
     args=parser.parse_args();now=datetime.now(timezone.utc)
     result={"observed_at_utc":now.isoformat()}
@@ -666,8 +968,14 @@ def main():
     if args.crypto:result["crypto_derivatives"]=collect_crypto_derivatives_snapshot(now)
     if args.review_context:result["review_context"]=review_context_snapshot(now)
     if args.higher:result["higher_timeframes"]=higher_snapshot(now)
-    if args.accounts or args.prices:result["accounts"]=account_snapshot(args.prices)
+    if args.accounts or args.prices or args.account_table:
+        accounts=account_snapshot(args.prices,now)
+        result["accounts"]=accounts
+        result["account_table"]=format_account_table(accounts,now.isoformat())
     if args.learning_review:result["learning_review"]=learning_review_snapshot(now)
+    if args.account_table and not (args.sources or args.market or args.crypto or args.review_context or args.higher or args.accounts or args.learning_review):
+        print(result["account_table"])
+        return
     print(json.dumps(result,separators=(",",":"),allow_nan=False))
 
 

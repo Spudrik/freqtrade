@@ -4,7 +4,7 @@ default_read: routed
 owner: user
 purpose: Runtime paths, Python environments, worker lanes, raw archive locations, and snapshot discipline.
 do_not_use_for: Strategy acceptance, research interpretation, or source feature design.
-last_rebuilt: 2026-08-13
+last_rebuilt: 2026-10-05
 ---
 
 # Rules - Runtime Environment
@@ -17,13 +17,7 @@ This file incorporates the original top-level repo runtime notes. Start at repo-
 
 ## Guidance document routing
 
-1. Focused guidance lives under `C:\FreqTradeStuff\ai_guidance_docs`.
-2. The user's latest explicit request is the active task contract.
-3. Static long-term direction is `ai_guidance_docs\00_project_control\objectives_master.md`.
-4. Do not append progress logs to objective files.
-5. Use the minimum relevant routed rule/status/result files for the requested task.
-6. Use `ai_guidance_docs\99_archive` only for evidence verification, migration audit, or explicitly routed historical review.
-7. If an objective appears complete, flag it to the user. Do not remove objectives without approval.
+Follow repo-root `AGENTS.md` §§2, 4, and 5 for request-first routing, minimum relevant guidance, and archive access. Long-term direction is recorded in `ai_guidance_docs\00_project_control\objectives_master.md`; do not append progress logs to objective files. If an objective appears complete, flag it to the user; do not remove objectives without approval.
 
 ## Python environments
 
@@ -52,11 +46,11 @@ This file incorporates the original top-level repo runtime notes. Start at repo-
 8. Before launching a multithreaded or multi-process task, inspect current processor use and exact existing jobs. Logical-processor count is not the same as available capacity.
 9. Limit each new research workload to `4` worker threads by default, and lower it when current load requires.
 10. Preserve at least `4` logical processors for the user. The reserve may temporarily fall to `2` only during daytime in the `Europe/London` timezone for a bounded attended run, after which the four-processor reserve must be restored. Never use the reduced reserve for unattended or overnight work.
-11. Do not spawn sub-agents unless the user explicitly authorizes them for the exact current task. Sub-agent count does not increase the processor budget.
+11. Agent delegation and local compute-worker limits are separate. Delegation follows the repo-root orchestration contract; sub-agent count does not increase the processor budget.
 
 ## Long-running run ownership and polling
 
-1. The active coding/research agent owns code edits, strategy/config changes, batch design, launching Hyperopt/backtest/FreqAI/Freqtrade processes, checking completion, running summary scripts, and interpreting results.
+1. Follow the orchestration contract in repo-root `AGENTS.md` §1. For each run, record the exact assigned owner and authorized scope; assignment clarifies responsibility and does not add an approval gate.
 2. Do not use heartbeat automations as the default way to continue active goals. Heartbeats are detached reminders/monitors and do not reliably preserve or resume the active goal execution path.
 3. For active goal-owned runs, prefer bounded in-thread polling: launch the process, sleep for a sensible interval, check exact PIDs/logs/outputs, run summary scripts when complete, and continue from those results.
 4. Tune polling intervals to runtime. A small BTC-only 100-epoch batch may justify frequent checks; a large multi-coin 400-epoch batch should sleep longer between checks.
@@ -112,7 +106,7 @@ This file incorporates the original top-level repo runtime notes. Start at repo-
 
 1. Before context/FreqAI research tests, state the objective and pass/fail rule.
 2. Prefer low-dimensional, hypothesis-led tests with controls before broad FreqAI runs.
-3. Pause relevant collectors and export parquet snapshots before research runs that would otherwise read live SQLite databases.
+3. For research that would otherwise read collector-fed live SQLite databases, pause only the relevant collectors and export immutable parquet snapshots before testing. This research snapshot rule does not apply to routine paper-trial health checks or monitoring; do not pause collectors for those checks.
 4. Do not move scraping/API fetching into Freqtrade strategy code.
 5. Treat FreqAI as validation/ranking after direct evidence, not the first fishing tool.
 6. Use frozen parquet snapshots where possible for repeatability.

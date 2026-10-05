@@ -1,5 +1,5 @@
 """Recovery guards; no real trading process is launched or stopped by these tests."""
-from contextlib import closing
+from contextlib import closing, nullcontext
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
@@ -29,7 +29,7 @@ def setup(tmp_path, monkeypatch):
     base_path.write_text(json.dumps(base))
     record = {"trial": "integrated_paper_20260926", "working_directory": str(tmp_path),
               "python_exe": str(python), "process_recovery": {"enabled": True,
-              "allowed_accounts": [s.key for s in runtime.ACCOUNTS], "paused_accounts": [], "config_sha256": {}}}
+              "allowed_accounts": [s.key for s in runtime.LEGACY_ACCOUNTS], "paused_accounts": [], "config_sha256": {}}}
     for spec in runtime.ACCOUNTS:
         path = tmp_path / spec.config
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -37,6 +37,8 @@ def setup(tmp_path, monkeypatch):
                   "db_url": f"sqlite:///user_data/research_news_data/context_features/integrated_paper_20260926/{spec.key}_trades.sqlite",
                   "force_entry_enable": spec.port is not None,
                   "api_server": {"enabled": spec.port is not None, "listen_ip_address": "127.0.0.1", "listen_port": spec.port}}
+        if spec.new_identity:
+            config.update(max_open_trades=3, exchange={"pair_whitelist": sorted(spec.pairs)})
         path.write_text(json.dumps(config))
         row = record
         for key in spec.record_keys:
@@ -153,7 +155,7 @@ def test_paused_unapproved_and_environment_override_refused(setup, monkeypatch):
         runtime.run_check(setup, apply=True, accounts=["manual"])
     monkeypatch.delenv("FREQTRADE__DRY_RUN")
     setup["process_recovery"]["allowed_accounts"].append("retired_A")
-    with pytest.raises(RuntimeError, match="fixed account set"):
+    with pytest.raises(RuntimeError, match="exact legacy set nor reviewed 16-account set"):
         runtime.run_check(setup, apply=True, accounts=["auto"])
 
 
@@ -227,3 +229,342 @@ def test_fast_position_requires_valid_retained_plan(setup, key):
         con.execute("INSERT INTO trades VALUES (1,1)")
     with pytest.raises(RuntimeError,match="persisted protection"):
         runtime.validate_config(setup,spec)
+
+
+REPAIR_REASON = "Activate reviewed partial fill and persisted stop repair"
+
+
+@pytest.fixture
+def active_setup(setup, monkeypatch):
+    policy = setup["process_recovery"]
+    policy["allowed_accounts"] = sorted(runtime.ALL_ACCOUNT_KEYS)
+    policy["account_lifecycle"] = {s.key: "DRAINING" if s.key in runtime.DRAINING_ACCOUNT_KEYS else "ACTIVE"
+                                   for s in runtime.ACCOUNTS}
+    for spec in runtime.ACCOUNTS:
+        if spec.key in runtime.DRAINING_ACCOUNT_KEYS:
+            modify_config(setup, spec, {"initial_state": "paused"})
+        if spec.new_identity:
+            runtime.account_record(setup, spec)["database_initialized_at_utc"] = runtime.utc_now()
+        with closing(sqlite3.connect(runtime.REPORT / f"{spec.key}_trades.sqlite")) as con, con:
+            con.executescript("ALTER TABLE trades ADD COLUMN pair TEXT DEFAULT 'BTC/USDT:USDT';"
+                "ALTER TABLE trades ADD COLUMN is_short INTEGER DEFAULT 0;"
+                "ALTER TABLE trades ADD COLUMN open_rate REAL DEFAULT 100;"
+                "ALTER TABLE trades ADD COLUMN stop_loss REAL DEFAULT 95;"
+                "ALTER TABLE trades ADD COLUMN leverage REAL DEFAULT 1;"
+                "ALTER TABLE trades ADD COLUMN amount REAL DEFAULT 1;"
+                "ALTER TABLE trades ADD COLUMN stake_amount REAL DEFAULT 100;"
+                "CREATE TABLE orders (ft_is_open INTEGER);")
+    wrapper = runtime.ROOT / runtime.ACTIVE_REPAIR_STRATEGY
+    wrapper.parent.mkdir(parents=True, exist_ok=True)
+    wrapper.write_bytes(b"isolated test reviewed wrapper")
+    monkeypatch.setattr(runtime, "ACTIVE_REPAIR_SHA256", hashlib.sha256(wrapper.read_bytes()).hexdigest())
+    monkeypatch.setattr(runtime, "_validate_new_strategy_bootstrap", lambda *a: None)
+    monkeypatch.setattr(runtime, "_resource_reserve_available", lambda: True)
+    specs = [s for s in runtime.NEW_SIEVE_ACCOUNTS if s.key in runtime.ACTIVE_REPAIR_ACCOUNT_KEYS]
+    trees = {s.key: (process(s, pid=500 + index, parent=42), None) for index, s in enumerate(specs)}
+    for tree in trees.values():
+        tree[0]["create_time"] = (datetime.now(timezone.utc) - timedelta(minutes=1)).timestamp()
+    monkeypatch.setattr(runtime, "process_inventory", lambda: [item for tree in trees.values() for item in tree if item])
+    def heartbeat(spec, tree, now=None):
+        return {"state": "RUNNING", "fresh": True, "at_utc": runtime.utc_now(), "pid": tree[0]["pid"]} if tree else {
+            "state": None, "fresh": False, "at_utc": None}
+    monkeypatch.setattr(runtime, "worker_heartbeat_state", heartbeat)
+    stopped, started = [], []
+    def stop(spec, tree):
+        assert trees[spec.key] == tree
+        stopped.append(spec.key)
+        trees.pop(spec.key)
+    def start(record, spec, **kwargs):
+        assert spec.key not in trees
+        started.append(spec.key)
+        parent = process(spec, pid=700 + len(started), parent=42)
+        parent["create_time"] = datetime.now(timezone.utc).timestamp()
+        trees[spec.key] = (parent, None)
+        row = runtime.account_record(record, spec)
+        runtime.note_running(row, trees[spec.key])
+        row["restarted_at_utc"] = runtime.utc_now()
+        row["last_recovery"] = {"status": "running", "at_utc": row["restarted_at_utc"]}
+        return {"account": spec.key, "status": "running", "parent_pid": parent["pid"], "worker_pid": None}
+    monkeypatch.setattr(runtime, "_stop_exact_tree", stop)
+    real_start = runtime.start_missing
+    monkeypatch.setattr(runtime, "start_missing", start)
+    runtime.save_record(setup)
+    return SimpleNamespace(record=setup, specs=specs, trees=trees, stopped=stopped, started=started,
+                           start=start, real_start=real_start)
+
+
+def focused_state():
+    return {"version": 1, "contract": "target_partial_invalidation_remainder", "plan": "touch_partial",
+        "side": "long", "entry_rate": 100, "entry_filled_at": "2026-10-01T12:00:00+00:00",
+        "entry_snapshot_candle": "2026-10-01T11:00:00+00:00", "levels": {"target_1": 110, "invalidation": 90},
+        "initial_stake": 100, "stages": {"stage_1": {"fraction": .1, "tag": "focused_partial_stage_1",
+        "status": "pending", "credited_stake": 0}}, "phase": "stage_1_pending"}
+
+
+def add_position(spec, trade_id=1, state=None):
+    with closing(sqlite3.connect(runtime.REPORT / f"{spec.key}_trades.sqlite")) as con, con:
+        con.execute("INSERT INTO trades(id,is_open) VALUES (?,1)", (trade_id,))
+        con.execute("INSERT INTO trade_custom_data VALUES (?, 'sieve3_v2_focused:test', ?)",
+                    (trade_id, json.dumps(state or focused_state())))
+
+
+def test_active_restart_dry_preflight_has_no_writes_or_actions(active_setup):
+    fixture = active_setup
+    before = runtime.RECORD.read_bytes()
+    keys = [spec.key for spec in fixture.specs]
+    rows = runtime.restart_active(fixture.record, keys, apply=False, repair_reason=REPAIR_REASON)
+    assert [row["status"] for row in rows] == ["would_restart_active"] * 3
+    assert runtime.RECORD.read_bytes() == before
+    assert fixture.stopped == fixture.started == []
+    assert "events" not in fixture.record["process_recovery"]
+
+
+def test_active_restart_success_preserves_db_and_immutable_state(active_setup, monkeypatch):
+    fixture = active_setup
+    spec = fixture.specs[0]
+    add_position(spec)
+    original_start = fixture.start
+    def reconciled_start(*args, **kwargs):
+        result = original_start(*args, **kwargs)
+        state = focused_state()
+        state["stages"]["stage_1"].update(status="filled", credited_stake=10)
+        state["phase"] = "remainder"
+        with closing(sqlite3.connect(runtime.REPORT / f"{spec.key}_trades.sqlite")) as con, con:
+            con.execute("UPDATE trade_custom_data SET cd_value=?", (json.dumps(state),))
+            con.execute("UPDATE trades SET stop_loss=98")
+        return result
+    monkeypatch.setattr(runtime, "start_missing", reconciled_start)
+    rows = runtime.restart_active(fixture.record, [spec.key], apply=True, repair_reason=REPAIR_REASON)
+    assert rows[0]["status"] == "active_restart_completed"
+    assert rows[0]["reviewed_strategy_sha256"] == runtime.ACTIVE_REPAIR_SHA256
+    assert rows[0]["repair_reason"] == REPAIR_REASON
+    assert rows[0]["protection_gap_to_heartbeat_seconds"] >= 0
+    assert rows[0]["open_trade_ids_before"] == rows[0]["open_trade_ids_after"] == [1]
+    assert fixture.record["process_recovery"]["account_lifecycle"][spec.key] == "ACTIVE"
+    assert len(fixture.record["process_recovery"]["events"]) == 2
+    assert fixture.stopped == fixture.started == [spec.key]
+
+
+@pytest.mark.parametrize("block", ["order", "protection", "stale", "duplicate", "capacity", "config",
+                                  "hash", "bootstrap", "initialization", "missing_db", "pending"])
+def test_active_restart_any_target_preflight_blocks_entire_batch(active_setup, monkeypatch, block):
+    fixture = active_setup
+    spec = fixture.specs[-1]
+    db = runtime.REPORT / f"{spec.key}_trades.sqlite"
+    if block == "order":
+        with closing(sqlite3.connect(db)) as con, con:
+            con.execute("INSERT INTO orders VALUES (1)")
+    elif block == "protection":
+        add_position(spec)
+        with closing(sqlite3.connect(db)) as con, con:
+            con.execute("UPDATE trades SET stop_loss=NULL")
+    elif block == "stale":
+        monkeypatch.setattr(runtime, "worker_heartbeat_state", lambda *a: {"state": "RUNNING", "fresh": False})
+    elif block == "duplicate":
+        inventory = runtime.process_inventory()
+        monkeypatch.setattr(runtime, "process_inventory", lambda: inventory + [process(spec, pid=999)])
+    elif block == "capacity":
+        monkeypatch.setattr(runtime, "_resource_reserve_available", lambda: False)
+    elif block == "config":
+        (runtime.ROOT / spec.config).write_text("{}")
+    elif block == "hash":
+        (runtime.ROOT / runtime.ACTIVE_REPAIR_STRATEGY).write_bytes(b"unapproved")
+    elif block == "bootstrap":
+        def broken(*args):
+            raise RuntimeError("invalid locked parameters")
+        monkeypatch.setattr(runtime, "_validate_new_strategy_bootstrap", broken)
+    elif block == "initialization":
+        runtime.account_record(fixture.record, spec).pop("database_initialized_at_utc")
+    elif block == "missing_db":
+        db.unlink()
+    elif block == "pending":
+        runtime.account_record(fixture.record, spec)["last_recovery"] = {"status": "failed"}
+    before = runtime.RECORD.read_bytes()
+    rows = runtime.restart_active(fixture.record, [s.key for s in fixture.specs], apply=True, repair_reason=REPAIR_REASON)
+    assert any(row["status"] == "blocked_active_restart_preflight" for row in rows)
+    assert fixture.stopped == fixture.started == []
+    assert runtime.RECORD.read_bytes() == before
+
+
+@pytest.mark.parametrize("kind", ["raise", "starting"])
+def test_active_restart_failed_launch_stops_batch_and_fences_retry(active_setup, monkeypatch, kind):
+    fixture = active_setup
+    def fail(*args, **kwargs):
+        if kind == "raise":
+            raise RuntimeError("diagnosed launch failure")
+        return {"status": "starting"}
+    monkeypatch.setattr(runtime, "start_missing", fail)
+    rows = runtime.restart_active(fixture.record, [s.key for s in fixture.specs], apply=True, repair_reason=REPAIR_REASON)
+    assert rows[0]["status"] == "active_restart_pending"
+    assert len(rows) == len(fixture.stopped) == 1
+    persisted = json.loads(runtime.RECORD.read_text())
+    assert runtime.account_record(persisted, fixture.specs[0])["last_recovery"]["status"] == "active_restart_pending"
+    assert persisted["process_recovery"]["events"][-1]["repair_reason"] == REPAIR_REASON
+
+
+@pytest.mark.parametrize("change", ["looser_stop", "frozen_level", "frozen_entry", "frozen_tag", "new_trade", "closed_trade", "quantity"])
+def test_active_restart_changed_contract_or_trade_activity_requires_review(active_setup, monkeypatch, change):
+    fixture = active_setup
+    spec = fixture.specs[0]
+    add_position(spec)
+    def changed_start(*args, **kwargs):
+        result = fixture.start(*args, **kwargs)
+        with closing(sqlite3.connect(runtime.REPORT / f"{spec.key}_trades.sqlite")) as con, con:
+            if change == "looser_stop":
+                con.execute("UPDATE trades SET stop_loss=90")
+            elif change == "closed_trade":
+                con.execute("UPDATE trades SET is_open=0")
+            elif change == "quantity":
+                con.execute("UPDATE trades SET amount=.9")
+            elif change.startswith("frozen"):
+                state = focused_state()
+                if change == "frozen_level":
+                    state["levels"]["target_1"] = 120
+                elif change == "frozen_entry":
+                    state["entry_rate"] = 101
+                else:
+                    state["stages"]["stage_1"]["tag"] = "other"
+                con.execute("UPDATE trade_custom_data SET cd_value=?", (json.dumps(state),))
+        if change == "new_trade":
+            add_position(spec, 2)
+        return result
+    monkeypatch.setattr(runtime, "start_missing", changed_start)
+    rows = runtime.restart_active(fixture.record, [s.key for s in fixture.specs], apply=True, repair_reason=REPAIR_REASON)
+    assert rows[0]["status"] == "active_restart_continuity_review"
+    assert rows[0]["position_continuity_verified"] is False
+    assert len(fixture.stopped) == 1
+    assert spec.key in fixture.trees  # Never stop/kill the new protective worker on a review issue.
+
+
+@pytest.mark.parametrize("option", ["--restart-draining", "--initialize-new", "--acknowledge-fixed-startup", "--accounts"])
+def test_active_restart_cli_conflicting_actions_rejected(active_setup, option):
+    value = "auto" if option in {"--restart-draining", "--accounts"} else (
+        "fast_auto" if option == "--acknowledge-fixed-startup" else "sieve_pivot_partial")
+    with pytest.raises(ValueError):
+        runtime.main(["--restart-active", "sieve_pivot_partial", option, value, "--repair-reason", REPAIR_REASON])
+    assert active_setup.stopped == []
+
+
+@pytest.mark.parametrize("keys,reason", [([], REPAIR_REASON), (["sieve_h4_vp_lvn_long"], REPAIR_REASON),
+    (["sieve_pivot_partial"] * 2, REPAIR_REASON), (["sieve_pivot_partial"], None),
+    (["sieve_pivot_partial"], "   "), (["sieve_pivot_partial"], "repair"),
+    (["sieve_pivot_partial"], "reason has\nnewline")])
+def test_active_restart_explicit_names_and_meaningful_reason_required(active_setup, keys, reason):
+    with pytest.raises(ValueError):
+        runtime.restart_active(active_setup.record, keys, apply=True, repair_reason=reason)
+    assert active_setup.stopped == active_setup.started == []
+
+
+def test_active_restart_cli_readonly_and_unknown_keys(active_setup, monkeypatch, capsys):
+    monkeypatch.setattr(runtime, "recovery_lock", nullcontext)
+    before = runtime.RECORD.read_bytes()
+    assert runtime.main(["--restart-active", "sieve_pivot_partial", "--repair-reason", REPAIR_REASON]) == 0
+    packet = json.loads(capsys.readouterr().out)
+    assert packet["applied"] is False
+    assert runtime.RECORD.read_bytes() == before
+    assert active_setup.stopped == []
+    with pytest.raises(SystemExit):
+        runtime.main(["--restart-active", "sieve_h4_vp_lvn_long", "--repair-reason", REPAIR_REASON])
+
+
+@pytest.mark.parametrize("status", ["active_restart_pending", "active_restart_continuity_review", "blocked_active_restart_preflight"])
+def test_active_restart_cli_unresolved_is_nonzero(active_setup, monkeypatch, status):
+    monkeypatch.setattr(runtime, "recovery_lock", nullcontext)
+    monkeypatch.setattr(runtime, "restart_active", lambda *a, **k: [{"account": "sieve_pivot_partial", "status": status}])
+    assert runtime.main(["--apply", "--restart-active", "sieve_pivot_partial", "--repair-reason", REPAIR_REASON]) == 2
+
+
+def test_active_restart_crash_after_stop_leaves_durable_no_retry_fence(active_setup, monkeypatch):
+    fixture = active_setup
+    spec = fixture.specs[0]
+    def crash(spec, tree):
+        fixture.trees.pop(spec.key)
+        raise SystemExit("simulated attended controller crash after stop")
+    monkeypatch.setattr(runtime, "_stop_exact_tree", crash)
+    with pytest.raises(SystemExit):
+        runtime.restart_active(fixture.record, [spec.key], apply=True, repair_reason=REPAIR_REASON)
+    persisted = json.loads(runtime.RECORD.read_text())
+    assert runtime.account_record(persisted, spec)["last_recovery"]["status"] == "active_restart_in_progress"
+    with pytest.raises(RuntimeError, match="no automatic retry"):
+        fixture.real_start(persisted, spec)
+    assert runtime.run_check(persisted, apply=True, accounts=[spec.key])[0]["status"] == "blocked_attended_restart_unresolved"
+    assert fixture.started == []
+
+
+@pytest.mark.parametrize("scope_args", [["--accounts=auto"], ["--acc", "auto"]])
+def test_active_restart_cli_explicit_account_scope_forms_conflict(active_setup, scope_args):
+    with pytest.raises(ValueError, match="own exact list"):
+        runtime.main(["--restart-active", "sieve_pivot_partial", "--repair-reason", REPAIR_REASON, *scope_args])
+
+
+def test_active_restart_crash_after_launch_running_keeps_outstanding_fence(active_setup, monkeypatch):
+    fixture = active_setup
+    spec = fixture.specs[0]
+    heartbeat = runtime.worker_heartbeat_state
+    def crash(spec, tree, now=None):
+        if tree is not None and tree[0]["pid"] >= 700:
+            # Actual start_missing persists running before outer continuity checks.
+            runtime.save_record(fixture.record)
+            raise SystemExit("simulated controller crash before continuity acceptance")
+        return heartbeat(spec, tree, now)
+    monkeypatch.setattr(runtime, "worker_heartbeat_state", crash)
+    with pytest.raises(SystemExit):
+        runtime.restart_active(fixture.record, [spec.key], apply=True, repair_reason=REPAIR_REASON)
+    persisted = json.loads(runtime.RECORD.read_text())
+    row = runtime.account_record(persisted, spec)
+    assert row["last_recovery"]["status"] == "running"
+    assert row["attended_active_restart"]["status"] == "active_restart_requested"
+    with pytest.raises(RuntimeError, match="no automatic retry"):
+        fixture.real_start(persisted, spec)
+    assert runtime.run_check(persisted, apply=True, accounts=[spec.key])[0]["status"] == "blocked_attended_restart_unresolved"
+
+
+@pytest.mark.parametrize("clock_fault", ["prior_heartbeat", "old_process_creation"])
+def test_active_restart_requires_new_launch_process_and_clock(active_setup, monkeypatch, clock_fault):
+    fixture = active_setup
+    spec = fixture.specs[0]
+    if clock_fault == "prior_heartbeat":
+        heartbeat = runtime.worker_heartbeat_state
+        def stale_clock(spec, tree, now=None):
+            result = heartbeat(spec, tree, now)
+            if tree and tree[0]["pid"] >= 700:
+                result["at_utc"] = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+            return result
+        monkeypatch.setattr(runtime, "worker_heartbeat_state", stale_clock)
+    else:
+        def old_process(*args, **kwargs):
+            result = fixture.start(*args, **kwargs)
+            fixture.trees[spec.key][0]["create_time"] -= 60
+            return result
+        monkeypatch.setattr(runtime, "start_missing", old_process)
+    rows = runtime.restart_active(fixture.record, [spec.key], apply=True, repair_reason=REPAIR_REASON)
+    assert rows[0]["status"] == "active_restart_continuity_review"
+    assert runtime.account_record(fixture.record, spec).get("attended_active_restart")
+
+
+def test_normal_apply_never_restarts_existing_active_repair_worker(active_setup):
+    spec = active_setup.specs[0]
+    assert runtime.run_check(active_setup.record, apply=True, accounts=[spec.key])[0]["status"] == "already_running"
+    assert active_setup.stopped == active_setup.started == []
+
+
+def test_shared_path_preserves_attended_draining_restart(active_setup, monkeypatch):
+    fixture = active_setup
+    spec = next(spec for spec in runtime.LEGACY_ACCOUNTS if spec.key == "auto")
+    fixture.trees[spec.key] = (process(spec), None)
+    heartbeat = runtime.worker_heartbeat_state
+    def paused(spec, tree, now=None):
+        result = heartbeat(spec, tree, now)
+        if tree and tree[0]["pid"] >= 700:
+            result["state"] = "PAUSED"
+        return result
+    def start_paused(*args, **kwargs):
+        result = fixture.start(*args, **kwargs)
+        result["status"] = "draining_paused"
+        return result
+    monkeypatch.setattr(runtime, "worker_heartbeat_state", paused)
+    monkeypatch.setattr(runtime, "start_missing", start_paused)
+    rows = runtime.restart_draining(fixture.record, [spec.key])
+    assert rows[0]["status"] == "drain_restart_completed"
+    assert "repair_reason" not in rows[0]
+    assert runtime.account_record(fixture.record, spec).get("attended_active_restart") is None

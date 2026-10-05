@@ -4,7 +4,7 @@ default_read: routed
 owner: user+agent
 purpose: Preserved research plan and evidence context; no longer the active execution queue after the user moved to bounded paper trials on 26 September 2026.
 do_not_use_for: Sieve entry/exit validation, profit optimization, unrestricted every-candle directional prediction, automatic trading promotion, or tuning indicators to remembered historical events.
-last_rebuilt: 2026-09-09
+last_rebuilt: 2026-10-05
 ---
 
 # Objective 02b - Market Reaction And Event-Driven Direction Discovery
@@ -15,6 +15,17 @@ This objective is now a historical reference, not the active execution queue. Th
 user superseded its open-ended testing/branching on 26 September 2026 to move to
 the comparative paper trial in `objective_03_comparative_paper_trial.md`. Preserve
 the findings below, but do not launch remaining batches without a new user request.
+
+### Historical indicator-variant permission (not current authorization)
+
+During Objective 02b, the user authorized research implementations and explicit
+indicator variants under `user_data/**` needed to investigate reaction zones and
+the event-driven market hierarchy. Before an indicator edit under
+`user_data/Indicators/**`, the historical workflow required recording a clean,
+fully tracked baseline, creating and switching to a dedicated experiment branch,
+and keeping variants separate from canonical indicators. Merging a variant into a
+canonical indicator still required explicit user approval. This records past scope
+only; it does not authorize resuming Objective 02b or making current edits.
 
 It originally superseded the former plan to use
 Sieve3 entries and exits as the starting event catalogue. Sieve3 completion, a frozen
@@ -1935,8 +1946,9 @@ The host has `20` logical processors, and other user tasks commonly consume abou
 6. never apply the two-processor reserve to unattended or overnight work;
 7. never inherit an `84`-thread setting or infer worker capacity from another machine;
    and
-8. do not spawn sub-agents unless the user explicitly authorizes them for that exact
-   task.
+8. Keep agent delegation separate from the compute-worker limit and follow the
+   repo-root orchestration contract; agent count does not increase the processor
+   budget.
 
 Record the chosen worker count and the pre-launch capacity check in the run record.
 

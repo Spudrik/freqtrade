@@ -4,7 +4,7 @@ default_read: routed
 owner: user+agent
 purpose: Rules for keeping guidance docs clean.
 do_not_use_for: Research methodology.
-last_rebuilt: 2026-06-11
+last_rebuilt: 2026-10-05
 ---
 
 # Rules - Document Maintenance
@@ -37,7 +37,7 @@ Do not create or maintain an ephemeral current-objective file. Route each task d
 
 ## Anti-Slop Rules
 
-1. No new "current best" claims unless the current Sieve objective and Sieve result files support them.
+1. Follow repo-root `AGENTS.md` §9 for evidence-backed "current best" claims and the current-objective boundary.
 2. No duplicate process docs.
 3. No long run history in active guidance.
 4. No generated reports in active context.

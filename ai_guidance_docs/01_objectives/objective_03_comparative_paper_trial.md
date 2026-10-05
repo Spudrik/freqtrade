@@ -396,16 +396,33 @@ counts/costs include bounded worker-log heartbeat/error facts, open orders and
 stored-plan validation through existing strategy validators. Log/process presence
 and a stored valid stop are not proof that every trading operation works.
 
-At each four-hour Luna check, post exactly one compact factual table in Luna's
-own scheduled chat, using the all-account counts/prices from this already-routine
-snapshot. After the reviewed 16-identity registry migration, include one row for
-each of all 16 identities and a total: open and closed longs/shorts,
-completed-trade wins/losses, banked P/L and estimated open P/L including recorded
-costs, lifecycle, and UTC snapshot time. Mark uninitialized DBs, unknown prices or
-costs explicitly; do not infer them. This is factual reporting, not a bot-quality review.
-Do not run `--learning-review`, add a market scan, or create a file for the table.
-The main-agent chat does not repeat it automatically; provide it there only if the
-user explicitly requests it.
+At each four-hour Luna check, post exactly one compact factual report in Luna's
+own scheduled chat, using the generated `account_table` from this already-routine
+snapshot (or `--account-table` when making a table-only snapshot). Group its tables
+as Active, Draining (new entries paused), and Parked (stopped), followed by an
+explicit Unknown lifecycle section when needed; sort each group by longest known
+elapsed runtime first, with unknown runtimes last. After the
+reviewed 16-identity registry migration, include one row per registered identity
+and a total: open/closed longs and shorts, completed-trade wins/losses, banked P/L,
+estimated open P/L, lifecycle, UTC snapshot time, elapsed trial span, database
+trades opened per day, and closed-trade profit/loss ratio. The runtime is elapsed
+span including downtime, not measured uptime; use an account's recorded start, or
+for `fast_auto`, `fast_context` and the four new Sieve identities only, the first
+recorded successful `running` event labelled as not guaranteed to be original
+start. Never substitute restart, first trade, database mtime or global trial start.
+For DRAINING accounts the endpoint is the first recorded `draining_paused`
+confirmation at/after the lifecycle boundary (observed confirmation, not exact
+pause onset); for PARKED accounts use the verified `parked_flat` stop. Unknown or
+invalid clocks/rates remain unknown. The ratio is profit factor computed from
+recorded positive and negative `close_profit_abs` for closed trades only; it is
+not win probability, does not include open/partial realized P/L, and is not a
+claim of complete costs. No-loss cases are undefined rather than infinite; pooled
+totals recompute from underlying closed-profit sums, never average account ratios.
+Keep total runtime and trades/day blank across different trial spans. Mark
+uninitialized DBs and unknown prices/P&L explicitly; do not infer them. This is
+factual reporting, not a bot-quality review. Do not run `--learning-review`, add a
+market scan, or create a file for the table. The main-agent chat does not repeat
+it automatically; provide it there only if the user explicitly requests it.
 
 `--review-context` extracts the recorded identities and their ACTIVE/DRAINING/
 PARKED lifecycle, effective schema-1 fast controls and approved check clocks from

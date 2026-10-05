@@ -1229,6 +1229,171 @@
         "at_utc": "2026-10-05T09:01:30.348205+00:00",
         "open_trades": 0,
         "open_orders": 0
+      },
+      {
+        "account": "sieve_pivot_partial",
+        "preserved_database": "sieve_pivot_partial_trades.sqlite",
+        "open_trade_ids_before": [
+          2,
+          3
+        ],
+        "prior_worker_state": "RUNNING",
+        "repair_reason": "Activate reviewed partial exit accounting and stage-based protective stop repairs",
+        "reviewed_strategy_sha256": "a3e0cff0baac3db408971a6d06f948488e1454fce389fd4aed85e4dd23a6b342",
+        "before_at_utc": "2026-10-05T18:12:09.315305+00:00",
+        "prior_parent_pid": 72808,
+        "prior_worker_pid": 62240,
+        "gap_fill_assumption": "none; no fills or protection during downtime are imputed",
+        "shutdown_started_at_utc": "2026-10-05T18:12:09.315305+00:00",
+        "status": "active_restart_requested",
+        "at_utc": "2026-10-05T18:12:09.315305+00:00"
+      },
+      {
+        "account": "sieve_pivot_partial",
+        "status": "running",
+        "at_utc": "2026-10-05T18:12:09.654904+00:00",
+        "log_offset": 608573,
+        "parent_pid": 25320,
+        "worker_pid": 41672
+      },
+      {
+        "account": "sieve_pivot_partial",
+        "preserved_database": "sieve_pivot_partial_trades.sqlite",
+        "open_trade_ids_before": [
+          2,
+          3
+        ],
+        "prior_worker_state": "RUNNING",
+        "repair_reason": "Activate reviewed partial exit accounting and stage-based protective stop repairs",
+        "reviewed_strategy_sha256": "a3e0cff0baac3db408971a6d06f948488e1454fce389fd4aed85e4dd23a6b342",
+        "before_at_utc": "2026-10-05T18:12:09.315305+00:00",
+        "prior_parent_pid": 72808,
+        "prior_worker_pid": 62240,
+        "gap_fill_assumption": "none; no fills or protection during downtime are imputed",
+        "shutdown_started_at_utc": "2026-10-05T18:12:09.315305+00:00",
+        "status": "active_restart_completed",
+        "at_utc": "2026-10-05T18:12:22.588497+00:00",
+        "shutdown_confirmed_at_utc": "2026-10-05T18:12:09.581309+00:00",
+        "start_requested_at_utc": "2026-10-05T18:12:09.593827+00:00",
+        "start_attempted_at_utc": "2026-10-05T18:12:09.654904+00:00",
+        "protection_gap_to_heartbeat_seconds": 11.561695,
+        "issues": [],
+        "open_trade_ids_after": [
+          2,
+          3
+        ],
+        "closed_ids_during_restart": [],
+        "startup": {
+          "account": "sieve_pivot_partial",
+          "status": "running",
+          "parent_pid": 25320,
+          "worker_pid": 41672
+        },
+        "startup_heartbeat_at_utc": "2026-10-05T18:12:20.877000+00:00"
+      },
+      {
+        "account": "sieve_d1_support_break_long",
+        "preserved_database": "sieve_d1_support_break_long_trades.sqlite",
+        "open_trade_ids_before": [],
+        "prior_worker_state": "RUNNING",
+        "repair_reason": "Activate reviewed partial exit accounting and stage-based protective stop repairs",
+        "reviewed_strategy_sha256": "a3e0cff0baac3db408971a6d06f948488e1454fce389fd4aed85e4dd23a6b342",
+        "before_at_utc": "2026-10-05T18:12:24.766998+00:00",
+        "prior_parent_pid": 79372,
+        "prior_worker_pid": 67812,
+        "gap_fill_assumption": "none; no fills or protection during downtime are imputed",
+        "shutdown_started_at_utc": "2026-10-05T18:12:24.769011+00:00",
+        "status": "active_restart_requested",
+        "at_utc": "2026-10-05T18:12:24.769011+00:00"
+      },
+      {
+        "account": "sieve_d1_support_break_long",
+        "status": "running",
+        "at_utc": "2026-10-05T18:12:25.095737+00:00",
+        "log_offset": 73689,
+        "parent_pid": 69908,
+        "worker_pid": 82188
+      },
+      {
+        "account": "sieve_d1_support_break_long",
+        "preserved_database": "sieve_d1_support_break_long_trades.sqlite",
+        "open_trade_ids_before": [],
+        "prior_worker_state": "RUNNING",
+        "repair_reason": "Activate reviewed partial exit accounting and stage-based protective stop repairs",
+        "reviewed_strategy_sha256": "a3e0cff0baac3db408971a6d06f948488e1454fce389fd4aed85e4dd23a6b342",
+        "before_at_utc": "2026-10-05T18:12:24.766998+00:00",
+        "prior_parent_pid": 79372,
+        "prior_worker_pid": 67812,
+        "gap_fill_assumption": "none; no fills or protection during downtime are imputed",
+        "shutdown_started_at_utc": "2026-10-05T18:12:24.769011+00:00",
+        "status": "active_restart_completed",
+        "at_utc": "2026-10-05T18:12:35.943257+00:00",
+        "shutdown_confirmed_at_utc": "2026-10-05T18:12:25.027399+00:00",
+        "start_requested_at_utc": "2026-10-05T18:12:25.035609+00:00",
+        "start_attempted_at_utc": "2026-10-05T18:12:25.095737+00:00",
+        "protection_gap_to_heartbeat_seconds": 10.399989,
+        "issues": [],
+        "open_trade_ids_after": [],
+        "closed_ids_during_restart": [],
+        "startup": {
+          "account": "sieve_d1_support_break_long",
+          "status": "running",
+          "parent_pid": 69908,
+          "worker_pid": 82188
+        },
+        "startup_heartbeat_at_utc": "2026-10-05T18:12:35.169000+00:00"
+      },
+      {
+        "account": "sieve_d1_vp_bos_short",
+        "preserved_database": "sieve_d1_vp_bos_short_trades.sqlite",
+        "open_trade_ids_before": [],
+        "prior_worker_state": "RUNNING",
+        "repair_reason": "Activate reviewed partial exit accounting and stage-based protective stop repairs",
+        "reviewed_strategy_sha256": "a3e0cff0baac3db408971a6d06f948488e1454fce389fd4aed85e4dd23a6b342",
+        "before_at_utc": "2026-10-05T18:12:38.130893+00:00",
+        "prior_parent_pid": 61904,
+        "prior_worker_pid": 53860,
+        "gap_fill_assumption": "none; no fills or protection during downtime are imputed",
+        "shutdown_started_at_utc": "2026-10-05T18:12:38.130893+00:00",
+        "status": "active_restart_requested",
+        "at_utc": "2026-10-05T18:12:38.130893+00:00"
+      },
+      {
+        "account": "sieve_d1_vp_bos_short",
+        "status": "running",
+        "at_utc": "2026-10-05T18:12:38.477036+00:00",
+        "log_offset": 73868,
+        "parent_pid": 77060,
+        "worker_pid": 56904
+      },
+      {
+        "account": "sieve_d1_vp_bos_short",
+        "preserved_database": "sieve_d1_vp_bos_short_trades.sqlite",
+        "open_trade_ids_before": [],
+        "prior_worker_state": "RUNNING",
+        "repair_reason": "Activate reviewed partial exit accounting and stage-based protective stop repairs",
+        "reviewed_strategy_sha256": "a3e0cff0baac3db408971a6d06f948488e1454fce389fd4aed85e4dd23a6b342",
+        "before_at_utc": "2026-10-05T18:12:38.130893+00:00",
+        "prior_parent_pid": 61904,
+        "prior_worker_pid": 53860,
+        "gap_fill_assumption": "none; no fills or protection during downtime are imputed",
+        "shutdown_started_at_utc": "2026-10-05T18:12:38.130893+00:00",
+        "status": "active_restart_completed",
+        "at_utc": "2026-10-05T18:12:49.356596+00:00",
+        "shutdown_confirmed_at_utc": "2026-10-05T18:12:38.403171+00:00",
+        "start_requested_at_utc": "2026-10-05T18:12:38.411510+00:00",
+        "start_attempted_at_utc": "2026-10-05T18:12:38.477036+00:00",
+        "protection_gap_to_heartbeat_seconds": 10.666107,
+        "issues": [],
+        "open_trade_ids_after": [],
+        "closed_ids_during_restart": [],
+        "startup": {
+          "account": "sieve_d1_vp_bos_short",
+          "status": "running",
+          "parent_pid": 77060,
+          "worker_pid": 56904
+        },
+        "startup_heartbeat_at_utc": "2026-10-05T18:12:48.797000+00:00"
       }
     ],
     "codex_startup": {
@@ -1241,7 +1406,7 @@
       "validation": "Task registration/target/principal/trigger verified. No reboot or forced application relaunch performed."
     },
     "recovery_delay": "At next existing four-hour scheduled agent wake after Windows sign-in/app availability; not immediate reboot recovery.",
-    "last_check_at_utc": "2026-10-05T09:37:05.227915+00:00",
+    "last_check_at_utc": "2026-10-05T17:37:30.422398+00:00",
     "last_results": [
       {
         "account": "auto",
@@ -1376,14 +1541,14 @@
         "database_create_attempted_at_utc": "2026-10-05T08:55:33.653116+00:00",
         "last_recovery": {
           "status": "running",
-          "at_utc": "2026-10-05T08:55:33.653116+00:00",
-          "log_offset": 0
+          "at_utc": "2026-10-05T18:12:09.654904+00:00",
+          "log_offset": 608573
         },
-        "parent_pid": 72808,
-        "worker_pid": 62240,
-        "restarted_at_utc": "2026-10-05T08:55:33.653116+00:00",
+        "parent_pid": 25320,
+        "worker_pid": 41672,
+        "restarted_at_utc": "2026-10-05T18:12:09.654904+00:00",
         "command": "C:\\FreqTradeStuff\\.venv\\Scripts\\python.exe -m freqtrade trade --config C:\\FreqTradeStuff\\user_data\\configs\\integrated_paper_20260926_base.json --config C:\\FreqTradeStuff\\user_data\\configs\\paper_sieve_pivot_partial.json --strategy-path C:\\FreqTradeStuff\\user_data\\strategies --strategy PaperSievePivotPartial --logfile C:\\FreqTradeStuff\\user_data\\research_news_data\\context_features\\integrated_paper_20260926\\sieve_pivot_partial.log",
-        "parent_created_at_utc": "2026-10-05T08:55:33.664664+00:00",
+        "parent_created_at_utc": "2026-10-05T18:12:09.664928+00:00",
         "database_initialized_at_utc": "2026-10-05T08:55:40.161653+00:00"
       },
       "sieve_d1_vp_bos_short": {
@@ -1405,14 +1570,14 @@
         "database_create_attempted_at_utc": "2026-10-05T08:58:48.911722+00:00",
         "last_recovery": {
           "status": "running",
-          "at_utc": "2026-10-05T08:58:48.911722+00:00",
-          "log_offset": 0
+          "at_utc": "2026-10-05T18:12:38.477036+00:00",
+          "log_offset": 73868
         },
-        "parent_pid": 61904,
-        "worker_pid": 53860,
-        "restarted_at_utc": "2026-10-05T08:58:48.911722+00:00",
+        "parent_pid": 77060,
+        "worker_pid": 56904,
+        "restarted_at_utc": "2026-10-05T18:12:38.477036+00:00",
         "command": "C:\\FreqTradeStuff\\.venv\\Scripts\\python.exe -m freqtrade trade --config C:\\FreqTradeStuff\\user_data\\configs\\integrated_paper_20260926_base.json --config C:\\FreqTradeStuff\\user_data\\configs\\paper_sieve_d1_vp_bos_short.json --strategy-path C:\\FreqTradeStuff\\user_data\\strategies --strategy PaperSieveD1VpBosShort --logfile C:\\FreqTradeStuff\\user_data\\research_news_data\\context_features\\integrated_paper_20260926\\sieve_d1_vp_bos_short.log",
-        "parent_created_at_utc": "2026-10-05T08:58:48.924631+00:00",
+        "parent_created_at_utc": "2026-10-05T18:12:38.491049+00:00",
         "database_initialized_at_utc": "2026-10-05T08:58:55.460272+00:00"
       },
       "sieve_d1_support_break_long": {
@@ -1434,14 +1599,14 @@
         "database_create_attempted_at_utc": "2026-10-05T08:59:23.910028+00:00",
         "last_recovery": {
           "status": "running",
-          "at_utc": "2026-10-05T08:59:23.910028+00:00",
-          "log_offset": 0
+          "at_utc": "2026-10-05T18:12:25.095737+00:00",
+          "log_offset": 73689
         },
-        "parent_pid": 79372,
-        "worker_pid": 67812,
-        "restarted_at_utc": "2026-10-05T08:59:23.910028+00:00",
+        "parent_pid": 69908,
+        "worker_pid": 82188,
+        "restarted_at_utc": "2026-10-05T18:12:25.095737+00:00",
         "command": "C:\\FreqTradeStuff\\.venv\\Scripts\\python.exe -m freqtrade trade --config C:\\FreqTradeStuff\\user_data\\configs\\integrated_paper_20260926_base.json --config C:\\FreqTradeStuff\\user_data\\configs\\paper_sieve_d1_support_break_long.json --strategy-path C:\\FreqTradeStuff\\user_data\\strategies --strategy PaperSieveD1SupportBreakLong --logfile C:\\FreqTradeStuff\\user_data\\research_news_data\\context_features\\integrated_paper_20260926\\sieve_d1_support_break_long.log",
-        "parent_created_at_utc": "2026-10-05T08:59:23.925475+00:00",
+        "parent_created_at_utc": "2026-10-05T18:12:25.106797+00:00",
         "database_initialized_at_utc": "2026-10-05T08:59:30.456263+00:00"
       },
       "sieve_h4_vp_lvn_long": {

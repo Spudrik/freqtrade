@@ -2,193 +2,289 @@
 doc_status: active
 default_read: yes
 owner: user
-purpose: Start-here router and top-level repo contract for coding/research agents.
-do_not_use_for: Detailed research history, generated reports, or evidence dumps.
-last_rebuilt: 2026-09-09
+purpose: Start-here orchestration contract, router, and top-level repo safety rules.
+do_not_use_for: Detailed workflows, research history, generated reports, runtime procedures, or evidence dumps.
+last_rebuilt: 2026-10-05
 ---
 
 # AGENTS.md - Start Here
 
-## Core rule
+## 1. Orchestration model
 
-Do not read every guidance file. Route directly from the user's request through this file to the minimum relevant subsystem `AGENTS.md` and rule files.
+The root agent is the control plane for substantive work. Its main job is to understand the goal, load the minimum relevant guidance, resolve important ambiguity, split work into bounded tasks, integrate results, review evidence, and make the final acceptance decision.
 
-## Upstream Freqtrade core protection
+The root agent should preserve its context for judgement. It should not perform substantial implementation, broad mechanical repository exploration, bulk data collection, repetitive test execution, or fixes arising from its own review when those tasks can be delegated.
 
-1. Treat the upstream Freqtrade codebase as protected and read-only. Agents must not edit `freqtrade/**`, upstream-owned `tests/**`, root dependency/build files, or otherwise change Freqtrade/FreqAI runtime behaviour without explicit user approval naming the affected files and intended behaviour.
-2. A general request to implement, fix, investigate, improve, or run project work is not permission to patch Freqtrade or FreqAI internals. Formatting-only core edits also require approval.
-3. If a task appears to require a core edit, stop before editing and present:
-   - the root cause,
-   - the preferred solution under `user_data/**`,
-   - the exact core files and behavioural change that would otherwise be required.
-4. Project customizations should live under `user_data/**`, including strategies, indicators, FreqAI models, launchers, collectors, research tools, custom tests, and research-only dependency manifests. Approved project guidance remains under `ai_guidance_docs/**`.
-5. Agents may read and inspect protected core files and may propose an exact patch, but they must wait for explicit user approval before applying it.
-6. Existing approved maintained-fork exceptions are limited to:
-   - the historical Bybit orderbook integration while it remains compatible with upstream,
-   - the Pandas dtype compatibility adjustment in `strategy_helper.py`,
-   - the user-approved Hyperopt initial sampling value `INITIAL_POINTS = 60`.
-7. Do not expand an existing exception or create another one without explicit user approval. If an upstream update conflicts with the historical Bybit integration, propose extracting it into a standalone `user_data/**` tool before modifying upstream code further.
-8. Do not add project/research packages to Freqtrade's root requirements. Put them in an approved dependency manifest under `user_data/**`.
+Tiny, tightly dependent, or genuinely trivial steps may remain in the root agent when delegation would cost more than the work. This exception must not expand into substantive implementation.
 
-This file incorporates the original repo-level runtime notes. There is no ephemeral current-objective file. The user's latest explicit request defines the active task; use `objectives_master.md` only for programme-roadmap context or material stage changes.
+### 1.1 Use fresh leaf agents for bounded work
 
-Agents may suggest objective document creation, archival, deletion, movement, splitting, or replacement, but must not do those actions without explicit user approval.
+Sub-agents should normally be fresh, disposable leaf workers.
 
-## User interaction contract
+Do not let sub-agents recursively create their own agent trees unless a routed rule explicitly requires it.
 
-1. When the user asks a question, answer first. Do not change code, move files, launch runs, or modify configuration until the user explicitly asks for action.
-2. When the user asks for implementation, act directly inside the requested scope and routed rules.
-3. Use concise, structured answers. Start with short query/answer lines using abbreviated versions of the user's questions, then expand only where useful.
-4. Number or letter sections so the user can reference them quickly.
-5. When sharing plots or charts, share one at a time with context before the link, and link to the local file so it opens in Codex side panel.
-6. Code-edit permission is scoped to the files, subsystem, and behaviour the user explicitly approved. A broad objective, investigation request, or root-cause finding does not authorize edits outside that scope.
-7. Before changing code outside the approved scope, state the exact files and intended behavioural change, explain why it is needed, and ask for explicit approval. No response is not approval: leave the change pending and raise the request again on a later relevant turn until the user explicitly approves or rejects it.
-8. A one-time approval for named files does not widen standing permission. For current Objective 02b, the user has authorized research implementations and explicit indicator variants under `user_data/**` that are necessary to investigate reaction zones and the event-driven market hierarchy. Before editing `user_data/Indicators/**`, commit or record the clean fully tracked indicator baseline, create and switch to a dedicated experiment branch, and keep variants distinct from canonical indicators. Upstream core remains protected, and merging a variant into a canonical indicator still requires explicit user approval.
-9. Do not spawn or use sub-agents unless the user explicitly authorizes sub-agents for the specific current task. Large edits, repetitive work, reviews, urgency, or available thread capacity do not imply permission.
+Use only the roles that add value to the current task:
 
-## Fix discipline
+- **Explorer / Researcher** - maps code, files, behaviour, documentation, or evidence when discovery is needed. Normally read-only.
+- **Builder / Worker** - owns one coherent bounded implementation or remediation task.
+- **Tester** - reproduces behaviour and executes targeted verification when separate validation adds value.
+- **Reviewer / QA** - independently challenges the integrated candidate in a fresh read-only context. It reports findings and never fixes them.
 
-1. Prefer root-cause fixes over defensive fallback code.
-2. If a proposed fix looks like workaround bulk, stop and identify the real source of failure first.
-3. Do not add interpreter guessing, broad fallback paths, duplicate parsers, or catch-all retry logic unless the user explicitly requests defensive behaviour.
-4. Preserve existing Sieve result interpretation and strategy acceptance rules unless the user explicitly changes them.
-5. If launcher, UI, preset, and runner settings drift apart, fix the drift at the shared source rather than patching only one caller.
+Do not instantiate every role automatically. A small explicit task may combine Builder + Tester. A separate Explorer is unnecessary when the relevant area is already known.
 
-## Required read order
+### 1.2 Front-load the contract
 
-1. Start from the user's latest explicit request and this router.
-2. Read the nearest subsystem `AGENTS.md` when one exists, then only the minimum relevant rule files.
-3. For coding tasks, read `ai_guidance_docs/02_rules/rules_codebase_workflow.md`.
-4. For commands, backtests, dry-run startup, split-worker lanes, raw archive paths, or source data work, read `ai_guidance_docs/02_rules/rules_runtime_environment.md`.
-5. For Hyperopt tasks, read `ai_guidance_docs/02_rules/rules_hyperopt_general.md`.
-6. For exit/risk tasks, read `ai_guidance_docs/02_rules/rules_exit_and_risk_research.md` and the relevant Sieve-stage rules.
-7. For the current bounded paper-trial stage, read
-   `ai_guidance_docs/01_objectives/objective_03_comparative_paper_trial.md`.
-   The old Objective 02b batch/branch queue is superseded; read it only when tracing
-   specific research evidence or if the user explicitly reopens that research.
-8. Read another file from `ai_guidance_docs/01_objectives/` only for programme architecture, a named parked objective, or a material stage change.
-9. Read `ai_guidance_docs/00_project_control/objectives_master.md` only for programme-roadmap context or when the user asks to revisit programme priorities.
-10. Do not read `ai_guidance_docs/99_archive/` unless the user asks for historical review or a routed rule requires specific historical evidence.
-11. Sieve is the only approved Hyperopt system for trading entry/exit candidate discovery unless the user explicitly approves an exception. Objective 02b direct-test/FreqAI reaction-zone research was a separate approved historical lane, not a competing entry/exit Hyperopt system; it is not the current execution queue.
-12. Read `ai_guidance_docs/05_program_traceability/AGENTS.md` only for a new programme-level chat, an explicit history/roadmap review, or a material stage transition. It is not routine task context.
+Before delegating substantive work, the root agent should make the task sufficiently explicit that a fresh worker can act without the parent's full conversation.
 
-## Runtime anchors
+Each delegated task should contain only what is needed:
 
-1. Repo root: `C:\FreqTradeStuff`.
-2. Guidance docs: `C:\FreqTradeStuff\ai_guidance_docs`.
-3. Controller Python: `C:\FreqTradeStuff\.venv`.
-4. Dedicated backtest worker venvs: `C:\FreqTradeStuff\runtime\venvs\freqtrade-backtest` and numbered `freqtrade-backtest-*` lanes under `runtime\venvs`.
-5. Do not use system Python or the controller `.venv` as a backtest worker lane.
-6. Use the controller `.venv` for launcher services, Entry Sieve orchestration, and Hyperopt commands. Job-level interpreter settings must override stale launcher preset values.
-7. Do not guess interpreters or add fallback behaviour. Missing configured executables should fail early with the missing path.
-8. Bybit raw ZIPs live on `D:\FreqTradeStuffLargeData\orderbook_data\historical_bybit`, not under `user_data`.
-9. GDELT/GKG raw ZIPs live on `D:\FreqTradeStuffLargeData\research_news_data\gdelt\raw`, not under `user_data`.
-10. Never infer raw coverage is missing just because the mirrored `C:\FreqTradeStuff\user_data\...\raw` path is absent or empty.
+- exact objective,
+- relevant paths, symbols, subsystem, or data,
+- applicable routed guidance,
+- important constraints and preserved interfaces,
+- allowed write scope,
+- acceptance criteria,
+- required verification,
+- expected result format,
+- explicit exclusions where useful.
 
-## Parallel process safety
+Resolve important architectural or requirement ambiguity before dispatch rather than making workers rediscover the project goal.
 
-1. This repo intentionally has several Freqtrade-capable venv installs so different agents can run backtests, Hyperopts, dry-run checks, Sieve jobs, collectors, and research tools in parallel.
-2. Assume there may already be multiple Python, Freqtrade, Hyperopt, backtest, collector, or Sieve processes running for other agents or user tasks.
-3. Stop only processes that this agent started, or processes that are explicitly identified by exact command line, PID, log path, queue/job file, and user-approved scope.
-4. Do not kill broad `python.exe`, `freqtrade`, Hyperopt, backtest, collector, launcher, or Sieve processes just because they look duplicated. Windows venv launches can show both the venv Python and the base interpreter for one logical job.
-5. Prefer targeted worker-env commands, explicit `--logfile`/result paths, and isolated report folders so later agents can tell which process owns which task.
-6. The machine has `20` logical processors. Never copy or infer an `84`-thread setting from another environment.
-7. Before starting a new multithreaded or multi-process task, inspect current processor use and the exact existing project jobs. Do not infer available capacity from logical-processor count alone.
-8. Cap a new research workload at `4` worker threads by default, and reduce it when current load requires.
-9. Preserve at least `4` logical processors for the user. A temporary reserve of only `2` is allowed during daytime in the `Europe/London` timezone for a bounded attended run; restore the four-processor reserve afterwards. Do not use the reduced reserve for unattended or overnight work.
-10. Sub-agents and compute workers are separate limits. Do not spawn sub-agents without explicit task-specific authorization, regardless of available processor capacity.
+### 1.3 Keep worker context narrow
 
-## Long-run ownership and polling
+Fresh independent workers should not inherit the parent thread by default.
 
-1. The active coding/research agent owns code edits, strategy/config changes, batch design, launching Hyperopt/backtest/FreqAI/Freqtrade processes, checking completion, running summary scripts, and interpreting results.
-2. Do not use heartbeat automations as the default way to continue an active goal. A heartbeat does not preserve or resume goal execution reliably; it is a detached reminder/monitor, not a substitute for the active agent.
-3. For active goal-owned runs, prefer a bounded in-thread polling loop: launch the process, sleep for a sensible interval, check exact PIDs/logs/outputs, run summary scripts when complete, then continue the goal.
-4. Use coarse polling intervals matched to expected runtime to reduce token/tool churn. Short runs can be checked more often; large multi-coin/high-epoch runs should sleep longer between checks.
-5. If the user explicitly asks to keep chatting while a long run continues, then launch the run, record exact command/PID/log/output paths, and end the turn with a clear handoff. Do not claim the goal will automatically resume; a later user/heartbeat turn must pick it up from the run record.
-6. Use heartbeat automations only when explicitly requested for detached monitoring, reminders, or periodic status checks. They must not edit strategy/config/code, launch unrelated experiments, broaden scope, or stop processes unless the run record explicitly identifies the target process and cleanup rule.
-7. Per-run details should live in a machine-readable run record or ledger entry: exact command, PID/process tree where available, worker venv, log path, expected outputs, summary script, result doc/ledger, check interval, and stop/blocker conditions.
+Pass the minimum task-specific context required to do the job correctly. Include a small amount of recent context only when the task genuinely depends on those decisions.
 
-## Hyperopt search standard
+Do not send unrelated project instructions, historical chat, broad archives, large logs, or the complete instruction tree.
 
-1. Hyperopt work for trading entry/exit candidate discovery must route through Sieve unless the user explicitly approves a non-Sieve exception. Do not misapply this restriction to the direct-test and FreqAI reaction-zone or bounded event-scoped direction research explicitly governed by Objective 02b.
-2. Hyperopt should search broad, explicit theory spaces that would be inefficient to check manually.
-3. If a proposed Hyperopt run could be replaced by roughly `10-15` ordinary backtests, the search design is probably too small and should be expanded or downgraded to a simple comparison.
-4. For Hyperopt tasks, read and follow `ai_guidance_docs/02_rules/rules_hyperopt_general.md` before creating or launching a search.
+Where practical, the root agent resolves instruction routing first and points the worker directly at the relevant guidance.
 
-## Sieve promotion integrity
+Prefer search/grep followed by targeted reads over broad repository reading.
 
-1. A promoted Sieve strategy must carry forward the exact selected Hyperopt parameters that justified promotion.
-2. When promoting or branching from Sieve2 into Sieve3, lock the entry surface first: either embed the promoted Sieve2 `buy` parameter values as strategy defaults or provide an explicit params overlay that Freqtrade will load for every Sieve3 run.
-3. Do not assume a promoted strategy will keep its winning values just because the Python file was copied. If no matching params JSON is loaded, Freqtrade uses the parameter defaults in the strategy file.
-4. Sieve3 exit research must keep the promoted entry parameters fixed while optimizing only exit/risk parameters. Before launching exit-stage batches, audit at least one branch per source entry stem and confirm its `buy` defaults or loaded params match the promoted Sieve2 result.
-5. If traceability from a Sieve3 branch back to its promoted Sieve2 params is missing or ambiguous, stop that branch group and resolve the source mapping before running exit tests.
-6. Do not shrink Sieve3 exit research to BTC-only unless the source entry is known to trade frequently on BTC alone. Sparse, MTF, structure, and pattern entries must use enough pairs and windows to give Hyperopt real training trades.
-7. For rare pattern entries, validate pair/window coverage before launching exit Hyperopt. If the training surface has zero or only a few trades, broaden pairs or use larger routed windows rather than judging the exit logic from a starved run.
-8. Treat tiny Sieve3 exit training samples as a blocking setup error, not a weak result. If the first live Hyperopt window for a sparse/pattern branch shows fewer than roughly `10` training trades, stop that batch and restart with broader pair/window coverage before accepting any result.
+Keep detailed evidence in existing task artifacts/files where appropriate and return only decision-relevant summaries to the root agent.
 
-## Goal-mode operating rule
+### 1.4 Model and reasoning selection
 
-When the user starts a bounded goal-mode run, follow the iteration caps, stop rules, and output requirements in `rules_goal_mode_iteration_control.md`. Do not turn an overnight goal into an open-ended architecture rewrite. Produce useful ledgers and reports, not long chat summaries.
+Roles do not imply fixed model names.
 
-## If a needed rule is not routed
+Choose capability dynamically:
 
-If a clearly relevant rule is not named by a subsystem router, read the minimum needed rule and flag the routing gap without creating an ephemeral task document.
+- use the cheapest capable execution model/reasoning level for bounded mechanical or well-specified work,
+- raise worker capability when the bounded task is genuinely difficult or ambiguous,
+- preserve the strongest available reasoning capability for architecture, cross-system judgement, unresolved ambiguity, integration, adjudication, and final acceptance,
+- choose independent review strength primarily from the consequence of error, not from how difficult the implementation was.
 
-Pause and ask the user only when the request materially broadens the approved scope, promotes parked work, conflicts with standing rules, risks live trading, or turns research evidence into strategy/promotion logic without explicit approval.
+Do not silently use the parent model and reasoning level for every child merely because it is available.
 
-## Scope-change prompt rule
+### 1.5 Standard substantive-work flow
 
-Ask the user for explicit scope approval if the requested work:
+Use this flow unless routed guidance gives a more specific one:
 
-1. changes the programme stage or requested subsystem,
-2. promotes a parked objective,
-3. contradicts the master objectives,
-4. starts using parked news/context data as if it is ready,
-5. turns a research idea into strategy promotion,
-6. starts a broad FreqAI queue without a named hypothesis,
-7. requires new pass/fail rules not already defined for the current task,
-8. would alter the verified dry-run strategy/config after it has been frozen,
-9. would require live-trading mode or ambiguous order placement,
-10. would require large new data downloads not authorized by the user.
+1. **Root understands and scopes** the goal.
+2. **Optional Explorer / Researcher** gathers only missing evidence needed to form a clear implementation contract.
+3. **Builder / Worker** implements one bounded task and performs its required local checks.
+4. **Optional separate Tester** performs independent reproduction or targeted verification when this adds useful evidence.
+5. **Root integrates and sanity-checks** the accumulated candidate against surrounding code, interfaces, dependencies, and the original requirement.
+6. **Fresh Reviewer / QA** independently challenges meaningful or risky changes.
+7. **Root adjudicates** reviewer findings.
+8. Accepted findings become bounded remediation tasks for a fresh Worker rather than being fixed by the Reviewer or casually patched by the root.
+9. Re-run affected verification after every material edit.
+10. Obtain a new fresh review when the changed candidate's risk warrants it.
+11. **Root gives final acceptance** only to the same verified revision that was actually reviewed.
 
-Do not ask for guidance for ordinary implementation details inside the explicit request. Continue using the routed rules and codebase-aware workflow.
+For substantial QA, prefer expectations-first review: derive the checks and likely failure modes from the requirement before relying on the implementer's explanation of what changed.
 
-## Research runtime discipline
+Reviewer evidence informs acceptance; the Reviewer does not make the final project decision.
 
-1. Before context/FreqAI research tests, state the objective and pass/fail condition first.
-2. Prefer low-dimensional, hypothesis-led tests with controls before broad FreqAI runs.
-3. Pause relevant collectors and export parquet snapshots before research runs that would otherwise read live SQLite databases.
-4. If the user says to use FreqAI, use FreqAI.
-5. Do not substitute custom scripts for FreqAI theory testing, candidate filtering, or ML inference when the user requested FreqAI.
-6. If the existing FreqAI setup does not fit the requested data or theory, create or update a dedicated FreqAI environment/profile to run that request.
-7. Define trader-readable behaviour first, then encode it numerically for the requested FreqAI run.
-8. Treat overlapping signals as position-management evidence: same-direction may support add/hold/confidence; opposite-direction may support reduce/tighten/exit.
-9. For Objective 02b event-scoped direction, test event, BTC/ETH/broad-market leader,
-   coin-group transmission, coin-local modification, and post-event range information
-   separately before pairwise and limited three-block combinations.
-10. Select and hold out whole events rather than random candles from one continuing
-    episode, and allow abstention when event confirmation, market leadership, or source
-    coverage is unclear.
-11. For event and interaction interpretation, use the whole-episode, decision-time
-    role, expected-path, and conditional-modifier protocol in
-    `ai_guidance_docs/02_rules/reference_freqai_event_reaction_research_method.md`.
-    Never treat a downstream market response as a competing root cause merely because
-    it predicts continuation.
-12. Weak standalone evidence does not by itself reject a rational modifier, gate,
-    suppressor, amplifier, accumulator, delay, or override. Development-discovered
-    conditions must be frozen and confirmed on later whole episodes before acceptance.
+### 1.6 Fresh review and independence
 
-## Global non-negotiables
+A Reviewer must be fresh and read-only.
+
+Give it the requirement/acceptance criteria, the integrated candidate or diff, and only the evidence it needs.
+
+Do not give it the implementer's reasoning unless necessary to investigate a specific issue.
+
+The Reviewer:
+- looks for missing requirements, regressions, edge cases, integration failures, safety issues, compatibility problems, and unjustified complexity,
+- reports PASS / NEEDS WORK / BLOCKED or equivalent with evidence,
+- never edits the implementation,
+- never fixes its own findings.
+
+Fresh context provides context independence, not guaranteed model-failure independence. The root remains responsible for final judgement.
+
+Independent review may be omitted for genuinely trivial/very-low-risk work when root verification is sufficient. Review depth should increase with consequence of error.
+
+### 1.7 Fix loop
+
+When a review finding is accepted:
+
+1. root defines the correction precisely,
+2. fresh Worker performs the correction,
+3. affected tests/verification are rerun,
+4. root integrates and checks the updated candidate,
+5. fresh review is repeated when the materiality/risk warrants it.
+
+Any material edit invalidates acceptance evidence for the earlier revision.
+
+### 1.8 Parallelism and batching
+
+Parallelise only genuinely independent work.
+
+Do not run agents concurrently when they:
+- edit the same files or tightly coupled subsystem,
+- depend on one another's output,
+- share mutable state that cannot be isolated,
+- would duplicate the same investigation.
+
+Prefer sensible batches of related files/work over one agent per file.
+
+Sequential work is preferred when the next task depends on the previous result.
+
+Do not increase agent count merely because capacity exists. More agents can increase token use and coordination errors.
+
+### 1.9 Worker return contract
+
+Worker responses to the root should be concise and normally contain:
+
+- **RESULT**
+- **FINDINGS / CHANGES**
+- **VERIFICATION**
+- **UNCERTAINTY / BLOCKERS**
+
+Do not return long conversational histories, raw logs, or large copied files when a concise summary and exact evidence location is enough.
+
+Sub-agents and local compute workers are separate concepts. Runtime/process limits remain governed by routed runtime guidance.
+
+---
+
+## 2. Core routing rule
+
+Start from the user's latest explicit request.
+
+Do not read every guidance file. Route from the request through this file to the minimum relevant subsystem `AGENTS.md` and rule files.
+
+The user's latest explicit request defines the active task. Use programme/objective documents only when routed below or when programme-level context is explicitly required.
+
+---
+
+## 3. Upstream Freqtrade core protection
+
+Treat `freqtrade/**`, upstream-owned `tests/**`, and root dependency/build files as protected and read-only unless the user explicitly approves the affected files and intended behavioural change.
+
+Normal project customisation belongs under `user_data/**`, including strategies, indicators, FreqAI models, launchers, collectors, research tools, custom tests, and research-only dependency manifests. Approved project guidance belongs under `ai_guidance_docs/**`.
+
+Do not add project/research packages to Freqtrade root requirements.
+
+If a task appears to require an upstream/core edit, stop before editing and provide:
+- the root cause,
+- the preferred solution under `user_data/**`,
+- the exact core files and behavioural change that would otherwise be required.
+
+Existing approved maintained-fork exceptions are limited to:
+- historical Bybit orderbook integration while it remains compatible with upstream,
+- Pandas dtype compatibility adjustment in `strategy_helper.py`,
+- user-approved Hyperopt `INITIAL_POINTS = 60`.
+
+Do not expand an existing exception or create another one without explicit user approval.
+
+---
+
+## 4. Task routing
+
+Read the nearest subsystem `AGENTS.md` when one exists, then load only the relevant route.
+
+- Coding implementation/refactoring  
+  → `ai_guidance_docs/02_rules/rules_codebase_workflow.md`
+
+- Runtime commands, backtests, dry-run startup, worker environments, process handling, collectors, raw-data locations, long-running jobs, or source-data work  
+  → `ai_guidance_docs/02_rules/rules_runtime_environment.md`
+
+- Hyperopt work  
+  → `ai_guidance_docs/02_rules/rules_hyperopt_general.md`
+
+- Exit/risk research  
+  → `ai_guidance_docs/02_rules/rules_exit_and_risk_research.md`
+  → relevant Sieve-stage rules
+
+- Current bounded paper-trial work  
+  → `ai_guidance_docs/01_objectives/objective_03_comparative_paper_trial.md`
+
+- Programme roadmap, programme architecture, named parked objectives, or material stage changes  
+  → `ai_guidance_docs/00_project_control/objectives_master.md`
+  → relevant objective document only when required
+
+- Programme history/traceability  
+  → `ai_guidance_docs/05_program_traceability/AGENTS.md`
+
+- FreqAI/context/event research  
+  → relevant current objective/subsystem guidance
+  → `ai_guidance_docs/02_rules/reference_freqai_event_reaction_research_method.md` only when the routed task requires that method
+
+Do not load a route merely because it exists.
+
+The old Objective 02b batch/branch queue is not routine current context. Read it only when tracing specific research evidence, reopening that research, or when another routed rule explicitly requires it.
+
+---
+
+## 5. Archives and historical context
+
+`ai_guidance_docs/99_archive/**` and long historical logs are no-read by default.
+
+Read historical material only when:
+- the user explicitly asks for historical evidence,
+- current evidence cannot resolve the task, or
+- routed guidance specifically requires it.
+
+---
+
+## 6. Runtime safety
+
+Assume other project processes may already be running.
+
+Before starting, stopping, monitoring, or configuring project processes, worker environments, collectors, backtests, Hyperopts, long-running jobs, or raw-data access, read:
+
+`ai_guidance_docs/02_rules/rules_runtime_environment.md`
+
+Never infer process ownership from process names alone or kill broad Python/Freqtrade processes without the routed runtime rules.
+
+---
+
+## 7. Hyperopt/Sieve invariant
+
+Sieve is the approved Hyperopt system for trading entry/exit candidate discovery unless the user explicitly approves an exception.
+
+For search design, promotion, parameter locking, pair/window coverage, and Sieve-stage requirements, load `rules_hyperopt_general.md` and the relevant Sieve-stage guidance.
+
+Separately approved direct-test/FreqAI/context research is governed by its own routed objective/research guidance and must not be treated as a competing entry/exit Hyperopt system.
+
+---
+
+## 8. Scope changes
+
+Use routed goal-mode rules for bounded goal runs.
+
+Require explicit approval when work would materially:
+- change programme stage or requested subsystem,
+- reopen or promote parked work,
+- change frozen dry-run strategy/config behaviour,
+- introduce live or ambiguous trading/order behaviour,
+- create new acceptance/pass-fail rules outside the current task,
+- require substantial unapproved data acquisition.
+
+Do not stop for ordinary implementation decisions inside the explicit approved task.
+
+If a clearly relevant rule is missing from routing, read only the minimum required rule and flag the routing gap.
+
+---
+
+## 9. Project non-negotiables
 
 1. Preserve behaviour unless the user explicitly requests a change.
-2. Investigate existing code before adding new systems.
-3. Reuse existing helpers and ledgers before creating new ones.
-4. Do not invent dry-run safety settings, leverage caps, stake sizes, pair limits, or live-trading rules.
-5. Dry-run launch/monitoring details are user-controlled unless explicitly provided in the current task.
-6. Do not claim one permanent current best unless the current Sieve objective and result files support it.
-7. Do not delete archives or generated reports without explicit user approval.
-8. Indicators and heavy dataframe calculations should stay vectorized.
-9. No news/context source may be treated as ready unless source-specific readiness proves it.
-10. No FreqAI promotion may happen without a named trader-readable hypothesis, controls, baselines, and clean-window/source checks.
-11. Do not edit the verified dry-run class/config during later research; create separate variant classes/configs for research.
-12. Avoid token waste: compact investigation first, bounded tests second, ledgers/reports third.
+2. Do not invent dry-run/live-trading settings, leverage, stake size, pair limits, order behaviour, or safety settings.
+3. Do not claim a permanent current best unless the current objective and result evidence support it.
+4. Keep indicators and heavy dataframe calculations vectorized unless routed guidance explicitly requires otherwise.
+5. Do not treat news/context sources as ready without source-specific readiness evidence.
+6. Do not promote FreqAI work without a named trader-readable hypothesis, controls, baselines, and clean-window/source checks.
+7. Keep the verified dry-run strategy/config frozen during later research; use separate research variants/configs unless explicitly approved otherwise.
+8. Do not delete archives or generated reports without explicit user approval.

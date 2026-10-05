@@ -18,10 +18,8 @@ Use simple tab modules and shared helpers to replace the monolithic launcher gra
 - Do not change strategy trading logic unless the current task is explicitly strategy research work.
 - Do not delete old launcher code unless the current phase explicitly says deletion is safe.
 - If unsure, stop and report instead of broadening scope.
-- Root-cause first: fix mapping/config/state issues at source before adding fallback/workaround code.
-- Do not add runtime rescue logic by default; use one-time migration when needed.
-- If a workaround is truly unavoidable, stop and ask for explicit approval before adding it.
-- Runtime Python environments are documented in the repo-root `AGENTS.md`. Keep Explorer/Sieve split-venv worker lanes under `runtime/venvs`, queue work by configured worker count, and fail early when a configured interpreter path is missing.
+- For general repository safety and root-cause/workaround policy, follow repo-root `AGENTS.md` and `ai_guidance_docs/02_rules/rules_codebase_workflow.md`.
+- Runtime Python environments are documented in `ai_guidance_docs/02_rules/rules_runtime_environment.md`. Keep Explorer/Sieve split-venv worker lanes under `runtime/venvs`, queue work by configured worker count, and fail early when a configured interpreter path is missing.
 
 ## Strategy Research Notes
 

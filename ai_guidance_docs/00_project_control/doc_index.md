@@ -4,7 +4,7 @@ default_read: no
 owner: agent
 purpose: Index of active guidance docs and when to read them.
 do_not_use_for: Research evidence details or broad context loading.
-last_rebuilt: 2026-09-09
+last_rebuilt: 2026-10-05
 ---
 
 # Document Index
@@ -30,7 +30,7 @@ last_rebuilt: 2026-09-09
 | `objective_02_master_strategy_architecture.md` | routed | Returning to wider Sieve-first confluence architecture. |
 | `objective_02a_strategy_refinement.md` | routed | Refining Sieve candidates. |
 | `objective_02b_market_reaction_zone_discovery.md` | routed | Historical research reference; read only to trace retained evidence or if explicitly reopened. |
-| `objective_03_comparative_paper_trial.md` | routed | Current bounded paper-only stage: ten accounts including two manual-only and a matched 5m automatic/context-modified pair; local-first Luna briefing, source readiness, risk controls, monitoring and review. |
+| `objective_03_comparative_paper_trial.md` | routed | Current bounded paper-only stage: sixteen identities in the reviewed 5 October registry snapshot (not a permanent cap; the objective's run record remains authoritative for live identity/state); local-first Luna briefing, source readiness, risk controls, monitoring and review. |
 | `objective_02c_orderbook_confluence.md` | routed | Using orderbook for confirmation/risk/targets. |
 | `objective_02d_news_context_integration.md` | routed | News/context work; parked unless user says ready or readiness proves a block/window. |
 | `objective_02e_generic_ta_integration.md` | routed | Generic TA side-lane integration. |

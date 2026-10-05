@@ -74,6 +74,11 @@ ACCOUNTS = LEGACY_ACCOUNTS + NEW_SIEVE_ACCOUNTS
 LEGACY_ACCOUNT_KEYS = frozenset(spec.key for spec in LEGACY_ACCOUNTS)
 ALL_ACCOUNT_KEYS = frozenset(spec.key for spec in ACCOUNTS)
 DRAINING_ACCOUNT_KEYS = frozenset({"auto", "manual", "v01", "v10", "leader_impulse", "fast_auto", "fast_context"})
+ACTIVE_REPAIR_ACCOUNT_KEYS = frozenset({"sieve_pivot_partial", "sieve_d1_support_break_long", "sieve_d1_vp_bos_short"})
+ACTIVE_REPAIR_STRATEGY = "user_data/strategies/paper_sieve_refresh.py"
+ACTIVE_REPAIR_SHA256 = "a3e0cff0baac3db408971a6d06f948488e1454fce389fd4aed85e4dd23a6b342"
+ACTIVE_RESTART_UNRESOLVED = frozenset({"active_restart_in_progress", "active_restart_pending", "active_restart_continuity_review"})
+_ACTIVE_RESTART_OWNER = object()
 
 
 def utc_now() -> str:
@@ -350,9 +355,13 @@ def note_running(row: dict, tree: tuple[dict, dict | None]) -> None:
 
 
 def start_missing(record: dict, spec: Account, *, resource_prechecked: bool = False,
-                  allow_initial_new_identity: bool = False) -> dict:
+                  allow_initial_new_identity: bool = False, _active_restart_owner: object | None = None) -> dict:
     row = account_record(record, spec)
-    if row.get("last_recovery", {}).get("status") in {"launching", "failed", "starting"}:
+    prior_status = row.get("last_recovery", {}).get("status")
+    if ((row.get("attended_active_restart") and _active_restart_owner is not _ACTIVE_RESTART_OWNER)
+            or prior_status in {"launching", "failed", "starting"}
+            or (prior_status in ACTIVE_RESTART_UNRESOLVED
+                and not (prior_status == "active_restart_in_progress" and _active_restart_owner is _ACTIVE_RESTART_OWNER))):
         raise RuntimeError(f"{spec.key}: prior launch unresolved/failed; no automatic retry")
     config = validate_config(record, spec)
     if spec.new_identity:
@@ -442,7 +451,7 @@ def _open_position_snapshot(spec: Account) -> dict[int, dict]:
     with closing(sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True)) as connection:
         connection.row_factory = sqlite3.Row
         trades = connection.execute(
-            "SELECT id,pair,is_short,open_rate,stop_loss,leverage FROM trades WHERE is_open=1 ORDER BY id").fetchall()
+            "SELECT id,pair,is_short,open_rate,stop_loss,leverage,amount,stake_amount FROM trades WHERE is_open=1 ORDER BY id").fetchall()
         result = {}
         for trade in trades:
             custom = connection.execute(
@@ -475,6 +484,25 @@ def _position_continuity(before: dict[int, dict], after: dict[int, dict]) -> tup
             if "sieve3_v2_focused" in key.casefold() and key not in after_custom:
                 return False, closed, []
     return True, closed, []
+
+
+def _focused_frozen_state(position: dict) -> dict:
+    """Only immutable Sieve entry/exit contract fields; reconciliation fields may evolve."""
+    result = {}
+    frozen = ("version", "contract", "plan", "side", "entry_rate", "entry_filled_at",
+              "entry_snapshot_candle", "levels", "initial_stake")
+    for key, encoded in position["custom_data"].items():
+        if "sieve3_v2_focused" not in key.casefold():
+            continue
+        state = json.loads(encoded)
+        if not isinstance(state, dict) or not isinstance(state.get("stages"), dict):
+            raise ValueError("Malformed persisted focused state")
+        result[key] = {name: state[name] for name in frozen}
+        result[key]["stages"] = {name: {field: stage[field] for field in ("fraction", "tag")}
+                                for name, stage in state["stages"].items()}
+    if not result:
+        raise ValueError("Open Sieve position has no persisted focused state")
+    return result
 
 
 def _stop_exact_tree(spec: Account, tree: tuple[dict, dict | None]) -> None:
@@ -544,6 +572,158 @@ def _park_flat_draining(record: dict, spec: Account, tree: tuple[dict, dict | No
     return {"account": spec.key, "status": "parked_flat", "stopped_exact_tree": tree is not None}
 
 
+def _restart_event(record: dict, spec: Account, event: dict) -> dict:
+    row = account_record(record, spec)
+    if event["status"].startswith("active_restart_"):
+        event = {**row.get("attended_active_restart", {}), **event}
+    record["process_recovery"].setdefault("events", []).append(event)
+    if event["status"] == "active_restart_requested" or event["status"] in ACTIVE_RESTART_UNRESOLVED:
+        # Also fence routine missing-worker recovery: this is not retry authority.
+        row["attended_active_restart"] = event
+        row["last_recovery"] = {
+            "status": "active_restart_in_progress" if event["status"] == "active_restart_requested" else event["status"],
+            "at_utc": event["at_utc"], "restart": event}
+    elif event["status"] == "active_restart_completed":
+        row.pop("attended_active_restart", None)
+    save_record(record)
+    return event
+
+
+def _restart_exact_account(record: dict, spec: Account, tree: tuple[dict, dict | None] | None,
+                           before: dict[int, dict], observed: dict, *, repair_reason: str | None = None) -> dict:
+    """Shared bounded stop/start/continuity path; ACTIVE repair is attended only."""
+    key = spec.key
+    active = repair_reason is not None
+    prefix, state = ("active", "RUNNING") if active else ("drain", "PAUSED")
+    facts = {"account": key, "preserved_database": f"{key}_trades.sqlite",
+             "open_trade_ids_before": sorted(before), "prior_worker_state": observed["state"]}
+    if active:
+        facts.update(repair_reason=repair_reason, reviewed_strategy_sha256=ACTIVE_REPAIR_SHA256,
+                     before_at_utc=utc_now(), prior_parent_pid=tree[0]["pid"],
+                     prior_worker_pid=None if tree[1] is None else tree[1]["pid"],
+                     gap_fill_assumption="none; no fills or protection during downtime are imputed")
+    if tree is not None:
+        if not _resource_reserve_available():
+            return {"account": key, "status": "deferred_resource_reserve_before_restart",
+                    "open_trades": len(before), "worker_left_running": True}
+        latest_before_stop = _open_position_snapshot(spec)
+        if set(latest_before_stop) - set(before):
+            return {"account": key, "status": "blocked_new_position_before_stop",
+                    "new_trade_ids": sorted(set(latest_before_stop) - set(before))}
+        before = latest_before_stop
+        facts["open_trade_ids_before"] = sorted(before)
+        _, orders_before_stop = _database_activity(spec)
+        if orders_before_stop:
+            return {"account": key, "status": "blocked_open_orders_before_stop", "open_orders": orders_before_stop}
+        if active:
+            # Recheck every safety pin immediately before the first mutation.
+            current_tree, latest, observed = _active_restart_preflight(record, spec)
+            if current_tree != tree or set(latest) - set(before):
+                return {"account": key, "status": "blocked_worker_or_positions_changed_before_stop",
+                        "worker_left_untouched": True}
+            before = latest
+            facts["open_trade_ids_before"] = sorted(before)
+            facts["before_at_utc"] = utc_now()
+            if _database_activity(spec)[1] or _unprotected_open_trade(spec) is not None:
+                return {"account": key, "status": "blocked_orders_or_protection_changed_before_stop",
+                        "worker_left_untouched": True}
+            facts["shutdown_started_at_utc"] = utc_now()
+            _restart_event(record, spec, {**facts, "status": "active_restart_requested", "at_utc": utc_now()})
+            try:
+                _stop_exact_tree(spec, tree)
+            except (OSError, RuntimeError, psutil.Error) as error:
+                return _restart_event(record, spec, {**facts, "status": "active_restart_pending",
+                    "at_utc": utc_now(), "blocker": str(error)})
+            facts["shutdown_confirmed_at_utc"] = utc_now()
+        else:
+            _stop_exact_tree(spec, tree)
+    try:
+        if active:
+            # No orders/protection change may be hidden by the final shutdown window.
+            if _database_activity(spec)[1] or _unprotected_open_trade(spec) is not None:
+                raise RuntimeError("Order/protection state changed during shutdown; attended inspection required")
+            validate_config(record, spec)
+            if hashlib.sha256((ROOT / ACTIVE_REPAIR_STRATEGY).read_bytes()).hexdigest() != ACTIVE_REPAIR_SHA256:
+                raise RuntimeError("Reviewed repaired wrapper changed during shutdown")
+            facts["start_requested_at_utc"] = utc_now()
+            # Preserve shutdown/gap facts even if the controller dies inside launch.
+            row = account_record(record, spec)
+            row["attended_active_restart"] = {**row["attended_active_restart"], **facts}
+            save_record(record)
+        launch_options = {"resource_prechecked": tree is not None}
+        if active:
+            launch_options["_active_restart_owner"] = _ACTIVE_RESTART_OWNER
+        result = start_missing(record, spec, **launch_options)
+    except (OSError, RuntimeError, ValueError) as error:
+        if active:
+            facts["startup_attempt"] = dict(account_record(record, spec).get("last_recovery", {}))
+        return _restart_event(record, spec, {**facts, "status": f"{prefix}_restart_pending",
+            "at_utc": utc_now(), "blocker": str(error)})
+    if result.get("status") != ("running" if active else "draining_paused"):
+        return _restart_event(record, spec, {**facts, "status": f"{prefix}_restart_pending",
+            "at_utc": utc_now(), "startup": result})
+    new_tree = matching_processes(spec, process_inventory())
+    heartbeat_deadline = time.monotonic() + 30.
+    new_heartbeat = worker_heartbeat_state(spec, new_tree)
+    while True:
+        row = account_record(record, spec)
+        if (new_tree is None or new_tree[0]["pid"] != row.get("parent_pid")
+                or (row.get("worker_pid") is not None
+                    and (new_tree[1] is None or new_tree[1]["pid"] != row["worker_pid"]))):
+            break
+        if new_heartbeat["state"] == state and new_heartbeat["fresh"]:
+            break
+        if time.monotonic() >= heartbeat_deadline:
+            break
+        time.sleep(2.)
+        new_tree = matching_processes(spec, process_inventory())
+        new_heartbeat = worker_heartbeat_state(spec, new_tree)
+    after = _open_position_snapshot(spec)
+    continuous, closed_ids, unexpected_ids = _position_continuity(before, after)
+    current_row = account_record(record, spec)
+    exact_tree_matches_record = bool(new_tree is not None
+        and new_tree[0]["pid"] == current_row.get("parent_pid")
+        and (current_row.get("worker_pid") is None
+             or (new_tree[1] is not None and new_tree[1]["pid"] == current_row["worker_pid"])))
+    issues = []
+    if active:
+        closed_ids = sorted(set(before) - set(after))
+        # A fresh clock must belong to the new launch, not the stopped PID/log.
+        launched_at = datetime.fromisoformat(current_row["restarted_at_utc"])
+        exact_tree_matches_record = bool(exact_tree_matches_record
+            and new_tree[0]["create_time"] >= datetime.fromisoformat(facts["shutdown_confirmed_at_utc"]).timestamp()
+            and all((item["pid"], item["create_time"]) not in
+                    {(old["pid"], old["create_time"]) for old in tree if old} for item in new_tree if item))
+        heartbeat_at = new_heartbeat.get("at_utc")
+        if heartbeat_at is None or datetime.fromisoformat(heartbeat_at) < launched_at:
+            issues.append("startup_heartbeat_not_from_new_launch")
+        if closed_ids:
+            issues.append("recorded_positions_closed_during_restart; fills/timing require inspection")
+        if unexpected_ids:
+            issues.append("new_automated_positions_during_startup; not verified continuity")
+        for trade_id in set(before) & set(after):
+            if _focused_frozen_state(before[trade_id]) != _focused_frozen_state(after[trade_id]):
+                issues.append(f"frozen_focused_state_changed:{trade_id}")
+            if any(before[trade_id][field] != after[trade_id][field] for field in ("amount", "stake_amount")):
+                issues.append(f"position_quantity_changed_during_restart:{trade_id}; recorded fills require inspection")
+        if _unprotected_open_trade(spec) is not None:
+            issues.append("missing_persisted_stop_after_startup")
+        facts.update(start_attempted_at_utc=current_row["restarted_at_utc"],
+            protection_gap_to_heartbeat_seconds=None if heartbeat_at is None else
+                (datetime.fromisoformat(heartbeat_at) - datetime.fromisoformat(facts["shutdown_started_at_utc"])).total_seconds(),
+            issues=issues)
+    if (not exact_tree_matches_record or new_heartbeat["state"] != state
+            or not new_heartbeat["fresh"] or not continuous or issues):
+        return _restart_event(record, spec, {**facts, "status": f"{prefix}_restart_continuity_review", "at_utc": utc_now(),
+            "open_trade_ids_after": sorted(after), "closed_ids_during_restart": closed_ids,
+            "unexpected_open_ids": unexpected_ids, "startup_heartbeat": new_heartbeat,
+            "position_continuity_verified": continuous and not issues,
+            "exact_tree_matches_record": exact_tree_matches_record})
+    return _restart_event(record, spec, {**facts, "status": f"{prefix}_restart_completed", "at_utc": utc_now(),
+        "open_trade_ids_after": sorted(after), "closed_ids_during_restart": closed_ids,
+        "startup": result, "startup_heartbeat_at_utc": new_heartbeat["at_utc"]})
+
+
 def restart_draining(record: dict, account_keys: list[str]) -> list[dict]:
     """Attended exact-list restart onto paused overlays, preserving every DB."""
     _preflight_write_environment()
@@ -571,86 +751,88 @@ def restart_draining(record: dict, account_keys: list[str]) -> list[dict]:
         if tree is not None and (not observed["fresh"] or observed["state"] not in {"RUNNING", "PAUSED"}):
             results.append({"account": key, "status": "blocked_worker_state_unverified", "heartbeat": observed})
             continue
-        if tree is not None:
-            if not _resource_reserve_available():
-                results.append({"account": key, "status": "deferred_resource_reserve_before_restart",
-                                "open_trades": open_trades, "worker_left_running": True})
-                continue
-            latest_before_stop = _open_position_snapshot(spec)
-            if set(latest_before_stop) - set(before):
-                results.append({"account": key, "status": "blocked_new_position_before_stop",
-                                "new_trade_ids": sorted(set(latest_before_stop) - set(before))})
-                continue
-            before = latest_before_stop
-            _, orders_before_stop = _database_activity(spec)
-            if orders_before_stop:
-                results.append({"account": key, "status": "blocked_open_orders_before_stop",
-                                "open_orders": orders_before_stop})
-                continue
-            _stop_exact_tree(spec, tree)
+        result = _restart_exact_account(record, spec, tree, before, observed)
+        results.append(result)
+        if result["status"] in {"drain_restart_pending", "drain_restart_continuity_review"}:
+            break
+    return results
+
+
+def _active_restart_preflight(record: dict, spec: Account) -> tuple[tuple[dict, dict | None], dict, dict]:
+    if lifecycle_for(record, spec) != "ACTIVE":
+        raise RuntimeError(f"{spec.key}: restart requires the exact ACTIVE lifecycle")
+    row = account_record(record, spec)
+    if (not (REPORT / f"{spec.key}_trades.sqlite").is_file()
+            or not row.get("database_initialized_at_utc")):
+        raise RuntimeError(f"{spec.key}: existing registered initialized database required; no new balance")
+    if (row.get("attended_active_restart")
+            or row.get("last_recovery", {}).get("status") in {"launching", "failed", "starting"} | ACTIVE_RESTART_UNRESOLVED):
+        raise RuntimeError(f"{spec.key}: prior launch/restart unresolved; no retry")
+    config = validate_config(record, spec)
+    if hashlib.sha256((ROOT / ACTIVE_REPAIR_STRATEGY).read_bytes()).hexdigest() != ACTIVE_REPAIR_SHA256:
+        raise RuntimeError(f"{spec.key}: repaired wrapper is not the user-approved SHA256")
+    _validate_new_strategy_bootstrap(record, spec, config)
+    tree = matching_processes(spec, process_inventory())
+    if tree is None:
+        raise RuntimeError(f"{spec.key}: exact existing worker required; no replacement or recovery fallback")
+    observed = worker_heartbeat_state(spec, tree)
+    if not observed["fresh"] or observed["state"] != "RUNNING":
+        raise RuntimeError(f"{spec.key}: exact worker lacks a fresh RUNNING heartbeat")
+    if _database_activity(spec)[1]:
+        raise RuntimeError(f"{spec.key}: open orders block attended restart")
+    if _unprotected_open_trade(spec) is not None:
+        raise RuntimeError(f"{spec.key}: open position lacks persisted protection")
+    if not _resource_reserve_available():
+        raise RuntimeError(f"{spec.key}: four-processor reserve unavailable; worker left untouched")
+    before = _open_position_snapshot(spec)
+    for position in before.values():
+        _focused_frozen_state(position)
+    return tree, before, observed
+
+
+def restart_active(record: dict, account_keys: list[str], *, apply: bool, repair_reason: str) -> list[dict]:
+    """One attended repair activation for the three approved partial-exit wrappers."""
+    _preflight_write_environment()
+    if (not account_keys or len(account_keys) != len(set(account_keys))
+            or not set(account_keys) <= ACTIVE_REPAIR_ACCOUNT_KEYS):
+        raise ValueError("Active restart requires unique exact names from the three approved repair identities")
+    if (not isinstance(repair_reason, str) or repair_reason != repair_reason.strip()
+            or not 12 <= len(repair_reason) <= 500 or len(repair_reason.split()) < 3
+            or any(ord(character) < 32 for character in repair_reason)):
+        raise ValueError("A meaningful single-line --repair-reason (12-500 characters, at least three words) is required")
+    specs = account_specs_for_record(record)
+    policy = record["process_recovery"]
+    if (len(specs) != len(ACCOUNTS) or policy.get("enabled") is not True
+            or set(policy.get("paused_accounts", [])) !=
+                {key for key, state in policy["account_lifecycle"].items() if state == "PARKED"}):
+        raise RuntimeError("Active restart requires the enabled reviewed 16-account lifecycle registry")
+    prepared, results = [], []
+    # Validate all named identities/configs/wrappers before stopping any worker.
+    for key in account_keys:
+        spec = next(spec for spec in NEW_SIEVE_ACCOUNTS if spec.key == key)
         try:
-            result = start_missing(record, spec, resource_prechecked=tree is not None)
-        except (OSError, RuntimeError, ValueError) as error:
-            event = {"account": key, "status": "drain_restart_pending", "at_utc": utc_now(),
-                     "preserved_database": f"{key}_trades.sqlite", "open_trade_ids_before": sorted(before),
-                     "prior_worker_state": observed["state"], "blocker": str(error)}
-            record["process_recovery"].setdefault("events", []).append(event)
-            results.append(event)
-            save_record(record)
+            tree, before, observed = _active_restart_preflight(record, spec)
+            prepared.append((spec, tree, before, observed))
+            results.append({"account": key, "status": "would_restart_active", "worker_left_running": True,
+                "open_trade_ids_before": sorted(before), "heartbeat": observed,
+                "repair_reason": repair_reason, "reviewed_strategy_sha256": ACTIVE_REPAIR_SHA256})
+        except (OSError, RuntimeError, ValueError, KeyError, sqlite3.Error, psutil.Error) as error:
+            results.append({"account": key, "status": "blocked_active_restart_preflight", "error": str(error),
+                            "worker_left_untouched": True})
+    if not apply or len(prepared) != len(account_keys):
+        return results
+    results = []
+    for spec, tree, before, observed in prepared:
+        try:
+            result = _restart_exact_account(record, spec, tree, before, observed, repair_reason=repair_reason)
+        except (OSError, RuntimeError, ValueError, KeyError, sqlite3.Error, psutil.Error) as error:
+            # No retry or further account actions, even when shutdown evidence is uncertain.
+            result = _restart_event(record, spec, {"account": spec.key, "status": "active_restart_pending",
+                "at_utc": utc_now(), "blocker": str(error), "repair_reason": repair_reason,
+                "reviewed_strategy_sha256": ACTIVE_REPAIR_SHA256})
+        results.append(result)
+        if result["status"] != "active_restart_completed":
             break
-        if result.get("status") != "draining_paused":
-            event = {"account": key, "status": "drain_restart_pending", "at_utc": utc_now(),
-                     "preserved_database": f"{key}_trades.sqlite", "open_trade_ids_before": sorted(before),
-                     "prior_worker_state": observed["state"], "startup": result}
-            record["process_recovery"].setdefault("events", []).append(event)
-            results.append(event)
-            save_record(record)
-            break
-        new_tree = matching_processes(spec, process_inventory())
-        heartbeat_deadline = time.monotonic() + 30.
-        new_heartbeat = worker_heartbeat_state(spec, new_tree)
-        while True:
-            row = account_record(record, spec)
-            expected_parent = row.get("parent_pid")
-            expected_worker = row.get("worker_pid")
-            if (new_tree is None or new_tree[0]["pid"] != expected_parent
-                    or (expected_worker is not None
-                        and (new_tree[1] is None or new_tree[1]["pid"] != expected_worker))):
-                break
-            if new_heartbeat["state"] == "PAUSED" and new_heartbeat["fresh"]:
-                break
-            if time.monotonic() >= heartbeat_deadline:
-                break
-            time.sleep(2.)
-            new_tree = matching_processes(spec, process_inventory())
-            new_heartbeat = worker_heartbeat_state(spec, new_tree)
-        after = _open_position_snapshot(spec)
-        continuous, closed_ids, unexpected_ids = _position_continuity(before, after)
-        current_row = account_record(record, spec)
-        exact_tree_matches_record = bool(new_tree is not None
-            and new_tree[0]["pid"] == current_row.get("parent_pid")
-            and (current_row.get("worker_pid") is None
-                 or (new_tree[1] is not None and new_tree[1]["pid"] == current_row.get("worker_pid"))))
-        if (not exact_tree_matches_record or new_heartbeat["state"] != "PAUSED"
-                or not new_heartbeat["fresh"] or not continuous):
-            event = {"account": key, "status": "drain_restart_continuity_review", "at_utc": utc_now(),
-                     "open_trade_ids_before": sorted(before), "open_trade_ids_after": sorted(after),
-                     "closed_ids_during_restart": closed_ids, "unexpected_open_ids": unexpected_ids,
-                     "startup_heartbeat": new_heartbeat,
-                     "position_continuity_verified": continuous,
-                     "exact_tree_matches_record": exact_tree_matches_record}
-            record["process_recovery"].setdefault("events", []).append(event)
-            results.append(event)
-            save_record(record)
-            break
-        event = {"account": key, "status": "drain_restart_completed", "at_utc": utc_now(),
-                 "preserved_database": f"{key}_trades.sqlite", "open_trade_ids_before": sorted(before),
-                 "open_trade_ids_after": sorted(after), "closed_ids_during_restart": closed_ids,
-                 "prior_worker_state": observed["state"], "startup": result,
-                 "startup_heartbeat_at_utc": new_heartbeat["at_utc"]}
-        record["process_recovery"].setdefault("events", []).append(event)
-        results.append({"account": key, **event})
-        save_record(record)
     return results
 
 
@@ -705,6 +887,11 @@ def run_check(record: dict, *, apply: bool, accounts: list[str]) -> list[dict]:
         try:
             validate_config(record, spec)
             tree = matching_processes(spec, process_inventory())
+            if (account_record(record, spec).get("attended_active_restart")
+                    or account_record(record, spec).get("last_recovery", {}).get("status") in ACTIVE_RESTART_UNRESOLVED):
+                results.append({"account": spec.key, "status": "blocked_attended_restart_unresolved",
+                                "error": "Main-agent inspection required; no routine restart or healthy adoption"})
+                continue
             if lifecycle == "DRAINING":
                 if apply:
                     result = _park_flat_draining(record, spec, tree)
@@ -788,21 +975,29 @@ def acknowledge_fixed_startup(record: dict, accounts: list[str], reason: str) ->
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true", help="Start approved missing workers; finalize only reviewed flat/orderless drains")
-    parser.add_argument("--accounts", nargs="+", choices=sorted(ALL_ACCOUNT_KEYS), default=sorted(ALL_ACCOUNT_KEYS))
+    parser.add_argument("--accounts", nargs="+", choices=sorted(ALL_ACCOUNT_KEYS))
     parser.add_argument("--restart-draining", nargs="+", choices=sorted(DRAINING_ACCOUNT_KEYS),
                         help="Attended, exact-list restart onto paused overlays; requires --apply")
+    parser.add_argument("--restart-active", nargs="+", choices=sorted(ACTIVE_REPAIR_ACCOUNT_KEYS),
+                        help="Attended repaired-wrapper restart; without --apply performs read-only preflight")
     parser.add_argument("--initialize-new", nargs="+", choices=sorted(spec.key for spec in NEW_SIEVE_ACCOUNTS),
                         help="Attended first launch for isolated new Sieve accounts; requires --apply")
     parser.add_argument("--acknowledge-fixed-startup", nargs="+", choices=("fast_auto", "fast_context"))
     parser.add_argument("--repair-reason")
     args = parser.parse_args(argv)
-    if args.restart_draining and args.initialize_new:
-        raise ValueError("Choose one attended lifecycle action per lock acquisition")
-    if (args.restart_draining or args.initialize_new) and args.acknowledge_fixed_startup:
+    attended = (args.restart_active, args.restart_draining, args.initialize_new, args.acknowledge_fixed_startup)
+    if sum(bool(action) for action in attended) > 1:
         raise ValueError("Choose one attended lifecycle/repair action per lock acquisition")
+    if args.restart_active and args.accounts is not None:
+        raise ValueError("--restart-active supplies its own exact list; do not combine --accounts")
+    if args.repair_reason is not None and not (args.restart_active or args.acknowledge_fixed_startup):
+        raise ValueError("--repair-reason requires a named attended repair action")
     with recovery_lock():
         record = json.loads(RECORD.read_text(encoding="utf-8"))
-        if args.restart_draining or args.initialize_new:
+        if args.restart_active:
+            results = restart_active(record, args.restart_active, apply=args.apply, repair_reason=args.repair_reason)
+            applied = args.apply
+        elif args.restart_draining or args.initialize_new:
             if not args.apply:
                 raise ValueError("Attended lifecycle actions require --apply")
             if args.restart_draining:
@@ -819,10 +1014,11 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError("Repair acknowledgement requires an explicit apply run")
             acknowledge_fixed_startup(record, args.acknowledge_fixed_startup, args.repair_reason)
         if results is None:
-            results = run_check(record, apply=args.apply, accounts=args.accounts)
+            results = run_check(record, apply=args.apply, accounts=args.accounts or sorted(ALL_ACCOUNT_KEYS))
     print(json.dumps({"applied": applied, "accounts": results}, indent=2))
     blocked_statuses = {"blocked", "starting", "deferred_resource_reserve", "deferred_resource_reserve_before_restart",
-                        "drain_restart_pending", "drain_restart_continuity_review", "missing_draining_worker"}
+                        "drain_restart_pending", "drain_restart_continuity_review", "missing_draining_worker",
+                        "active_restart_pending", "active_restart_continuity_review"}
     return 2 if any(r["status"] in blocked_statuses or r["status"].startswith("blocked_") for r in results) else 0
 
 
