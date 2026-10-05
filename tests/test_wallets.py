@@ -224,7 +224,6 @@ def test_validate_stake_amount(
         (None, 10, 100, 910, 1000),
         (None, 0, 0, 2500, 2500),
         (None, 500, 0, 2500, 2000),
-        (None, 500, 0, 2500, 2000),
         (None, -70, 0, 1930, 2000),
         # Only available balance matters when it's set.
         (100, 0, 0, 0, 100),
@@ -323,6 +322,34 @@ def test_sync_wallet_futures_live(mocker, default_conf):
             "side": "short",
             "percentage": None,
         },
+        {
+            # Cross position without liquidation price - binance reports collateral 0
+            "id": None,
+            "symbol": "WLD/USDT:USDT",
+            "contracts": 5.0,
+            "contractSize": 1.0,
+            "unrealizedPnl": 0.2365,
+            "leverage": 5.0,
+            "liquidationPrice": None,
+            "collateral": 0.0,
+            "notional": 11.978,
+            "markPrice": 2.3956,
+            "entryPrice": 2.3483,
+            "timestamp": 1722062678998,
+            "initialMargin": 2.3956,
+            "initialMarginPercentage": 0.2,
+            "maintenanceMargin": None,
+            "maintenanceMarginPercentage": None,
+            "marginRatio": None,
+            "datetime": "2024-07-27T06:44:38.998Z",
+            "marginMode": "cross",
+            "marginType": "cross",
+            "side": "long",
+            "hedged": False,
+            "percentage": 9.87,
+            "stopLossPrice": None,
+            "takeProfitPrice": None,
+        },
     ]
     mocker.patch.multiple(
         EXMS,
@@ -337,19 +364,87 @@ def test_sync_wallet_futures_live(mocker, default_conf):
     freqtrade = get_patched_freqtradebot(mocker, default_conf)
 
     assert len(freqtrade.wallets._wallets) == 1
-    assert len(freqtrade.wallets._positions) == 2
+    assert len(freqtrade.wallets._positions) == 3
 
     assert "USDT" in freqtrade.wallets._wallets
     assert "ETH/USDT:USDT" in freqtrade.wallets._positions
     assert freqtrade.wallets._last_wallet_refresh is not None
     assert freqtrade.wallets.get_owned("ETH/USDT:USDT", "ETH") == 1000
     assert freqtrade.wallets.get_owned("SOL/USDT:USDT", "SOL") == 0
+    assert freqtrade.wallets.get_owned("WLD/USDT:USDT", "WLD") == 5.0
+    assert freqtrade.wallets._positions["WLD/USDT:USDT"].collateral == 2.3956
 
     # Remove ETH/USDT:USDT position
     del mock_result[0]
     freqtrade.wallets.update()
-    assert len(freqtrade.wallets._positions) == 1
+    assert len(freqtrade.wallets._positions) == 2
     assert "ETH/USDT:USDT" not in freqtrade.wallets._positions
+
+
+@pytest.mark.parametrize("includes_upnl", [True, False])
+def test_sync_wallet_futures_live_unrealized_pnl(mocker, default_conf_usdt, includes_upnl):
+
+    # Wallet.total for the stake currency must never contain the unrealized PnL of open
+    # positions - exchanges reporting account equity get normalized back to wallet balance.
+    default_conf_usdt["dry_run"] = False
+    default_conf_usdt["trading_mode"] = "futures"
+    default_conf_usdt["margin_mode"] = "isolated"
+    mock_result = [
+        {
+            "symbol": "ETH/USDT:USDT",
+            "initialMargin": 100.0,
+            "leverage": 5.0,
+            "unrealizedPnl": 30.0,
+            "contracts": 100.0,
+            "contractSize": 1,
+            "collateral": 130.0,
+            "side": "long",
+        },
+        {
+            "symbol": "ADA/USDT:USDT",
+            "initialMargin": 50.0,
+            "leverage": 5.0,
+            "unrealizedPnl": -12.5,
+            "contracts": 100.0,
+            "contractSize": 1,
+            "collateral": 37.5,
+            "side": "short",
+        },
+    ]
+    mocker.patch.multiple(
+        EXMS,
+        get_balances=MagicMock(return_value={"USDT": {"free": 850, "used": 150, "total": 1017.5}}),
+        fetch_positions=MagicMock(return_value=mock_result),
+        balance_includes_unrealized_pnl=MagicMock(return_value=includes_upnl),
+    )
+    freqtrade = get_patched_freqtradebot(mocker, default_conf_usdt)
+    wallets = freqtrade.wallets
+
+    # Position uPnL is taken from the exchange, never from initialMargin/collateral.
+    assert wallets._positions["ETH/USDT:USDT"].unrealized_pnl == 30.0
+    assert wallets._positions["ADA/USDT:USDT"].unrealized_pnl == -12.5
+    assert wallets._positions["ETH/USDT:USDT"].collateral == 100.0
+
+    # 1017.5 is equity (wallet balance 1000 + 17.5 uPnL) - strip it only where it's there.
+    assert wallets.get_total("USDT") == (1000.0 if includes_upnl else 1017.5)
+    # free/used are untouched either way.
+    assert wallets.get_free("USDT") == 850
+    assert wallets.get_used("USDT") == 150
+
+
+def test_sync_wallet_futures_live_no_positions_unchanged(mocker, default_conf_usdt):
+    """Without open positions there is no uPnL to strip, whatever the exchange reports."""
+    default_conf_usdt["dry_run"] = False
+    default_conf_usdt["trading_mode"] = "futures"
+    default_conf_usdt["margin_mode"] = "isolated"
+    mocker.patch.multiple(
+        EXMS,
+        get_balances=MagicMock(return_value={"USDT": {"free": 1000, "used": 0, "total": 1000}}),
+        fetch_positions=MagicMock(return_value=[]),
+        balance_includes_unrealized_pnl=MagicMock(return_value=True),
+    )
+    freqtrade = get_patched_freqtradebot(mocker, default_conf_usdt)
+    assert freqtrade.wallets.get_total("USDT") == 1000
 
 
 def test_sync_wallet_dry(mocker, default_conf_usdt, fee):

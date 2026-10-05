@@ -36,7 +36,6 @@ API_RETRY_COUNT = 4
 API_FETCH_ORDER_RETRY_COUNT = 5
 
 BAD_EXCHANGES = {
-    "bitmex": "Various reasons",
     "probit": "Requires additional, regular calls to `signIn()`",
     "poloniex": "Does not provide fetch_order endpoint to fetch both open and closed orders",
     "kucoinfutures": "Unsupported futures exchange",
@@ -47,6 +46,7 @@ BAD_EXCHANGES = {
 MAP_EXCHANGE_CHILDCLASS = {
     "gateio": "gate",
     "huboi": "htx",
+    "kucoineu": "kucoin",
 }
 
 SUPPORTED_EXCHANGES = [
@@ -54,10 +54,11 @@ SUPPORTED_EXCHANGES = [
     "binanceus",
     "binanceusdm",
     "bingx",
-    "bitmart",
     "bitget",
     "bybit",
+    "bybiteu",
     "gate",
+    "gateeu",
     "htx",
     "hyperliquid",
     "kraken",
@@ -109,11 +110,14 @@ EXCHANGE_HAS_OPTIONAL_FUTURES: dict[str, list[str]] = {
 }
 
 
-def calculate_backoff(retrycount, max_retries):
+def calculate_backoff(remaining_retries, max_retries):
     """
     Calculate backoff
+    :param remaining_retries: Number of retries left - counts down with each attempt,
+                              so the delay increases with each retry.
+    :param max_retries: Maximum number of retries
     """
-    return (max_retries - retrycount) ** 2 + 1
+    return (max_retries - remaining_retries) ** 2 + 1
 
 
 def retrier_async(f):
@@ -148,7 +152,7 @@ def retrier_async(f):
                 return await wrapper(*args, **kwargs)
             else:
                 logger.warning(msg + "Giving up.")
-                raise ex
+                raise
 
     return wrapper
 
@@ -190,7 +194,7 @@ def retrier(_func: F | None = None, *, retries=API_RETRY_COUNT):
                     return wrapper(*args, **kwargs)
                 else:
                     logger.warning(msg + "Giving up.")
-                    raise ex
+                    raise
 
         return cast(F, wrapper)
 
