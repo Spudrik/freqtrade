@@ -14,29 +14,28 @@
   "command_template": "python -m freqtrade trade --config user_data/configs/integrated_paper_20260926_base.json --config user_data/configs/integrated_paper_20260926_<ACCOUNT>.json --strategy-path user_data/strategies --strategy IntegratedPaper --logfile user_data/research_news_data/context_features/integrated_paper_20260926/<ACCOUNT>.log",
   "accounts": {
     "auto": {
-      "parent_pid": 36940,
-      "worker_pid": 41560,
+      "parent_pid": 46000,
+      "worker_pid": 72604,
       "config": "user_data/configs/integrated_paper_20260926_auto.json",
       "db": "auto_trades.sqlite",
       "log": "auto.log",
       "decision_log": "decisions_auto.jsonl",
       "manual_api": false,
       "strategy": "IntegratedPaper",
-      "restarted_at_utc": "2026-10-05T08:45:23.898329+00:00",
+      "restarted_at_utc": "2026-10-05T20:35:01.672535+00:00",
       "entry_mode": "automatic",
       "command": "C:\\FreqTradeStuff\\.venv\\Scripts\\python.exe -m freqtrade trade --config C:\\FreqTradeStuff\\user_data\\configs\\integrated_paper_20260926_base.json --config C:\\FreqTradeStuff\\user_data\\configs\\integrated_paper_20260926_auto.json --strategy-path C:\\FreqTradeStuff\\user_data\\strategies --strategy IntegratedPaper --logfile C:\\FreqTradeStuff\\user_data\\research_news_data\\context_features\\integrated_paper_20260926\\auto.log",
-      "parent_created_at_utc": "2026-10-05T08:45:23.913795+00:00",
+      "parent_created_at_utc": "2026-10-05T20:35:01.685158+00:00",
       "last_recovery": {
         "status": "draining_paused",
-        "at_utc": "2026-10-05T08:45:23.898329+00:00",
-        "log_offset": 1527088,
-        "delayed_heartbeat_resolved_at_utc": "2026-10-05T08:48:39.933771+00:00"
+        "at_utc": "2026-10-05T20:35:01.672535+00:00",
+        "log_offset": 1618024
       },
       "lifecycle_changed_at_utc": "2026-10-05T08:44:56.852261+00:00"
     },
     "manual": {
-      "parent_pid": 58176,
-      "worker_pid": 44488,
+      "parent_pid": 59752,
+      "worker_pid": 46560,
       "config": "user_data/configs/integrated_paper_20260926_manual.json",
       "db": "manual_trades.sqlite",
       "log": "manual.log",
@@ -44,20 +43,20 @@
       "intervention_log": "manual_interventions.jsonl",
       "manual_api": "127.0.0.1:8096",
       "strategy": "IntegratedPaper",
-      "restarted_at_utc": "2026-10-05T08:52:30.573148+00:00",
+      "restarted_at_utc": "2026-10-05T20:35:09.166512+00:00",
       "entry_mode": "automatic_with_manual_adjustments",
       "command": "C:\\FreqTradeStuff\\.venv\\Scripts\\python.exe -m freqtrade trade --config C:\\FreqTradeStuff\\user_data\\configs\\integrated_paper_20260926_base.json --config C:\\FreqTradeStuff\\user_data\\configs\\integrated_paper_20260926_manual.json --strategy-path C:\\FreqTradeStuff\\user_data\\strategies --strategy IntegratedPaper --logfile C:\\FreqTradeStuff\\user_data\\research_news_data\\context_features\\integrated_paper_20260926\\manual.log",
-      "parent_created_at_utc": "2026-10-05T08:52:30.585584+00:00",
+      "parent_created_at_utc": "2026-10-05T20:35:09.179645+00:00",
       "last_recovery": {
         "status": "draining_paused",
-        "at_utc": "2026-10-05T08:52:30.573148+00:00",
-        "log_offset": 1534184
+        "at_utc": "2026-10-05T20:35:09.166512+00:00",
+        "log_offset": 1625110
       },
       "lifecycle_changed_at_utc": "2026-10-05T08:44:56.852261+00:00"
     },
     "news_manual": {
-      "parent_pid": 54212,
-      "worker_pid": 61008,
+      "parent_pid": 33316,
+      "worker_pid": 52132,
       "bot_name": "paper_news_manual",
       "strategy": "PaperNewsManual",
       "config": "user_data/configs/paper_news_manual.json",
@@ -96,17 +95,17 @@
         "filled": true,
         "protection_persisted": true
       },
-      "parent_created_at_utc": "2026-10-04T19:58:30.896706+00:00",
+      "parent_created_at_utc": "2026-10-05T20:36:11.914264+00:00",
       "last_recovery": {
         "status": "running",
-        "at_utc": "2026-10-04T19:58:30.888018+00:00",
-        "log_offset": 1219351
+        "at_utc": "2026-10-05T20:36:11.901389+00:00",
+        "log_offset": 1414628
       },
-      "restarted_at_utc": "2026-10-04T19:58:30.888018+00:00"
+      "restarted_at_utc": "2026-10-05T20:36:11.901389+00:00"
     },
     "news_lab": {
-      "parent_pid": 66164,
-      "worker_pid": 50944,
+      "parent_pid": 76452,
+      "worker_pid": 15044,
       "bot_name": "paper_news_lab",
       "strategy": "PaperNewsManual",
       "config": "user_data/configs/paper_news_lab.json",
@@ -145,13 +144,13 @@
         "filled": true,
         "protection_persisted": true
       },
-      "parent_created_at_utc": "2026-10-04T19:58:38.389504+00:00",
+      "parent_created_at_utc": "2026-10-05T20:36:19.482486+00:00",
       "last_recovery": {
         "status": "running",
-        "at_utc": "2026-10-04T19:58:38.382428+00:00",
-        "log_offset": 1206840
+        "at_utc": "2026-10-05T20:36:19.473402+00:00",
+        "log_offset": 1389644
       },
-      "restarted_at_utc": "2026-10-04T19:58:38.382428+00:00"
+      "restarted_at_utc": "2026-10-05T20:36:19.473402+00:00"
     }
   },
   "fast_reaction_pair": {
@@ -238,15 +237,15 @@
       "initial_virtual_balance_usdt": 10000,
       "started_at_utc": "2026-10-01T16:23:05Z",
       "command": "C:\\FreqTradeStuff\\.venv\\Scripts\\python.exe -m freqtrade trade --config C:\\FreqTradeStuff\\user_data\\configs\\integrated_paper_20260926_base.json --config C:\\FreqTradeStuff\\user_data\\configs\\paper_leader_inverse.json --strategy-path C:\\FreqTradeStuff\\user_data\\strategies --strategy PaperLeaderInverse --logfile C:\\FreqTradeStuff\\user_data\\research_news_data\\context_features\\integrated_paper_20260926\\leader_inverse.log",
-      "parent_pid": 51208,
-      "worker_pid": 76060,
-      "parent_created_at_utc": "2026-10-04T19:58:54.765979+00:00",
+      "parent_pid": 68800,
+      "worker_pid": 34000,
+      "parent_created_at_utc": "2026-10-05T20:36:24.951349+00:00",
       "last_recovery": {
         "status": "running",
-        "at_utc": "2026-10-04T19:58:54.758483+00:00",
-        "log_offset": 594188
+        "at_utc": "2026-10-05T20:36:24.938446+00:00",
+        "log_offset": 815650
       },
-      "restarted_at_utc": "2026-10-04T19:58:54.758483+00:00"
+      "restarted_at_utc": "2026-10-05T20:36:24.938446+00:00"
     },
     "fast_level": {
       "bot_name": "paper_fast_level_inverse",
@@ -259,15 +258,15 @@
       "initial_virtual_balance_usdt": 10000,
       "started_at_utc": "2026-10-01T16:23:32Z",
       "command": "C:\\FreqTradeStuff\\.venv\\Scripts\\python.exe -m freqtrade trade --config C:\\FreqTradeStuff\\user_data\\configs\\integrated_paper_20260926_base.json --config C:\\FreqTradeStuff\\user_data\\configs\\paper_fast_level_inverse.json --strategy-path C:\\FreqTradeStuff\\user_data\\strategies --strategy PaperFastLevelInverse --logfile C:\\FreqTradeStuff\\user_data\\research_news_data\\context_features\\integrated_paper_20260926\\fast_level_inverse.log",
-      "parent_pid": 56784,
-      "worker_pid": 60760,
-      "parent_created_at_utc": "2026-10-04T20:58:36.584570+00:00",
+      "parent_pid": 38044,
+      "worker_pid": 66628,
+      "parent_created_at_utc": "2026-10-05T20:36:30.434655+00:00",
       "last_recovery": {
         "status": "running",
-        "at_utc": "2026-10-04T20:58:36.576728+00:00",
-        "log_offset": 741425
+        "at_utc": "2026-10-05T20:36:30.425481+00:00",
+        "log_offset": 1026049
       },
-      "restarted_at_utc": "2026-10-04T20:58:36.576728+00:00"
+      "restarted_at_utc": "2026-10-05T20:36:30.425481+00:00"
     }
   },
   "source_families": [
@@ -295,38 +294,38 @@
     "parked_state": "The eight parked overlays explicitly set initial_state=stopped; they have no launched processes and no manual-order API.",
     "running": {
       "10": {
-        "parent_pid": 45748,
-        "worker_pid": 55480,
+        "parent_pid": 80600,
+        "worker_pid": 79928,
         "strategy": "PaperVariant10",
         "config": "user_data/configs/integrated_paper_variants/v10.json",
         "db": "v10_trades.sqlite",
         "log": "v10.log",
         "started_at_utc": "2026-09-27T00:02:20Z",
-        "restarted_at_utc": "2026-10-05T08:52:45.688188+00:00",
+        "restarted_at_utc": "2026-10-05T20:35:24.292814+00:00",
         "command": "C:\\FreqTradeStuff\\.venv\\Scripts\\python.exe -m freqtrade trade --config C:\\FreqTradeStuff\\user_data\\configs\\integrated_paper_20260926_base.json --config C:\\FreqTradeStuff\\user_data\\configs\\integrated_paper_variants\\v10.json --strategy-path C:\\FreqTradeStuff\\user_data\\strategies --strategy PaperVariant10 --logfile C:\\FreqTradeStuff\\user_data\\research_news_data\\context_features\\integrated_paper_20260926\\v10.log",
-        "parent_created_at_utc": "2026-10-05T08:52:45.701625+00:00",
+        "parent_created_at_utc": "2026-10-05T20:35:24.306040+00:00",
         "last_recovery": {
           "status": "draining_paused",
-          "at_utc": "2026-10-05T08:52:45.688188+00:00",
-          "log_offset": 1576363
+          "at_utc": "2026-10-05T20:35:24.292814+00:00",
+          "log_offset": 1666521
         },
         "lifecycle_changed_at_utc": "2026-10-05T08:44:56.852261+00:00"
       },
       "01": {
-        "parent_pid": 28764,
-        "worker_pid": 82752,
+        "parent_pid": 83240,
+        "worker_pid": 67580,
         "strategy": "PaperVariant01",
         "config": "user_data/configs/integrated_paper_variants/v01.json",
         "db": "v01_trades.sqlite",
         "log": "v01.log",
         "started_at_utc": "2026-09-27T00:02:20Z",
-        "restarted_at_utc": "2026-10-05T08:52:38.120534+00:00",
+        "restarted_at_utc": "2026-10-05T20:35:16.685918+00:00",
         "command": "C:\\FreqTradeStuff\\.venv\\Scripts\\python.exe -m freqtrade trade --config C:\\FreqTradeStuff\\user_data\\configs\\integrated_paper_20260926_base.json --config C:\\FreqTradeStuff\\user_data\\configs\\integrated_paper_variants\\v01.json --strategy-path C:\\FreqTradeStuff\\user_data\\strategies --strategy PaperVariant01 --logfile C:\\FreqTradeStuff\\user_data\\research_news_data\\context_features\\integrated_paper_20260926\\v01.log",
-        "parent_created_at_utc": "2026-10-05T08:52:38.132812+00:00",
+        "parent_created_at_utc": "2026-10-05T20:35:16.696428+00:00",
         "last_recovery": {
           "status": "draining_paused",
-          "at_utc": "2026-10-05T08:52:38.120534+00:00",
-          "log_offset": 1500663
+          "at_utc": "2026-10-05T20:35:16.685918+00:00",
+          "log_offset": 1590821
         },
         "lifecycle_changed_at_utc": "2026-10-05T08:44:56.852261+00:00"
       }
@@ -349,8 +348,8 @@
     "python_exe": "C:\\FreqTradeStuff\\.venv\\Scripts\\python.exe",
     "thread_limits": "NUMEXPR_MAX_THREADS=1, OPENBLAS_NUM_THREADS=1, OMP_NUM_THREADS=1, MKL_NUM_THREADS=1",
     "fast_sieve_comparator": {
-      "parent_pid": 14216,
-      "worker_pid": 62952,
+      "parent_pid": 53320,
+      "worker_pid": 33616,
       "started_at_utc": "2026-09-27T00:56:30Z",
       "strategy": "PaperFastPivot",
       "strategy_file": "user_data/strategies/paper_fast_pivot.py",
@@ -359,17 +358,17 @@
       "log": "fast_pivot.log",
       "command": "C:\\FreqTradeStuff\\.venv\\Scripts\\python.exe -m freqtrade trade --config C:\\FreqTradeStuff\\user_data\\configs\\integrated_paper_20260926_base.json --config C:\\FreqTradeStuff\\user_data\\configs\\integrated_paper_fast_pivot.json --strategy-path C:\\FreqTradeStuff\\user_data\\strategies --strategy PaperFastPivot --logfile C:\\FreqTradeStuff\\user_data\\research_news_data\\context_features\\integrated_paper_20260926\\fast_pivot.log",
       "purpose": "Higher-frequency Sieve pivot-midpoint rejection short comparator with exact selected ratchet exit, 2% equity stake and 1x leverage. Historical 2024-04 to 2026-04 validation reported 394 trades, +13.2% total, 7.85% drawdown on BTC/ETH/SOL; this is not current profitability evidence.",
-      "restarted_at_utc": "2026-10-04T19:58:15.876457+00:00",
-      "parent_created_at_utc": "2026-10-04T19:58:15.884052+00:00",
+      "restarted_at_utc": "2026-10-05T20:35:31.834689+00:00",
+      "parent_created_at_utc": "2026-10-05T20:35:31.844632+00:00",
       "last_recovery": {
         "status": "running",
-        "at_utc": "2026-10-04T19:58:15.876457+00:00",
-        "log_offset": 1410871
+        "at_utc": "2026-10-05T20:35:31.834689+00:00",
+        "log_offset": 1606879
       }
     },
     "high_risk_directional": {
-      "parent_pid": 33300,
-      "worker_pid": 73408,
+      "parent_pid": 23780,
+      "worker_pid": 24840,
       "started_at_utc": "2026-09-27T00:55:31Z",
       "strategy": "PaperLeaderImpulse",
       "strategy_file": "user_data/strategies/paper_leader_impulse.py",
@@ -378,12 +377,13 @@
       "log": "leader_impulse.log",
       "command": "C:\\FreqTradeStuff\\.venv\\Scripts\\python.exe -m freqtrade trade --config C:\\FreqTradeStuff\\user_data\\configs\\integrated_paper_20260926_base.json --config C:\\FreqTradeStuff\\user_data\\configs\\integrated_paper_leader_impulse.json --strategy-path C:\\FreqTradeStuff\\user_data\\strategies --strategy PaperLeaderImpulse --logfile C:\\FreqTradeStuff\\user_data\\research_news_data\\context_features\\integrated_paper_20260926\\leader_impulse.log",
       "purpose": "Non-Sieve paper hypothesis: after a completed busy BTC one-hour impulse, trade a same-side six-hour local break in a follower coin; nearby opposing 4h levels or fresh sourced opposing Luna risk halve stake. Base stake is 10% paper equity at 2x, up to three positions, inherited 1.5 ATR stop/3 ATR target and 48-hour time exit. This has no confirmed directional edge and is not a trained FreqAI model.",
-      "restarted_at_utc": "2026-10-05T08:52:53.285127+00:00",
-      "parent_created_at_utc": "2026-10-05T08:52:53.297518+00:00",
+      "restarted_at_utc": "2026-10-05T20:35:39.398522+00:00",
+      "parent_created_at_utc": "2026-10-05T20:35:39.409169+00:00",
       "last_recovery": {
         "status": "draining_paused",
-        "at_utc": "2026-10-05T08:52:53.285127+00:00",
-        "log_offset": 1573038
+        "at_utc": "2026-10-05T20:35:39.398522+00:00",
+        "log_offset": 1662789,
+        "verified_at_utc": "2026-10-05T20:41:43.121556+00:00"
       },
       "lifecycle_changed_at_utc": "2026-10-05T08:44:56.852261+00:00"
     },
@@ -1394,6 +1394,143 @@
           "worker_pid": 56904
         },
         "startup_heartbeat_at_utc": "2026-10-05T18:12:48.797000+00:00"
+      },
+      {
+        "account": "auto",
+        "status": "draining_paused",
+        "at_utc": "2026-10-05T20:35:01.672535+00:00",
+        "log_offset": 1618024,
+        "parent_pid": 46000,
+        "worker_pid": 72604
+      },
+      {
+        "account": "manual",
+        "status": "draining_paused",
+        "at_utc": "2026-10-05T20:35:09.166512+00:00",
+        "log_offset": 1625110,
+        "parent_pid": 59752,
+        "worker_pid": 46560
+      },
+      {
+        "account": "v01",
+        "status": "draining_paused",
+        "at_utc": "2026-10-05T20:35:16.685918+00:00",
+        "log_offset": 1590821,
+        "parent_pid": 83240,
+        "worker_pid": 67580
+      },
+      {
+        "account": "v10",
+        "status": "draining_paused",
+        "at_utc": "2026-10-05T20:35:24.292814+00:00",
+        "log_offset": 1666521,
+        "parent_pid": 80600,
+        "worker_pid": 79928
+      },
+      {
+        "account": "fast_pivot",
+        "status": "running",
+        "at_utc": "2026-10-05T20:35:31.834689+00:00",
+        "log_offset": 1606879,
+        "parent_pid": 53320,
+        "worker_pid": 33616
+      },
+      {
+        "account": "leader_impulse",
+        "status": "starting",
+        "at_utc": "2026-10-05T20:35:39.398522+00:00",
+        "log_offset": 1662789,
+        "parent_pid": 23780,
+        "worker_pid": 24840
+      },
+      {
+        "account": "news_manual",
+        "status": "running",
+        "at_utc": "2026-10-05T20:36:11.901389+00:00",
+        "log_offset": 1414628,
+        "parent_pid": 33316,
+        "worker_pid": 52132
+      },
+      {
+        "account": "news_lab",
+        "status": "running",
+        "at_utc": "2026-10-05T20:36:19.473402+00:00",
+        "log_offset": 1389644,
+        "parent_pid": 76452,
+        "worker_pid": 15044
+      },
+      {
+        "account": "leader_inverse",
+        "status": "running",
+        "at_utc": "2026-10-05T20:36:24.938446+00:00",
+        "log_offset": 815650,
+        "parent_pid": 68800,
+        "worker_pid": 34000
+      },
+      {
+        "account": "fast_level_inverse",
+        "status": "running",
+        "at_utc": "2026-10-05T20:36:30.425481+00:00",
+        "log_offset": 1026049,
+        "parent_pid": 38044,
+        "worker_pid": 66628
+      },
+      {
+        "account": "sieve_pivot_partial",
+        "status": "running",
+        "at_utc": "2026-10-05T20:36:35.980624+00:00",
+        "log_offset": 633459,
+        "parent_pid": 32280,
+        "worker_pid": 58836
+      },
+      {
+        "account": "sieve_d1_vp_bos_short",
+        "status": "running",
+        "at_utc": "2026-10-05T20:36:45.713704+00:00",
+        "log_offset": 98413,
+        "parent_pid": 22180,
+        "worker_pid": 79896
+      },
+      {
+        "account": "sieve_d1_support_break_long",
+        "status": "running",
+        "at_utc": "2026-10-05T20:36:53.368094+00:00",
+        "log_offset": 98168,
+        "parent_pid": 77028,
+        "worker_pid": 51568
+      },
+      {
+        "account": "sieve_h4_vp_lvn_long",
+        "status": "running",
+        "at_utc": "2026-10-05T20:37:01.019966+00:00",
+        "log_offset": 89610,
+        "parent_pid": 68576,
+        "worker_pid": 24860
+      },
+      {
+        "event": "upstream_sync",
+        "accepted_commit": "105ddc41f1272e88076fe4e71dda1755bde6d616",
+        "stopped_at_utc": null,
+        "stop_confirmation_proxy_at_utc": null,
+        "stop_clock_note": "Exact stop clock and collector sentinel clock were not captured; downtime interval not asserted.",
+        "first_restarted_at_utc": "2026-10-05T20:35:01.685158+00:00",
+        "all_verified_at_utc": "2026-10-05T20:40:09.362236+00:00",
+        "stopped_accounts": [
+          "auto",
+          "manual",
+          "v01",
+          "v10",
+          "fast_pivot",
+          "leader_impulse",
+          "news_manual",
+          "news_lab",
+          "leader_inverse",
+          "fast_level_inverse",
+          "sieve_pivot_partial",
+          "sieve_d1_vp_bos_short",
+          "sieve_d1_support_break_long",
+          "sieve_h4_vp_lvn_long"
+        ]
       }
     ],
     "codex_startup": {
@@ -1406,55 +1543,55 @@
       "validation": "Task registration/target/principal/trigger verified. No reboot or forced application relaunch performed."
     },
     "recovery_delay": "At next existing four-hour scheduled agent wake after Windows sign-in/app availability; not immediate reboot recovery.",
-    "last_check_at_utc": "2026-10-05T17:37:30.422398+00:00",
+    "last_check_at_utc": "2026-10-05T20:37:07.517458+00:00",
     "last_results": [
       {
         "account": "auto",
-        "status": "draining_protection_continues",
-        "open_trades": 3,
-        "open_orders": 0
+        "status": "draining_paused",
+        "parent_pid": 46000,
+        "worker_pid": 72604
       },
       {
         "account": "manual",
-        "status": "draining_protection_continues",
-        "open_trades": 3,
-        "open_orders": 0
+        "status": "draining_paused",
+        "parent_pid": 59752,
+        "worker_pid": 46560
       },
       {
         "account": "v01",
-        "status": "draining_protection_continues",
-        "open_trades": 3,
-        "open_orders": 0
+        "status": "draining_paused",
+        "parent_pid": 83240,
+        "worker_pid": 67580
       },
       {
         "account": "v10",
-        "status": "draining_protection_continues",
-        "open_trades": 3,
-        "open_orders": 0
+        "status": "draining_paused",
+        "parent_pid": 80600,
+        "worker_pid": 79928
       },
       {
         "account": "fast_pivot",
-        "status": "already_running",
-        "parent_pid": 14216,
-        "worker_pid": 62952
+        "status": "running",
+        "parent_pid": 53320,
+        "worker_pid": 33616
       },
       {
         "account": "leader_impulse",
-        "status": "draining_protection_continues",
-        "open_trades": 1,
-        "open_orders": 0
+        "status": "starting",
+        "parent_pid": 23780,
+        "worker_pid": 24840
       },
       {
         "account": "news_manual",
-        "status": "already_running",
-        "parent_pid": 54212,
-        "worker_pid": 61008
+        "status": "running",
+        "parent_pid": 33316,
+        "worker_pid": 52132
       },
       {
         "account": "news_lab",
-        "status": "already_running",
-        "parent_pid": 66164,
-        "worker_pid": 50944
+        "status": "running",
+        "parent_pid": 76452,
+        "worker_pid": 15044
       },
       {
         "account": "fast_auto",
@@ -1466,39 +1603,39 @@
       },
       {
         "account": "leader_inverse",
-        "status": "already_running",
-        "parent_pid": 51208,
-        "worker_pid": 76060
+        "status": "running",
+        "parent_pid": 68800,
+        "worker_pid": 34000
       },
       {
         "account": "fast_level_inverse",
-        "status": "already_running",
-        "parent_pid": 56784,
-        "worker_pid": 60760
+        "status": "running",
+        "parent_pid": 38044,
+        "worker_pid": 66628
       },
       {
         "account": "sieve_pivot_partial",
-        "status": "already_running",
-        "parent_pid": 72808,
-        "worker_pid": 62240
+        "status": "running",
+        "parent_pid": 32280,
+        "worker_pid": 58836
       },
       {
         "account": "sieve_d1_vp_bos_short",
-        "status": "already_running",
-        "parent_pid": 61904,
-        "worker_pid": 53860
+        "status": "running",
+        "parent_pid": 22180,
+        "worker_pid": 79896
       },
       {
         "account": "sieve_d1_support_break_long",
-        "status": "already_running",
-        "parent_pid": 79372,
-        "worker_pid": 67812
+        "status": "running",
+        "parent_pid": 77028,
+        "worker_pid": 51568
       },
       {
         "account": "sieve_h4_vp_lvn_long",
-        "status": "already_running",
-        "parent_pid": 18436,
-        "worker_pid": 68272
+        "status": "running",
+        "parent_pid": 68576,
+        "worker_pid": 24860
       }
     ],
     "account_lifecycle": {
@@ -1541,14 +1678,14 @@
         "database_create_attempted_at_utc": "2026-10-05T08:55:33.653116+00:00",
         "last_recovery": {
           "status": "running",
-          "at_utc": "2026-10-05T18:12:09.654904+00:00",
-          "log_offset": 608573
+          "at_utc": "2026-10-05T20:36:35.980624+00:00",
+          "log_offset": 633459
         },
-        "parent_pid": 25320,
-        "worker_pid": 41672,
-        "restarted_at_utc": "2026-10-05T18:12:09.654904+00:00",
+        "parent_pid": 32280,
+        "worker_pid": 58836,
+        "restarted_at_utc": "2026-10-05T20:36:35.980624+00:00",
         "command": "C:\\FreqTradeStuff\\.venv\\Scripts\\python.exe -m freqtrade trade --config C:\\FreqTradeStuff\\user_data\\configs\\integrated_paper_20260926_base.json --config C:\\FreqTradeStuff\\user_data\\configs\\paper_sieve_pivot_partial.json --strategy-path C:\\FreqTradeStuff\\user_data\\strategies --strategy PaperSievePivotPartial --logfile C:\\FreqTradeStuff\\user_data\\research_news_data\\context_features\\integrated_paper_20260926\\sieve_pivot_partial.log",
-        "parent_created_at_utc": "2026-10-05T18:12:09.664928+00:00",
+        "parent_created_at_utc": "2026-10-05T20:36:35.990252+00:00",
         "database_initialized_at_utc": "2026-10-05T08:55:40.161653+00:00"
       },
       "sieve_d1_vp_bos_short": {
@@ -1570,14 +1707,14 @@
         "database_create_attempted_at_utc": "2026-10-05T08:58:48.911722+00:00",
         "last_recovery": {
           "status": "running",
-          "at_utc": "2026-10-05T18:12:38.477036+00:00",
-          "log_offset": 73868
+          "at_utc": "2026-10-05T20:36:45.713704+00:00",
+          "log_offset": 98413
         },
-        "parent_pid": 77060,
-        "worker_pid": 56904,
-        "restarted_at_utc": "2026-10-05T18:12:38.477036+00:00",
+        "parent_pid": 22180,
+        "worker_pid": 79896,
+        "restarted_at_utc": "2026-10-05T20:36:45.713704+00:00",
         "command": "C:\\FreqTradeStuff\\.venv\\Scripts\\python.exe -m freqtrade trade --config C:\\FreqTradeStuff\\user_data\\configs\\integrated_paper_20260926_base.json --config C:\\FreqTradeStuff\\user_data\\configs\\paper_sieve_d1_vp_bos_short.json --strategy-path C:\\FreqTradeStuff\\user_data\\strategies --strategy PaperSieveD1VpBosShort --logfile C:\\FreqTradeStuff\\user_data\\research_news_data\\context_features\\integrated_paper_20260926\\sieve_d1_vp_bos_short.log",
-        "parent_created_at_utc": "2026-10-05T18:12:38.491049+00:00",
+        "parent_created_at_utc": "2026-10-05T20:36:45.723003+00:00",
         "database_initialized_at_utc": "2026-10-05T08:58:55.460272+00:00"
       },
       "sieve_d1_support_break_long": {
@@ -1599,14 +1736,14 @@
         "database_create_attempted_at_utc": "2026-10-05T08:59:23.910028+00:00",
         "last_recovery": {
           "status": "running",
-          "at_utc": "2026-10-05T18:12:25.095737+00:00",
-          "log_offset": 73689
+          "at_utc": "2026-10-05T20:36:53.368094+00:00",
+          "log_offset": 98168
         },
-        "parent_pid": 69908,
-        "worker_pid": 82188,
-        "restarted_at_utc": "2026-10-05T18:12:25.095737+00:00",
+        "parent_pid": 77028,
+        "worker_pid": 51568,
+        "restarted_at_utc": "2026-10-05T20:36:53.368094+00:00",
         "command": "C:\\FreqTradeStuff\\.venv\\Scripts\\python.exe -m freqtrade trade --config C:\\FreqTradeStuff\\user_data\\configs\\integrated_paper_20260926_base.json --config C:\\FreqTradeStuff\\user_data\\configs\\paper_sieve_d1_support_break_long.json --strategy-path C:\\FreqTradeStuff\\user_data\\strategies --strategy PaperSieveD1SupportBreakLong --logfile C:\\FreqTradeStuff\\user_data\\research_news_data\\context_features\\integrated_paper_20260926\\sieve_d1_support_break_long.log",
-        "parent_created_at_utc": "2026-10-05T18:12:25.106797+00:00",
+        "parent_created_at_utc": "2026-10-05T20:36:53.379963+00:00",
         "database_initialized_at_utc": "2026-10-05T08:59:30.456263+00:00"
       },
       "sieve_h4_vp_lvn_long": {
@@ -1628,14 +1765,14 @@
         "database_create_attempted_at_utc": "2026-10-05T09:00:01.022077+00:00",
         "last_recovery": {
           "status": "running",
-          "at_utc": "2026-10-05T09:00:01.022077+00:00",
-          "log_offset": 0
+          "at_utc": "2026-10-05T20:37:01.019966+00:00",
+          "log_offset": 89610
         },
-        "parent_pid": 18436,
-        "worker_pid": 68272,
-        "restarted_at_utc": "2026-10-05T09:00:01.022077+00:00",
+        "parent_pid": 68576,
+        "worker_pid": 24860,
+        "restarted_at_utc": "2026-10-05T20:37:01.019966+00:00",
         "command": "C:\\FreqTradeStuff\\.venv\\Scripts\\python.exe -m freqtrade trade --config C:\\FreqTradeStuff\\user_data\\configs\\integrated_paper_20260926_base.json --config C:\\FreqTradeStuff\\user_data\\configs\\paper_sieve_h4_vp_lvn_long.json --strategy-path C:\\FreqTradeStuff\\user_data\\strategies --strategy PaperSieveH4VpLvnLong --logfile C:\\FreqTradeStuff\\user_data\\research_news_data\\context_features\\integrated_paper_20260926\\sieve_h4_vp_lvn_long.log",
-        "parent_created_at_utc": "2026-10-05T09:00:01.037911+00:00",
+        "parent_created_at_utc": "2026-10-05T20:37:01.029461+00:00",
         "database_initialized_at_utc": "2026-10-05T09:00:07.654880+00:00"
       }
     },
