@@ -17,7 +17,6 @@ from launcher_v2.services.entry_sieve_runner import (  # noqa: E402
 def _allocation(
     backlog: int,
     *,
-    completed_hyperopts: int = 8,
     max_cores: int = 8,
     backtest_workers: int = 8,
 ) -> tuple[int, int]:
@@ -25,7 +24,6 @@ def _allocation(
         max_hyperopt_jobs=max_cores,
         max_cores_allowed=max_cores,
         backtest_worker_count=backtest_workers,
-        completed_hyperopts=completed_hyperopts,
         waiting_backtests=backlog,
         running_backtests=0,
     )
@@ -38,8 +36,12 @@ def _allocation(
     return jobs, lanes
 
 
-def test_initial_hyperopt_fill_uses_all_assigned_cores() -> None:
-    assert _allocation(7, completed_hyperopts=7) == (8, 0)
+def test_initial_hyperopt_uses_all_assigned_cores_without_backtest_work() -> None:
+    assert _allocation(0) == (8, 0)
+
+
+def test_first_queued_backtest_starts_before_core_count_hyperopts_complete() -> None:
+    assert _allocation(1) == (7, 1)
 
 
 @pytest.mark.parametrize(
@@ -70,7 +72,6 @@ def test_running_and_waiting_backtests_share_the_same_priority_budget() -> None:
         max_hyperopt_jobs=8,
         max_cores_allowed=8,
         backtest_worker_count=8,
-        completed_hyperopts=8,
         waiting_backtests=1,
         running_backtests=2,
     )

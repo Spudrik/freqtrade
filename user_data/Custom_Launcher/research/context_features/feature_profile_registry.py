@@ -53,6 +53,23 @@ ORDERBOOK_SPOT_FEATURES = USER_DATA_DIR / "orderbook_data" / "historical_bybit" 
 CONTEXT_FEATURES_DB = USER_DATA_DIR / "research_news_data" / "context_features" / "context_features.sqlite"
 CONTEXT_FEATURES_PARQUET = USER_DATA_DIR / "research_news_data" / "context_features" / "exports" / "context_features_1h_latest.parquet"
 TRADER_CONFLUENCE_FEATURES = USER_DATA_DIR / "research_news_data" / "context_features" / "confluence_cache" / "trader_confluence_1h_latest.parquet"
+GENERAL_EXIT_CACHE_DIR = USER_DATA_DIR / "research_news_data" / "context_features" / "general_exit_level_cache"
+GENERAL_EXIT_FEATURES = (
+    GENERAL_EXIT_CACHE_DIR / "btc_general_exit_levels_1h.parquet",
+    GENERAL_EXIT_CACHE_DIR / "eth_general_exit_levels_1h.parquet",
+    GENERAL_EXIT_CACHE_DIR / "sol_general_exit_levels_1h.parquet",
+)
+GENERAL_EXIT_REACTION_CACHE_DIR = (
+    USER_DATA_DIR
+    / "research_news_data"
+    / "context_features"
+    / "general_exit_level_reaction_cache"
+)
+GENERAL_EXIT_REACTION_FEATURES = (
+    GENERAL_EXIT_REACTION_CACHE_DIR / "btc_general_exit_levels_5tf.parquet",
+    GENERAL_EXIT_REACTION_CACHE_DIR / "eth_general_exit_levels_5tf.parquet",
+    GENERAL_EXIT_REACTION_CACHE_DIR / "sol_general_exit_levels_5tf.parquet",
+)
 
 TARGET_SPECS = {
     "future_return_6h": {
@@ -312,7 +329,343 @@ def default_profiles() -> dict[str, FeatureProfile]:
     ]
     profiles.extend(_structure_vah_setup_profiles())
     profiles.extend(_generated_research_profiles())
+    profiles.extend(_general_exit_target_quality_profiles())
+    profiles.extend(_general_exit_level_reaction_profiles())
+    profiles.extend(_general_exit_readiness_profiles())
     return {profile.profile_id: profile for profile in profiles}
+
+
+def _general_exit_target_quality_profiles() -> list[FeatureProfile]:
+    common = {
+        "family": "general_exit_target_quality",
+        "required_files": GENERAL_EXIT_FEATURES,
+        "event_id": "all_rows",
+        "actual_column": "down_vs_up_advantage_24h",
+        "prediction_column": "&-down_vs_up_advantage_24h",
+        "objective": (
+            "Test whether general VP/TLV2 level quality, timeframe alignment, and BTC context "
+            "rank whether downside or upside dominates after a possible exit decision."
+        ),
+        "pass_rule": (
+            "Keep a feature block only when chronological out-of-sample lift is directionally "
+            "consistent across ETH and SOL, survives level-event and held-out-entry scoring, and "
+            "beats its nested control rather than merely producing one higher headline metric."
+        ),
+        "default_train_days": 365,
+        "default_backtest_days": 90,
+        "allowed_windows": ("exit_dev", "exit_holdout"),
+    }
+    specs = (
+        (
+            "general_exit_price_tree",
+            "Price/volume-only nonlinear control.",
+            "GeneralExitPriceOnlyFreqAIResearchStrategy",
+            "LightGBMRegressorMultiTarget",
+            LIGHTGBM_SMALL,
+            None,
+        ),
+        (
+            "general_exit_level_1h_tree",
+            "Price plus base-timeframe VP/TLV2 target quality.",
+            "GeneralExitLevel1hFreqAIResearchStrategy",
+            "LightGBMRegressorMultiTarget",
+            LIGHTGBM_SMALL,
+            "general_exit_price_tree",
+        ),
+        (
+            "general_exit_level_mtf_tree",
+            "Price plus 1h/4h/1d target levels and alignment.",
+            "GeneralExitLevelMtfFreqAIResearchStrategy",
+            "LightGBMRegressorMultiTarget",
+            LIGHTGBM_SMALL,
+            "general_exit_level_1h_tree",
+        ),
+        (
+            "general_exit_level_mtf_raw_tree",
+            "Price plus 1h/4h/1d target levels without cross-timeframe alignment features.",
+            "GeneralExitLevelMtfRawFreqAIResearchStrategy",
+            "LightGBMRegressorMultiTarget",
+            LIGHTGBM_SMALL,
+            "general_exit_level_1h_tree",
+        ),
+        (
+            "general_exit_va_mtf_tree",
+            "Price plus multi-timeframe value-area edge levels and alignment.",
+            "GeneralExitVaMtfFreqAIResearchStrategy",
+            "LightGBMRegressorMultiTarget",
+            LIGHTGBM_SMALL,
+            "general_exit_price_tree",
+        ),
+        (
+            "general_exit_poc_mtf_tree",
+            "Price plus multi-timeframe prior POC levels, persistence, and alignment.",
+            "GeneralExitPocMtfFreqAIResearchStrategy",
+            "LightGBMRegressorMultiTarget",
+            LIGHTGBM_SMALL,
+            "general_exit_price_tree",
+        ),
+        (
+            "general_exit_hvn_mtf_tree",
+            "Price plus multi-timeframe HVN levels, strength, and alignment.",
+            "GeneralExitHvnMtfFreqAIResearchStrategy",
+            "LightGBMRegressorMultiTarget",
+            LIGHTGBM_SMALL,
+            "general_exit_price_tree",
+        ),
+        (
+            "general_exit_tlv2_mtf_tree",
+            "Price plus multi-timeframe TLV2 levels, quality, and alignment.",
+            "GeneralExitTlv2MtfFreqAIResearchStrategy",
+            "LightGBMRegressorMultiTarget",
+            LIGHTGBM_SMALL,
+            "general_exit_price_tree",
+        ),
+        (
+            "general_exit_va_tlv2_mtf_tree",
+            "Price plus interacting multi-timeframe value-area and TLV2 levels.",
+            "GeneralExitVaTlv2MtfFreqAIResearchStrategy",
+            "LightGBMRegressorMultiTarget",
+            LIGHTGBM_SMALL,
+            "general_exit_va_mtf_tree",
+        ),
+        (
+            "general_exit_level_mtf_btc_price_tree",
+            "MTF target levels plus BTC price/volume context.",
+            "GeneralExitLevelMtfBtcPriceFreqAIResearchStrategy",
+            "LightGBMRegressorMultiTarget",
+            LIGHTGBM_SMALL,
+            "general_exit_level_mtf_tree",
+        ),
+        (
+            "general_exit_level_mtf_btc_levels_tree",
+            "MTF target levels plus BTC price and analogous BTC target levels.",
+            "GeneralExitLevelMtfBtcLevelsFreqAIResearchStrategy",
+            "LightGBMRegressorMultiTarget",
+            LIGHTGBM_SMALL,
+            "general_exit_level_mtf_btc_price_tree",
+        ),
+        (
+            "general_exit_level_mtf_btc_poc_confluence_tree",
+            "MTF target levels plus BTC POC persistence and MTF confluence, without BTC price context.",
+            "GeneralExitLevelMtfBtcPocConfluenceFreqAIResearchStrategy",
+            "LightGBMRegressorMultiTarget",
+            LIGHTGBM_SMALL,
+            "general_exit_level_mtf_tree",
+        ),
+        (
+            "general_exit_level_mtf_btc_hvn_confluence_tree",
+            "MTF target levels plus BTC HVN strength and MTF confluence, without BTC price context.",
+            "GeneralExitLevelMtfBtcHvnConfluenceFreqAIResearchStrategy",
+            "LightGBMRegressorMultiTarget",
+            LIGHTGBM_SMALL,
+            "general_exit_level_mtf_tree",
+        ),
+        (
+            "general_exit_level_mtf_btc_poc_hvn_confluence_tree",
+            "MTF target levels plus interacting BTC POC/HVN quality and MTF confluence.",
+            "GeneralExitLevelMtfBtcPocHvnConfluenceFreqAIResearchStrategy",
+            "LightGBMRegressorMultiTarget",
+            LIGHTGBM_SMALL,
+            "general_exit_level_mtf_tree",
+        ),
+        (
+            "general_exit_level_mtf_btc_poc_hvn_va_confluence_tree",
+            "MTF target levels plus BTC POC/HVN confluence and VA-edge continuation context.",
+            "GeneralExitLevelMtfBtcPocHvnVaConfluenceFreqAIResearchStrategy",
+            "LightGBMRegressorMultiTarget",
+            LIGHTGBM_SMALL,
+            "general_exit_level_mtf_btc_poc_hvn_confluence_tree",
+        ),
+        (
+            "general_exit_level_mtf_btc_levels_ridge",
+            "Linear control using the complete target/context feature surface.",
+            "GeneralExitLevelMtfBtcLevelsFreqAIResearchStrategy",
+            "SKLearnRidgeRegressorMultiTarget",
+            RIDGE_DEFAULT,
+            None,
+        ),
+    )
+    return [
+        FeatureProfile(
+            profile_id=profile_id,
+            description=description,
+            strategy=strategy,
+            freqaimodel=model,
+            model_training_parameters=dict(parameters),
+            control_profile_id=control,
+            **common,
+        )
+        for profile_id, description, strategy, model, parameters, control in specs
+    ]
+
+
+def _general_exit_level_reaction_profiles() -> list[FeatureProfile]:
+    common = {
+        "family": "general_exit_level_reaction",
+        "required_files": GENERAL_EXIT_REACTION_FEATURES,
+        "event_id": "named_level_reaction",
+        "actual_column": "down_vs_up_advantage_4h",
+        "prediction_column": "&-down_vs_up_advantage_4h",
+        "objective": (
+            "Predict the direction, timing, volume, and directional-pressure response over "
+            "the next 1-4 candles after explicitly named value-area edge, prior POC, HVN, "
+            "and trendline levels or exact level clusters are approached or touched."
+        ),
+        "pass_rule": (
+            "A feature layer is useful only when its incremental lift over the immediately "
+            "simpler control repeats in development and holdout, remains visible by pair and "
+            "side, and agrees with event-study and placebo evidence. A volume response alone "
+            "does not prove reversal, and association is not causation."
+        ),
+        "default_train_days": 365,
+        "default_backtest_days": 90,
+        "allowed_windows": ("exit_dev", "exit_holdout"),
+    }
+    specs = (
+        (
+            "general_exit_reaction_price_control_tree",
+            "Price, volatility, volume, and directional-pressure control with no level data.",
+            "GeneralExitReactionPriceControlFreqAIResearchStrategy",
+            None,
+        ),
+        (
+            "general_exit_reaction_named_levels_tree",
+            (
+                "Control plus each value-area edge, prior POC, HVN, and trendline distance and "
+                "quality field named separately for 1h, 4h, 8h, 1d, and 3d."
+            ),
+            "GeneralExitReactionExplicitSingleLevelsFreqAIResearchStrategy",
+            "general_exit_reaction_price_control_tree",
+        ),
+        (
+            "general_exit_reaction_same_asset_cluster_compositions_tree",
+            (
+                "Named levels plus explicit same-timeframe cross-type, same-type "
+                "cross-timeframe, and mixed same-asset cluster composition features."
+            ),
+            "GeneralExitReactionSameAssetClustersFreqAIResearchStrategy",
+            "general_exit_reaction_named_levels_tree",
+        ),
+        (
+            "general_exit_reaction_same_asset_candle_state_control_tree",
+            (
+                "Same-asset cluster composition plus prior cluster state and current closed-"
+                "candle volume/pressure, but no exact named-level hit identities."
+            ),
+            "GeneralExitReactionSameAssetCandleStateControlFreqAIResearchStrategy",
+            "general_exit_reaction_same_asset_cluster_compositions_tree",
+        ),
+        (
+            "general_exit_reaction_same_asset_hit_response_tree",
+            (
+                "Same-asset cluster composition plus exact level identities touched on the "
+                "closed candle, hit-candle volume, and directional-pressure response."
+            ),
+            "GeneralExitReactionSameAssetClustersHitResponseFreqAIResearchStrategy",
+            "general_exit_reaction_same_asset_candle_state_control_tree",
+        ),
+        (
+            "general_exit_reaction_target_coin_btc_hit_response_tree",
+            (
+                "Target-coin hit response plus BTC's separately named level identities, "
+                "cluster composition, hit response, and same-side target-coin/BTC alignment."
+            ),
+            "GeneralExitReactionSameAssetBtcClustersHitResponseFreqAIResearchStrategy",
+            "general_exit_reaction_same_asset_hit_response_tree",
+        ),
+    )
+    return [
+        FeatureProfile(
+            profile_id=profile_id,
+            description=description,
+            strategy=strategy,
+            freqaimodel="LightGBMRegressorMultiTarget",
+            model_training_parameters=dict(LIGHTGBM_SMALL),
+            control_profile_id=control,
+            **common,
+        )
+        for profile_id, description, strategy, control in specs
+    ]
+
+
+def _general_exit_readiness_profiles() -> list[FeatureProfile]:
+    common = {
+        "family": "general_exit_readiness",
+        "required_files": GENERAL_EXIT_REACTION_FEATURES,
+        "event_id": "named_level_exit_readiness",
+        "actual_column": "future_reaction_magnitude_4h",
+        "prediction_column": "&-future_reaction_magnitude_4h",
+        "objective": (
+            "Learn a continuous importance score for nearby value-area edges, prior POCs, "
+            "HVNs, and trendlines, then test whether closed-candle weakening distinguishes "
+            "exit-worthy reversal from continuation over the next 1-4 candles."
+        ),
+        "pass_rule": (
+            "Keep a layer only when its incremental ranking lift over the immediately simpler "
+            "control repeats in development and holdout, by pair and side, and is stronger on "
+            "contemporaneous level events than stale-level placebos. Level importance alone "
+            "must not be interpreted as an exit direction."
+        ),
+        "default_train_days": 365,
+        "default_backtest_days": 90,
+        "allowed_windows": ("exit_dev", "exit_holdout"),
+    }
+    specs = (
+        (
+            "general_exit_readiness_price_control_tree",
+            "Price, volatility, volume, and pressure control without level data.",
+            "GeneralExitReadinessPriceControlFreqAIResearchStrategy",
+            None,
+        ),
+        (
+            "general_exit_readiness_level_quality_tree",
+            (
+                "Control plus each exact level type, timeframe, distance, and available "
+                "quality metadata."
+            ),
+            "GeneralExitReadinessLevelQualityFreqAIResearchStrategy",
+            "general_exit_readiness_price_control_tree",
+        ),
+        (
+            "general_exit_readiness_proximity_alignment_tree",
+            (
+                "Exact levels plus ATR-normalized proximity and candidate-centred same-type, "
+                "same-timeframe, and mixed multi-timeframe alignment."
+            ),
+            "GeneralExitReadinessProximityAlignmentFreqAIResearchStrategy",
+            "general_exit_readiness_level_quality_tree",
+        ),
+        (
+            "general_exit_readiness_weakening_tree",
+            (
+                "Level importance plus touch identity, rejection, wick, momentum, volume, "
+                "and directional-pressure weakening on closed candles."
+            ),
+            "GeneralExitReadinessWeakeningFreqAIResearchStrategy",
+            "general_exit_readiness_proximity_alignment_tree",
+        ),
+        (
+            "general_exit_readiness_btc_context_tree",
+            (
+                "Target-coin exit readiness plus BTC level importance, alignment, touch, and "
+                "closed-candle weakening context."
+            ),
+            "GeneralExitReadinessBtcContextFreqAIResearchStrategy",
+            "general_exit_readiness_weakening_tree",
+        ),
+    )
+    return [
+        FeatureProfile(
+            profile_id=profile_id,
+            description=description,
+            strategy=strategy,
+            freqaimodel="LightGBMRegressorMultiTarget",
+            model_training_parameters=dict(LIGHTGBM_SMALL),
+            control_profile_id=control,
+            **common,
+        )
+        for profile_id, description, strategy, control in specs
+    ]
 
 
 def _structure_vah_setup_profiles() -> list[FeatureProfile]:

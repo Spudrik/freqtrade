@@ -9,6 +9,8 @@
 - Sieve1 results have no pass/fail or acceptance criteria. Treat results as informative diagnostics for refining useful entry signals.
 - Sieve1 is the entry-quality stage; later Sieve stages may test refinement, exits, adds, guards, and combined weighting only when the user requests that stage.
 - Current Sieve3 V2 exit files use the `sieve3_V2_` file prefix and must preserve locked entry behaviour while Hyperopting only exit/risk parameters.
+- Count Sieve3 coverage from approved permanent top-level families only. Files under `Archive`, `isolated_possible_errors`, other non-active directories, deleted files, stale manifest references, and temporary `sieve3_V2_tq_*` investigations do not count or enter active queues.
+- Sieve3 completion is evidence-based per locked entry: several statistically relevant positive and materially distinct exit solutions. Generating files is coverage, not completion.
 - Sieve1 strategy names should describe the entry idea directly. Do not use vague generator-origin tokens such as `test` or `codex` in filenames, class names, or visible entry tags.
 - Sieve1 strategies with multiple core entry ideas should use `sieve1_multiN_` filenames and `Sieve1MultiN` class names, where `N` is the number of core entry concepts being tested for confluence.
 - Broad `sieve1_multiN_` confluence probes may use hyperoptable batch selectors/enables to discover useful combinations. When Sieve1 results show a promising confluence scenario, flag it to the user as a candidate for extraction into a narrower dedicated strategy for refinement.

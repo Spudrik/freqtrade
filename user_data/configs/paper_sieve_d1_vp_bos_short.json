@@ -1,0 +1,11 @@
+{
+  "bot_name": "paper_sieve_d1_vp_bos_short",
+  "strategy": "PaperSieveD1VpBosShort",
+  "max_open_trades": 3,
+  "initial_state": "running",
+  "db_url": "sqlite:///user_data/research_news_data/context_features/integrated_paper_20260926/sieve_d1_vp_bos_short_trades.sqlite",
+  "force_entry_enable": false,
+  "exchange": {
+    "pair_whitelist": ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT"]
+  }
+}

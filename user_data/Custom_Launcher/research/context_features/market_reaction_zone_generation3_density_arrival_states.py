@@ -1,0 +1,757 @@
+from __future__ import annotations
+
+# Fix numerical-library thread counts before importing numpy/pandas.
+# ruff: noqa: E402
+import os
+
+
+for _name in (
+    "OMP_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+    "PYARROW_NUM_THREADS",
+):
+    os.environ[_name] = "1"
+
+import argparse
+import json
+import sys
+import time
+from collections.abc import Sequence
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import pandas as pd
+from pandas import DataFrame
+
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from user_data.Custom_Launcher.research.context_features.market_reaction_zone_generation0 import (
+    LARGE_ARTIFACT_ROOT,
+    OUTPUT_ROOT,
+    LevelSpec,
+    atomic_write_json,
+    atomic_write_parquet,
+    event_frame,
+    future_path_matrices,
+    load_manifest,
+    prepare_base_market_frame,
+    sha256_file,
+    utc_now,
+    validate_worker_count,
+)
+from user_data.Custom_Launcher.research.context_features.market_reaction_zone_generation1_localization import (  # noqa: E501
+    causal_local_state,
+    nearest_state_pairs,
+    pair_stem,
+)
+from user_data.Custom_Launcher.research.context_features.market_reaction_zone_generation2_anchored_vwap import (  # noqa: E501
+    OUTCOMES_BY_RESPONSE_WINDOW,
+    SEPARATION_HOURS_BY_RESPONSE_WINDOW,
+    attach_state_and_absolute_outcomes,
+    stable_json_sha256,
+)
+from user_data.Custom_Launcher.research.context_features.market_reaction_zone_generation2_density_reaction import (  # noqa: E501
+    CORE_STATE_FEATURES,
+    cohort_period_results,
+    leave_one_coin_out_results,
+    pair_period_results,
+    purge_density_matches,
+)
+from user_data.Custom_Launcher.research.context_features.market_reaction_zone_generation2_density_reaction import (  # noqa: E501
+    REPORT_ROOT as G2E_REPORT_ROOT,
+)
+from user_data.Custom_Launcher.research.context_features.market_reaction_zone_generation3_density_arrival import (  # noqa: E501
+    ARTIFACT_ROOT as G3D_PREFLIGHT_ARTIFACT_ROOT,
+)
+from user_data.Custom_Launcher.research.context_features.market_reaction_zone_generation3_density_arrival import (  # noqa: E501
+    REPORT_ROOT as G3D_PREFLIGHT_REPORT_ROOT,
+)
+from user_data.Custom_Launcher.research.context_features.market_reaction_zone_generation3_density_arrival import (  # noqa: E501
+    validate_frozen_branch,
+)
+from user_data.Custom_Launcher.research.context_features.market_reaction_zone_generation3_density_arrival_controls import (  # noqa: E501
+    filter_supported_cells,
+    validate_sources_and_supported_cells,
+)
+from user_data.Custom_Launcher.research.context_features.market_reaction_zone_generation3_lvn_attribution import (  # noqa: E501
+    select_pairs,
+)
+
+
+FROZEN_BATCH = OUTPUT_ROOT / "generation2_review" / "g3_frozen_branch_batch.json"
+REPORT_ROOT = OUTPUT_ROOT / "generation3_branches" / "g3d_density_arrival_states"
+ARTIFACT_ROOT = LARGE_ARTIFACT_ROOT / "generation3_branches" / "g3d_density_arrival_states"
+OUTPUT_SCHEMA_VERSION = 1
+FRESH_STATE = "first_arrival_after_outside_interval"
+CONTROL_STATES = ("near_miss", "repeat_contact", "already_inside")
+GEOMETRY_STATE_FEATURES = (
+    "state_g3d_zone_half_width_atr",
+    "state_g3d_zone_support_fraction",
+    "state_g3d_other_density_zone_count",
+    "state_g3d_reference_level_count",
+)
+MATCH_STATE_FEATURES = (*CORE_STATE_FEATURES, *GEOMETRY_STATE_FEATURES)
+
+
+@dataclass(frozen=True)
+class PairTask:
+    pair: str
+    manifest_path: str
+    context_path: str
+    context_sha256: str
+    geometry_path: str
+    geometry_sha256: str
+    supported_cells: tuple[tuple[str, int, str], ...]
+    run_id: str
+    request_sha256: str
+    overwrite: bool
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Generation 3D direct reaction comparison of clean fresh density arrivals "
+            "with near misses, repeat contacts, and already-inside occupancy."
+        )
+    )
+    parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument("--cohort", choices=("large", "meme"), required=True)
+    parser.add_argument("--preflight-run-id", required=True)
+    parser.add_argument("--g2e-run-id", required=True)
+    parser.add_argument("--run-id", required=True)
+    parser.add_argument("--pairs", default="all")
+    parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument("--overwrite", action="store_true")
+    args = parser.parse_args(argv)
+
+    manifest_path = args.manifest.resolve()
+    manifest = load_manifest(manifest_path)
+    validate_worker_count(args.workers, manifest=manifest)
+    validate_frozen_branch(args.cohort, manifest)
+    pairs = select_pairs(manifest, args.pairs)
+    preflight_dir = G3D_PREFLIGHT_REPORT_ROOT / args.preflight_run_id
+    preflight_artifact_dir = G3D_PREFLIGHT_ARTIFACT_ROOT / args.preflight_run_id
+    g2e_dir = G2E_REPORT_ROOT / args.g2e_run_id
+    preflight_record_path = preflight_dir / "g3d_preflight_run_record.json"
+    preflight_integrity_path = preflight_dir / "g3d_preflight_integrity.json"
+    support_path = preflight_dir / "g3d_comparison_support.parquet"
+    g2e_record_path = g2e_dir / "g2e_reaction_run_record.json"
+    g2e_integrity_path = g2e_dir / "g2e_reaction_integrity.json"
+    context_path = g2e_dir / "g2e_causal_market_context.parquet"
+    supported_cells = validate_sources_and_supported_cells(
+        cohort=args.cohort,
+        pairs=pairs,
+        preflight_record_path=preflight_record_path,
+        preflight_integrity_path=preflight_integrity_path,
+        support_path=support_path,
+        g2e_record_path=g2e_record_path,
+        g2e_integrity_path=g2e_integrity_path,
+    )
+    context_sha256 = sha256_file(context_path)
+    pair_contracts = []
+    for pair in pairs:
+        geometry_path = preflight_artifact_dir / "pair_geometry" / f"{pair_stem(pair)}.parquet"
+        pair_contracts.append(
+            {
+                "pair": pair,
+                "geometry_path": str(geometry_path),
+                "geometry_sha256": sha256_file(geometry_path),
+            }
+        )
+    request = {
+        "schema_version": OUTPUT_SCHEMA_VERSION,
+        "analysis_script_sha256": sha256_file(Path(__file__).resolve()),
+        "manifest_sha256": sha256_file(manifest_path),
+        "frozen_batch_sha256": sha256_file(FROZEN_BATCH),
+        "cohort": args.cohort,
+        "pairs": list(pairs),
+        "preflight_run_id": args.preflight_run_id,
+        "preflight_record_sha256": sha256_file(preflight_record_path),
+        "preflight_integrity_sha256": sha256_file(preflight_integrity_path),
+        "preflight_support_sha256": sha256_file(support_path),
+        "context_path": str(context_path),
+        "context_sha256": context_sha256,
+        "pair_geometry_contracts": pair_contracts,
+        "supported_cells_opened": supported_cells,
+        "actual_event_state": FRESH_STATE,
+        "control_event_states": list(CONTROL_STATES),
+        "matching": {
+            "prior_state_features": list(MATCH_STATE_FEATURES),
+            "near_miss_and_repeat_geometry": (
+                "distance from previous close to the outer zone edge, caliper 0.10 ATR; "
+                "match approach from above and below separately"
+            ),
+            "already_inside_geometry": (
+                "zone half-width, caliper 0.10 ATR; the inside state has no approach side"
+            ),
+            "minimum_event_separation": (
+                "greater than the 1h, 4h, or 24h response horizon before final path purge"
+            ),
+        },
+        "outcomes": (
+            "contact range and volume plus absolute movement, range, volume, absolute "
+            "pressure change, dwell, and crossings over 1h, 4h, and 24h"
+        ),
+        "reaction_outcomes_loaded": True,
+        "direction_prediction": False,
+        "profit_optimization": False,
+    }
+    request_sha256 = stable_json_sha256(request)
+    run_dir = REPORT_ROOT / args.run_id
+    artifact_dir = ARTIFACT_ROOT / args.run_id
+    pair_dir = artifact_dir / "pair_independent_matches"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    pair_dir.mkdir(parents=True, exist_ok=True)
+    record_path = run_dir / "g3d_state_run_record.json"
+    if record_path.is_file() and not args.overwrite:
+        existing = json.loads(record_path.read_text(encoding="utf-8"))
+        if existing.get("request_sha256") != request_sha256:
+            raise ValueError("Run ID already exists with an incompatible request contract.")
+    record = {
+        "schema_version": OUTPUT_SCHEMA_VERSION,
+        "run_id": args.run_id,
+        "status": "running",
+        "started_at_utc": utc_now(),
+        "orchestrator_pid": os.getpid(),
+        "command": [sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]],
+        "request_sha256": request_sha256,
+        "request_contract": request,
+        "baseline": (
+            "The geometry-control stage left one narrow normal isolated swing-density "
+            "lead and a meme clustered activity description, but had not directly compared "
+            "fresh arrivals with the predeclared event states."
+        ),
+        "hypothesis": (
+            "A clean fresh arrival produces a different direction-neutral reaction from a "
+            "clean near miss, a resumed touch, or price already accepted inside the zone."
+        ),
+        "pass_fail": (
+            "Retain only a named response with usable matching balance, at least five coins "
+            "and 50 independent pairs, and the same sign in both validation periods. "
+            "Contradictory event-state controls park the broad fresh-arrival claim."
+        ),
+        "workers": args.workers,
+        "reaction_outcomes_loaded": True,
+        "direction_prediction": False,
+        "profit_optimization": False,
+    }
+    atomic_write_json(record, record_path)
+    frozen_cells = tuple(
+        (
+            str(cell["density_family"]),
+            int(cell["history_hours"]),
+            str(cell["actual_scope"]),
+        )
+        for cell in supported_cells
+    )
+    tasks = [
+        PairTask(
+            pair=row["pair"],
+            manifest_path=str(manifest_path),
+            context_path=str(context_path),
+            context_sha256=context_sha256,
+            geometry_path=row["geometry_path"],
+            geometry_sha256=row["geometry_sha256"],
+            supported_cells=frozen_cells,
+            run_id=args.run_id,
+            request_sha256=request_sha256,
+            overwrite=args.overwrite,
+        )
+        for row in pair_contracts
+    ]
+    try:
+        results = run_tasks(tasks, workers=args.workers)
+        inventory = DataFrame(results)
+        atomic_write_parquet(inventory, run_dir / "g3d_state_pair_inventory.parquet")
+        failures = inventory.loc[inventory["status"].eq("failed")]
+        if not failures.empty:
+            raise RuntimeError(
+                f"{len(failures)} pair task(s) failed; inspect g3d_state_pair_inventory.parquet."
+            )
+        independent = combine_pair_outputs(
+            pair_dir=pair_dir,
+            pairs=pairs,
+            request_sha256=request_sha256,
+        )
+        atomic_write_parquet(independent, artifact_dir / "g3d_independent_pairs.parquet")
+        pair_period = pair_period_results(independent)
+        cohort_period = cohort_period_results(pair_period, independent)
+        leave_one_out = leave_one_coin_out_results(pair_period)
+        atomic_write_parquet(pair_period, run_dir / "g3d_pair_period_results.parquet")
+        atomic_write_parquet(cohort_period, run_dir / "g3d_cohort_period_results.parquet")
+        atomic_write_parquet(leave_one_out, run_dir / "g3d_leave_one_coin_out.parquet")
+        coverage = state_match_coverage(inventory)
+        atomic_write_parquet(coverage, run_dir / "g3d_state_match_coverage.parquet")
+        integrity = integrity_record(
+            results=results,
+            independent=independent,
+            supported_cells=supported_cells,
+            requested_pairs=pairs,
+        )
+        atomic_write_json(integrity, run_dir / "g3d_state_integrity.json")
+        if not integrity["passed"]:
+            raise RuntimeError("G3D event-state integrity validation failed.")
+        record.update(
+            {
+                "status": "completed",
+                "completed_at_utc": utc_now(),
+                "pair_tasks": results,
+                "independent_comparisons": len(independent),
+                "pair_period_rows": len(pair_period),
+                "cohort_period_rows": len(cohort_period),
+                "leave_one_coin_out_rows": len(leave_one_out),
+                "evidence_eligible_rows": int(cohort_period["evidence_eligible"].sum()),
+                "integrity": str(run_dir / "g3d_state_integrity.json"),
+                "bulky_artifacts": str(artifact_dir),
+            }
+        )
+        atomic_write_json(record, record_path)
+    except Exception as exc:
+        record.update(
+            {
+                "status": "failed",
+                "failed_at_utc": utc_now(),
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+        )
+        atomic_write_json(record, record_path)
+        raise
+    return 0
+
+
+def run_tasks(tasks: Sequence[PairTask], *, workers: int) -> list[dict[str, Any]]:
+    if workers == 1:
+        return [safe_build_pair(task) for task in tasks]
+    results: list[dict[str, Any]] = []
+    with ProcessPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(safe_build_pair, task): task for task in tasks}
+        for future in as_completed(futures):
+            results.append(future.result())
+    return sorted(results, key=lambda row: row["pair"])
+
+
+def safe_build_pair(task: PairTask) -> dict[str, Any]:
+    try:
+        return build_pair(task)
+    except Exception as exc:
+        return {"pair": task.pair, "status": "failed", "error": f"{type(exc).__name__}: {exc}"}
+
+
+def build_pair(task: PairTask) -> dict[str, Any]:
+    started = time.perf_counter()
+    output_path = (
+        ARTIFACT_ROOT / task.run_id / "pair_independent_matches" / f"{pair_stem(task.pair)}.parquet"
+    )
+    if output_path.is_file() and not task.overwrite:
+        existing = validate_pair_output(
+            output_path,
+            pair=task.pair,
+            request_sha256=task.request_sha256,
+        )
+        return {
+            "pair": task.pair,
+            "status": "existing",
+            "independent_comparisons": len(existing),
+            "seconds": round(time.perf_counter() - started, 3),
+        }
+    geometry_path = Path(task.geometry_path)
+    context_path = Path(task.context_path)
+    if sha256_file(geometry_path) != task.geometry_sha256:
+        raise ValueError(f"G3D preflight geometry changed: {geometry_path}")
+    if sha256_file(context_path) != task.context_sha256:
+        raise ValueError(f"G2E causal market context changed: {context_path}")
+    geometry = filter_supported_cells(
+        pd.read_parquet(geometry_path),
+        task.supported_cells,
+    )
+    if geometry.empty:
+        raise ValueError(f"No supported G3D geometry for {task.pair}.")
+    manifest = load_manifest(Path(task.manifest_path))
+    base = prepare_base_market_frame(task.pair, manifest)
+    context = pd.read_parquet(context_path)
+    state = causal_local_state(base).merge(
+        context,
+        on="date",
+        how="left",
+        validate="one_to_one",
+    )
+    paths = future_path_matrices(base, max_horizon=24)
+    events = attach_geometry_event_outcomes(
+        pair=task.pair,
+        base=base,
+        state=state,
+        paths=paths,
+        geometry=geometry,
+    )
+    rows, audit = direct_state_match_rows(events, pair=task.pair)
+    matches = DataFrame(rows)
+    if matches.empty:
+        raise ValueError(f"No matchable G3D event-state pairs for {task.pair}.")
+    independent = purge_density_matches(matches)
+    if independent.empty:
+        raise ValueError(f"No independent G3D event-state pairs for {task.pair}.")
+    independent["output_schema_version"] = OUTPUT_SCHEMA_VERSION
+    independent["run_request_sha256"] = task.request_sha256
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_parquet(independent, output_path)
+    return {
+        "pair": task.pair,
+        "status": "completed",
+        "supported_geometry_events": len(geometry),
+        "outcome_event_rows": len(events),
+        "matched_comparisons_before_overlap_purge": len(matches),
+        "independent_comparisons": len(independent),
+        "near_miss_matches": int(independent["control"].eq("event_state__near_miss").sum()),
+        "repeat_contact_matches": int(
+            independent["control"].eq("event_state__repeat_contact").sum()
+        ),
+        "already_inside_matches": int(
+            independent["control"].eq("event_state__already_inside").sum()
+        ),
+        "eligible_actual_events": audit["eligible_actual_events"],
+        "state_matchable_actual_events": audit["state_matchable_actual_events"],
+        "seconds": round(time.perf_counter() - started, 3),
+    }
+
+
+def attach_geometry_event_outcomes(
+    *,
+    pair: str,
+    base: DataFrame,
+    state: DataFrame,
+    paths: dict[str, np.ndarray],
+    geometry: DataFrame,
+) -> DataFrame:
+    frames: list[DataFrame] = []
+    group_columns = ["density_family", "history_hours"]
+    for (family, history_hours), source in geometry.groupby(group_columns, observed=True):
+        source = source.sort_values("base_index", kind="stable").reset_index(drop=True)
+        indexes = source["base_index"].to_numpy(dtype=np.int64)
+        spec = LevelSpec(
+            name=f"{family}__{int(history_hours)}h",
+            family=str(family),
+            batch="g3d",
+            column=f"g3d_{family}_{int(history_hours)}h",
+        )
+        event_time = pd.to_datetime(source["event_time"], utc=True).reset_index(drop=True)
+        events = event_frame(
+            merged=base,
+            paths=paths,
+            indexes=indexes,
+            levels=source["level_price"].to_numpy(dtype=float),
+            widths=source["zone_half_width"].to_numpy(dtype=float),
+            spec=spec,
+            pair=pair,
+            timeframe="1h_causal_density",
+            control="g3d_event_state",
+            zone_method="native_connected_density_zone",
+            source_available=event_time,
+            source_open=event_time - pd.Timedelta(hours=int(history_hours)),
+            horizons=(1, 4, 24),
+            match_tier=None,
+        )
+        if not events["base_index"].equals(source["base_index"]):
+            raise ValueError("G3D outcome reconstruction changed the event order.")
+        if not pd.to_datetime(events["event_time"], utc=True).equals(event_time):
+            raise ValueError("G3D outcome reconstruction changed event timestamps.")
+        for column in (
+            "density_family",
+            "history_hours",
+            "actual_scope",
+            "event_state",
+            "zone_rank",
+            "zone_support_fraction",
+            "overlap_other_density_zone_count",
+            "overlap_reference_level_count",
+            "prior_contact_candles",
+        ):
+            events[column] = source[column].to_numpy()
+        events = attach_state_and_absolute_outcomes(events, state)
+        events["outside_edge_gap_atr"] = np.maximum(
+            pd.to_numeric(events["pre_distance_atr"], errors="coerce")
+            - pd.to_numeric(events["zone_half_width_atr"], errors="coerce"),
+            0.0,
+        )
+        events["state_g3d_zone_half_width_atr"] = pd.to_numeric(
+            events["zone_half_width_atr"], errors="coerce"
+        )
+        events["state_g3d_zone_support_fraction"] = pd.to_numeric(
+            events["zone_support_fraction"], errors="coerce"
+        )
+        events["state_g3d_other_density_zone_count"] = pd.to_numeric(
+            events["overlap_other_density_zone_count"], errors="coerce"
+        )
+        events["state_g3d_reference_level_count"] = pd.to_numeric(
+            events["overlap_reference_level_count"], errors="coerce"
+        )
+        frames.append(events)
+    return pd.concat(frames, ignore_index=True)
+
+
+def matching_geometry_column(control_state: str) -> str:
+    if control_state in {"near_miss", "repeat_contact"}:
+        return "outside_edge_gap_atr"
+    if control_state == "already_inside":
+        return "zone_half_width_atr"
+    raise ValueError(f"Unknown G3D event-state control: {control_state}")
+
+
+def direct_state_match_rows(  # noqa: C901
+    events: DataFrame,
+    *,
+    pair: str,
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    rows: list[dict[str, Any]] = []
+    audit_totals = {"eligible_actual_events": 0, "state_matchable_actual_events": 0}
+    cell_columns = ["density_family", "history_hours", "actual_scope", "period"]
+    for key, cell in events.groupby(cell_columns, observed=True):
+        fresh = cell.loc[cell["event_state"].eq(FRESH_STATE)].reset_index(drop=True)
+        if fresh.empty:
+            continue
+        for control_state in CONTROL_STATES:
+            controls = cell.loc[cell["event_state"].eq(control_state)].reset_index(drop=True)
+            if controls.empty:
+                continue
+            geometry_column = matching_geometry_column(control_state)
+            approaches: tuple[str, ...]
+            if control_state in {"near_miss", "repeat_contact"}:
+                approaches = ("from_below", "from_above")
+            else:
+                approaches = ("all_explicit_approaches",)
+            for approach in approaches:
+                if approach == "all_explicit_approaches":
+                    left = fresh.loc[
+                        fresh["approach_state"].isin(("from_below", "from_above"))
+                    ].copy()
+                    right = controls.copy()
+                else:
+                    left = fresh.loc[fresh["approach_state"].eq(approach)].copy()
+                    right = controls.loc[controls["approach_state"].eq(approach)].copy()
+                if left.empty or right.empty:
+                    continue
+                left["raw_pre_distance_atr"] = left["pre_distance_atr"]
+                right["raw_pre_distance_atr"] = right["pre_distance_atr"]
+                left["pre_distance_atr"] = left[geometry_column]
+                right["pre_distance_atr"] = right[geometry_column]
+                for response_window, outcomes in OUTCOMES_BY_RESPONSE_WINDOW.items():
+                    independence_hours = SEPARATION_HOURS_BY_RESPONSE_WINDOW[response_window]
+                    pairs, audit = nearest_state_pairs(
+                        left,
+                        right,
+                        state_columns=MATCH_STATE_FEATURES,
+                        pre_distance_atr_caliper=0.10,
+                        minimum_event_separation_hours=independence_hours,
+                    )
+                    audit_totals["eligible_actual_events"] += int(audit["eligible_actual"])
+                    audit_totals["state_matchable_actual_events"] += int(
+                        audit["state_matchable_actual"]
+                    )
+                    for left_position, right_position, distance in pairs:
+                        actual = left.iloc[left_position]
+                        control = right.iloc[right_position]
+                        separation = abs(
+                            (
+                                pd.Timestamp(actual["event_time"])
+                                - pd.Timestamp(control["event_time"])
+                            ).total_seconds()
+                            / 3600.0
+                        )
+                        row: dict[str, Any] = {
+                            "pair": pair,
+                            "route_id": "g3d_fresh_arrival_vs_event_state",
+                            "density_family": key[0],
+                            "history_hours": int(key[1]),
+                            "level_name": f"{key[0]}__{int(key[1])}h",
+                            "actual_scope": key[2],
+                            "control": f"event_state__{control_state}",
+                            "period": key[3],
+                            "approach_state": approach,
+                            "response_window": response_window,
+                            "actual_event_state": FRESH_STATE,
+                            "control_event_state": control_state,
+                            "matching_geometry": geometry_column,
+                            "actual_event_time": actual["event_time"],
+                            "control_event_time": control["event_time"],
+                            "actual_base_index": int(actual["base_index"]),
+                            "control_base_index": int(control["base_index"]),
+                            "actual_source_available_at": actual["source_available_at"],
+                            "control_source_available_at": control["source_available_at"],
+                            "actual_source_open": actual["source_open"],
+                            "control_source_open": control["source_open"],
+                            "actual_zone_rank": int(actual["zone_rank"]),
+                            "actual_zone_support_fraction": float(actual["zone_support_fraction"]),
+                            "control_zone_support_fraction": float(
+                                control["zone_support_fraction"]
+                            ),
+                            "match_distance": float(distance),
+                            "pre_distance_atr_abs_difference": abs(
+                                float(actual[geometry_column]) - float(control[geometry_column])
+                            ),
+                            "actual_raw_pre_distance_atr": float(actual["raw_pre_distance_atr"]),
+                            "control_raw_pre_distance_atr": float(control["raw_pre_distance_atr"]),
+                            "event_separation_hours": separation,
+                            "actual_overlap_density_zone_count": int(
+                                actual["overlap_other_density_zone_count"] + 1
+                            ),
+                            "control_overlap_density_zone_count": int(
+                                control["overlap_other_density_zone_count"] + 1
+                            ),
+                            "actual_overlap_other_density_surface_count": np.nan,
+                            "control_overlap_other_density_surface_count": np.nan,
+                            "actual_overlap_reference_level_count": int(
+                                actual["overlap_reference_level_count"]
+                            ),
+                            "control_overlap_reference_level_count": int(
+                                control["overlap_reference_level_count"]
+                            ),
+                            "matching_state_features": ";".join(MATCH_STATE_FEATURES),
+                            "eligible_actual_events": int(audit["eligible_actual"]),
+                            "eligible_control_events": int(audit["eligible_control"]),
+                            "geometry_eligible_actual_events": int(
+                                audit["geometry_eligible_actual"]
+                            ),
+                            "state_matchable_actual_events": int(audit["state_matchable_actual"]),
+                            "direction_prediction": False,
+                            "profit_optimization": False,
+                        }
+                        for outcome in outcomes:
+                            actual_value = float(actual[outcome])
+                            control_value = float(control[outcome])
+                            row[f"actual__{outcome}"] = actual_value
+                            row[f"control__{outcome}"] = control_value
+                            row[f"delta__{outcome}"] = actual_value - control_value
+                        for feature in MATCH_STATE_FEATURES:
+                            row[f"actual_state__{feature}"] = float(actual[feature])
+                            row[f"control_state__{feature}"] = float(control[feature])
+                        rows.append(row)
+    return rows, audit_totals
+
+
+def state_match_coverage(inventory: DataFrame) -> DataFrame:
+    columns = [
+        "pair",
+        "near_miss_matches",
+        "repeat_contact_matches",
+        "already_inside_matches",
+        "eligible_actual_events",
+        "state_matchable_actual_events",
+    ]
+    return inventory.loc[:, [column for column in columns if column in inventory]].copy()
+
+
+def integrity_record(
+    *,
+    results: Sequence[dict[str, Any]],
+    independent: DataFrame,
+    supported_cells: Sequence[dict[str, Any]],
+    requested_pairs: Sequence[str],
+) -> dict[str, Any]:
+    failures = [row for row in results if row["status"] == "failed"]
+    allowed_cells = {
+        (str(row["density_family"]), int(row["history_hours"]), str(row["actual_scope"]))
+        for row in supported_cells
+    }
+    observed_cells = {
+        (str(row.density_family), int(row.history_hours), str(row.actual_scope))
+        for row in independent[["density_family", "history_hours", "actual_scope"]].itertuples(
+            index=False
+        )
+    }
+    separation = pd.to_numeric(independent["event_separation_hours"], errors="coerce")
+    required = independent["response_window"].map(SEPARATION_HOURS_BY_RESPONSE_WINDOW)
+    separation_violations = int((separation < required).sum())
+    geometry_difference = pd.to_numeric(
+        independent["pre_distance_atr_abs_difference"], errors="coerce"
+    )
+    direction_violations = int(independent["direction_prediction"].ne(False).sum())
+    profit_violations = int(independent["profit_optimization"].ne(False).sum())
+    actual_state_violations = int(independent["actual_event_state"].ne(FRESH_STATE).sum())
+    control_state_violations = int((~independent["control_event_state"].isin(CONTROL_STATES)).sum())
+    present_pairs = sorted(independent["pair"].astype(str).unique())
+    duplicate_rows = int(
+        independent.duplicated(
+            [
+                "route_id",
+                "density_family",
+                "history_hours",
+                "actual_scope",
+                "control",
+                "pair",
+                "period",
+                "approach_state",
+                "response_window",
+                "actual_event_time",
+                "control_event_time",
+            ]
+        ).sum()
+    )
+    return {
+        "created_at_utc": utc_now(),
+        "passed": bool(
+            not failures
+            and not independent.empty
+            and observed_cells.issubset(allowed_cells)
+            and set(present_pairs) == set(requested_pairs)
+            and separation_violations == 0
+            and geometry_difference.le(0.1000001).all()
+            and direction_violations == 0
+            and profit_violations == 0
+            and actual_state_violations == 0
+            and control_state_violations == 0
+            and duplicate_rows == 0
+        ),
+        "failures": failures,
+        "independent_comparisons": len(independent),
+        "allowed_cells": sorted(allowed_cells),
+        "observed_cells": sorted(observed_cells),
+        "requested_pairs": list(requested_pairs),
+        "present_pairs": present_pairs,
+        "controls_present": sorted(independent["control"].astype(str).unique()),
+        "periods_present": sorted(independent["period"].astype(str).unique()),
+        "separation_violations": separation_violations,
+        "matching_geometry_difference_max": float(geometry_difference.max()),
+        "direction_prediction_violations": direction_violations,
+        "profit_optimization_violations": profit_violations,
+        "actual_state_violations": actual_state_violations,
+        "control_state_violations": control_state_violations,
+        "duplicate_independent_rows": duplicate_rows,
+        "direction_prediction": False,
+        "profit_optimization": False,
+    }
+
+
+def validate_pair_output(path: Path, *, pair: str, request_sha256: str) -> DataFrame:
+    frame = pd.read_parquet(path)
+    if frame.empty or set(frame["pair"].astype(str)) != {pair}:
+        raise ValueError(f"Existing output has an incompatible pair: {path}")
+    if set(frame["output_schema_version"].astype(int)) != {OUTPUT_SCHEMA_VERSION}:
+        raise ValueError(f"Existing output has an incompatible schema: {path}")
+    if set(frame["run_request_sha256"].astype(str)) != {request_sha256}:
+        raise ValueError(f"Existing output belongs to another request: {path}")
+    return frame
+
+
+def combine_pair_outputs(*, pair_dir: Path, pairs: Sequence[str], request_sha256: str) -> DataFrame:
+    return pd.concat(
+        [
+            validate_pair_output(
+                pair_dir / f"{pair_stem(pair)}.parquet",
+                pair=pair,
+                request_sha256=request_sha256,
+            )
+            for pair in pairs
+        ],
+        ignore_index=True,
+    )
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

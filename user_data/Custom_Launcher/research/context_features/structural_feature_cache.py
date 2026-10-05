@@ -50,6 +50,8 @@ VP_COLUMNS = (
     "poc_delta_ratio",
     "entropy",
     "concentration",
+    "hvn_above",
+    "hvn_below",
     "hvn_above_distance_pct",
     "hvn_below_distance_pct",
     "lvn_above_distance_pct",
@@ -93,10 +95,14 @@ TLV2_COLUMNS = (
     "resistance_score_rank0",
     "resistance_distance_atr_rank0",
     "resistance_slope_atr_per_bar_rank0",
+    "resistance_pivot_count_rank0",
+    "resistance_last_confirm_index_rank0",
     "support_line_rank0",
     "support_score_rank0",
     "support_distance_atr_rank0",
     "support_slope_atr_per_bar_rank0",
+    "support_pivot_count_rank0",
+    "support_last_confirm_index_rank0",
 )
 
 MS_COLUMNS = (
@@ -157,6 +163,7 @@ def main() -> int:
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--latest", type=Path, default=DEFAULT_LATEST)
     parser.add_argument("--timeframes", default="1h,4h,1d")
+    parser.add_argument("--file-suffix", default="")
     parser.add_argument("--start", default="")
     parser.add_argument("--end", default="")
     parser.add_argument("--warmup-days", type=int, default=240)
@@ -172,6 +179,7 @@ def main() -> int:
         "start": args.start,
         "end": args.end,
         "warmup_days": int(args.warmup_days),
+        "file_suffix": str(args.file_suffix),
         "vp": {"window": 96, "bins": 48, "value_area_pct": 0.70, "price_source": "hlc3"},
         "tlv2": {"raw_line_output_count": 1, "min_output_line_score": 0.50},
         "ms": {"include_sequence": True, "include_diagnostics": True},
@@ -197,6 +205,7 @@ def main() -> int:
         parse_bound(args.start),
         parse_bound(args.end),
         int(args.warmup_days),
+        str(args.file_suffix),
     )
     frame, dropped_all_null = drop_all_null_numeric_columns(frame)
     summary["dropped_all_null_numeric_columns"] = dropped_all_null
@@ -221,15 +230,23 @@ def build_structural_cache(
     start: pd.Timestamp | None = None,
     end: pd.Timestamp | None = None,
     warmup_days: int = 240,
+    file_suffix: str = "",
 ) -> tuple[DataFrame, dict[str, Any]]:
     warmup_start = start - pd.Timedelta(days=int(warmup_days)) if start is not None else None
-    base = load_ohlcv(data_dir / f"{pair_stem}-1h.feather", "1h", warmup_start, end)
+    base = load_ohlcv(
+        data_dir / f"{pair_stem}-1h{file_suffix}.feather", "1h", warmup_start, end
+    )
     output = base[["date", "open", "high", "low", "close", "volume"]].copy()
     output["canonical_pair"] = pair_stem.replace("_", "/")
     stats: dict[str, Any] = {"timeframe_rows": {}, "config_hash": config_hash(config)}
     for timeframe in timeframes:
         print(f"building {timeframe} structural indicators on {pair_stem}...", flush=True)
-        source = load_ohlcv(data_dir / f"{pair_stem}-{timeframe}.feather", timeframe, warmup_start, end)
+        source = load_ohlcv(
+            data_dir / f"{pair_stem}-{timeframe}{file_suffix}.feather",
+            timeframe,
+            warmup_start,
+            end,
+        )
         featured = add_indicator_family(source, timeframe, include_geometry)
         compact = select_structural_columns(featured, timeframe, include_geometry)
         stats["timeframe_rows"][timeframe] = int(len(compact))

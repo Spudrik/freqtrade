@@ -4,7 +4,7 @@ default_read: routed
 owner: user+agent
 purpose: Strict rules for promoting named hypotheses into FreqAI queues.
 do_not_use_for: Loose feature discovery or strategy promotion.
-last_rebuilt: 2026-06-10
+last_rebuilt: 2026-09-09
 ---
 
 
@@ -15,6 +15,14 @@ last_rebuilt: 2026-06-10
 FreqAI promotion is not feature fishing. A candidate must be a named trader-readable hypothesis that survived data checks, direct tests, controls, baselines, and ablations.
 
 Use `rules_freqai_feature_discovery.md` for loose early exploration. Use this file only when deciding whether a named hypothesis is ready for a FreqAI queue.
+
+Objective 02b Section 15.4, revised by the user on 19 September 2026, allows components
+to qualify for direction, activity, location or conditional roles separately; a
+mandatory joint reaction-and-direction floor no longer gates every candidate. This
+does not change the queue-specific AUC thresholds below or bypass direct controls,
+queue preflight, portability, or later strategy and risk validation. A proposed
+combination must be evaluated for its own named role, not assumed to inherit the
+components' success rates.
 
 ## Required before queueing
 
@@ -28,6 +36,31 @@ Use `rules_freqai_feature_discovery.md` for loose early exploration. Use this fi
 8. Required source groups have real coverage in the selected window.
 9. Missing source data remains missing and is not converted into quiet/balanced states.
 10. The direct-test report row for the exact selected threshold settings exists.
+11. The intended market scope is frozen as broad top-coin, coin-group-specific, or asset-specific, with exact eligible pairs and independent grouping rationale.
+12. For event work, the hypothesis names the exact link, pair, or maximum three-block
+    chain in the event hierarchy rather than submitting every available feature.
+13. Event selection is independent of later price movement, and scheduled and
+    unexpected events are kept as separate evidence groups.
+14. Development, validation, and untouched confirmation are split by whole event;
+    observations from one event never cross those boundaries.
+15. The call/abstention rule is frozen and its expected coverage is reported.
+16. Accepted market facts are listed so the queue does not retest an established
+    premise.
+17. Every input block has a decision-time role: background, driver/trigger,
+    confirmation, modifier, accumulator, duplicate/substitute, or outcome.
+18. Raw outcome and change from a matched expected path are defined separately.
+19. The hypothesis states whether it claims independent prediction, later
+    confirmation, or a conditional change in another influence.
+
+## Market-Scope Promotion Rule
+
+1. A candidate that fails a broad top-coin threshold may still proceed as a coin-group or asset-specific candidate when that narrower scope was predeclared or independently confirmed on later unseen data.
+2. A group selected because its members happened to be positive in the same evaluated result is not promotion evidence. Freeze it as a new hypothesis and repeat it later.
+3. A group-specific candidate must report every member, adequate support per member, chronological repetition, non-member comparison where relevant, and whether one member dominates.
+4. A BTC-only or other asset-specific candidate must remain restricted to that asset and reproduce across multiple windows and later unseen data.
+5. Promotion thresholds apply inside the declared eligible scope; they do not convert a specialist result into a general crypto claim.
+6. A meme-cohort candidate is restricted to the exact frozen `10` most traded eligible
+   meme coins ranked under Objective 02b's pre-outcome turnover and coverage contract.
 
 ## Direct-test minimums before FreqAI
 
@@ -53,6 +86,38 @@ For continuous/path targets:
 4. Price/structure baseline lift must be reported.
 5. Monthly/rolling stability should be reported where enough rows exist.
 6. Continuous/path results must say whether the score helps with target selection, stop tightening, add/reduce decisions, drawdown warning, or continuation ranking.
+
+For event-driven targets, monthly stability does not substitute for independent-event
+repetition. Report results per whole event, check whether one event dominates, compare
+BTC, ETH, and broad-market leadership where relevant, and reserve untouched events for
+the final confirmation layer.
+
+## Conditional-Interaction Promotion Rule
+
+A factor does not need a strong unconditional average when its declared role is to
+modify another influence. Such a candidate may enter a bounded FreqAI queue only when:
+
+1. the primary influence and proposed modifier are trader-readable and timestamp-safe;
+2. the modifier role is named as amplification, suppression, reversal, gating,
+   accumulation, override, delay, shortening, or transmission blocking;
+3. development evidence compares the primary influence with and without the modifier
+   on comparable eligible rows, including neither/A-only/B-only/both cells where
+   support permits;
+4. the context definition is frozen before validation and untouched whole-event
+   confirmation;
+5. activation frequency, cell support, conflicting episodes, and concentration are
+   reported;
+6. duplicated stories, correlated indicators, adjacent timeframes, and multiple coins
+   inside one event are not counted as independent components or confirmations;
+7. post-event confirmation is not presented as a rival root cause or pre-event
+   prediction; and
+8. FreqAI feature importance is treated only as a discovery clue and the conditional
+   relationship survives readable summaries, block removal, and later data.
+
+For an independent or additive forecast claim, retain the normal requirement to beat
+the relevant simpler models. For a modifier claim, require reproducible change in the
+primary relationship inside the frozen context; do not reject it merely because the
+modifier alone has weak AUC or correlation.
 
 ## Threshold-sweep promotion rule
 
@@ -99,6 +164,16 @@ Each queued experiment needs:
 4. Do not treat one good threshold as robust unless neighbouring thresholds also work or there is a clear trader reason for a sharp threshold.
 5. Do not treat one event window as general unless the result is explicitly labelled event-window-specific.
 6. Do not promote a model that beats random but fails the price/structure baseline, unless the objective is explicitly to create a non-price diagnostic feature rather than an entry/risk rule.
+7. Do not count many candles, coins, or forecast horizons from one event as many
+   independent confirmations.
+8. Do not improve apparent accuracy by silently discarding abstentions or shrinking
+   coverage after seeing outcomes.
+9. Do not control on a market response caused after an event when estimating the
+   event's total influence.
+10. Do not treat a final negative candle as proof that positive information had no
+    effect, or vice versa; compare the complete path and matched expected outcome.
+11. Do not promote a conditional story that was invented after opening confirmation
+    outcomes. Development-discovered conditions require a newly frozen later test.
 
 ## Output verdicts
 

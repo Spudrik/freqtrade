@@ -4,14 +4,14 @@ default_read: no
 owner: user+agent
 purpose: Compact programme-level objective, milestone, workstream, and roadmap traceability.
 do_not_use_for: Current task authority, subsystem implementation rules, raw results, or source-readiness details.
-last_rebuilt: 2026-07-13
+last_rebuilt: 2026-10-05
 ---
 
 # Programme Overview
 
 ## 1. Authority
 
-This file is a non-governing traceability point. Start actual work from `../00_project_control/objective_current.md` and its routed documents. Use this overview to understand how the active objective fits the wider programme, then read only the relevant track.
+This file is a non-governing traceability point. Start actual work from the repo-root `AGENTS.md` and the user's latest explicit request. Use this overview only to understand how the requested task fits the wider programme, then read the relevant track.
 
 ## 2. Long-term objective
 
@@ -26,24 +26,25 @@ Build one Freqtrade master strategy that:
 
 ## 3. Current programme snapshot
 
-- **Active stage:** Sieve3 exit development with selected entry parameters locked.
-- **Immediate question:** does the refined target-zone/invalidation/layered design encode more coherent and effective exits than the older generic Sieve3 branches?
-- **Decision consequence:** if the refined design passes matched evidence and execution review, untested legacy exits become bounded regeneration/rework candidates rather than automatically continuing unchanged.
-- **Entry-position gap:** later same-direction signal adds were tested, but a systematic structural top/middle/bottom entry-zone ladder was not found.
-- **Pattern lane:** pattern entries remain logically separate because exact conditions are rare and need family-specific coverage and exit contracts.
-- **FreqAI/data position:** useful correlations exist, but source history and continuous timestamp-safe overlap remain too short or inconsistent for a dependable final risk layer.
-- **Integration position:** entry registry, evidence weights, exit-role selection, staggered-entry validation, and dynamic risk integration remain unfinished.
+- **Active stage:** bounded comparative PAPER trial under Objective 03; PAPER is the primary evidence surface, not another open-ended research queue.
+- **Snapshot:** 16 paper identities (9 active, 5 draining, 2 parked), including four distinct Sieve-derived entry sources. Recent startup/heartbeat activity is not proof of trade quality or profitability.
+- **Evidence boundary:** the trial is still evaluating behavior; it does not establish durable profitability or authorize live trading.
+- **Research disposition:** Sieve discovery, Objective 02b reaction/event-direction work, and FreqAI risk research are preserved as historical leads. Reopen only through explicit scope review and the applicable objective/rules.
+- **Data and interpretation caveats:** short/uneven source coverage limits conclusions; activity/readiness is not direction or causation, and a downstream volume response is not a competing news cause.
+- **Configuration recovery:** the four credential-bearing local configs remain excluded. Their `.example.json` templates preserve strategy/risk/schema fields with credential placeholders; copy a template to its expected local name and configure local credentials before use. Placeholders are not a launch guard, so the examples are not launch-ready. Recovery pins stay local and require approved review; do not launch clones blindly from historical run records.
 
 ## 4. Governing objective map
 
 | Document | Relationship to this programme | Authority |
 |---|---|---|
-| `../00_project_control/objective_current.md` | Current Sieve3 exit-development task contract. | Governing and always current. |
+| Repo-root `AGENTS.md` plus the user's latest request | Active task routing and scope. | Governing for current work. |
 | `../00_project_control/objectives_master.md` | Static map of the wider Sieve-first programme. | Governing when stage or scope is unclear/changing. |
 | `../01_objectives/objective_02_master_strategy_architecture.md` | Long-term multi-entry, multi-source integration architecture. | Routed; governing when integration is active. |
 | `../01_objectives/objective_02a_strategy_refinement.md` | Candidate refinement objective. | Routed; use only when explicitly active. |
-| `../01_objectives/objective_02c_orderbook_confluence.md` | Orderbook confirmation/risk objective. | Parked by the current objective unless reopened. |
-| `../01_objectives/objective_02d_news_context_integration.md` | News/context integration objective. | Parked unless source readiness and the user reopen it. |
+| `../01_objectives/objective_02b_market_reaction_zone_discovery.md` | Historical reaction-zone and event-driven market-hierarchy research. | Preserve evidence; not the current execution queue. |
+| `../01_objectives/objective_03_comparative_paper_trial.md` | Bounded comparative paper-trial stage. | Active and governing for the current stage. |
+| `../01_objectives/objective_02c_orderbook_confluence.md` | Historical standalone orderbook confirmation/risk objective. | Any bounded paper context use follows active Objective 03 and source-specific readiness; Objective 02b is historical. |
+| `../01_objectives/objective_02d_news_context_integration.md` | Historical standalone news/context integration objective. | Any bounded paper context use follows active Objective 03 and source-specific readiness; Objective 02b is historical. |
 | `../01_objectives/objective_02e_generic_ta_integration.md` | Generic-TA side-lane objective. | Routed/parked; not the current discovery lane. |
 
 Traceability does not declare an objective obsolete. If an older objective appears inconsistent, mark it `needs reconciliation` here and ask before editing the objective itself.
@@ -52,13 +53,11 @@ Traceability does not declare an objective obsolete. If an older objective appea
 
 | Track | Current state | Next material milestone |
 |---|---|---|
-| Sieve entry/exit | Refined Sieve3 exit validation active; broad legacy testing incomplete. | Complete comparison and decide continue versus regenerate/rework. |
-| Core indicators | Structure/level vocabulary is usable; some reference/code drift may exist. | Record only a material indicator redesign or completed new contract. |
-| Pattern indicators | Separate rare-signal lane with family-specific rules and sparse evidence. | Validate adequate pair/window coverage and coherent pattern exits. |
-| FreqAI risk/weighting | Several trader-readable leads; no promotion-grade continuous evidence. | Reopen with named hypotheses and clean temporal/cross-pair controls. |
-| Historical data | Large local repository is partial; historical gaps constrain clean blocks. | Produce a materially improved continuous, timestamp-safe block. |
-| Live data | Collectors/snapshots exist; history and strict multi-source overlap are short. | Accumulate and validate longer live continuity. |
-| Master integration | Architecture defined; evidence registry and weighting are not built. | Consolidate retained entries/exits after Sieve3 design settles. |
+| Sieve entry/exit | Historical discovery/exit evidence retained; four distinct selected sources feed the paper comparison. | Use Objective 03 ledgers for current paper dispositions; no new batch by default. |
+| Core and pattern indicators | Historical reaction-zone vocabulary and coverage limitations retained. | No active indicator redesign in the paper stage. |
+| FreqAI risk/weighting | Historical leads only; audited caveats limit old headline/model claims. | Parked unless explicitly reopened under a named objective. |
+| Historical and live data | Partial history and short/uneven external-source overlap constrain inference. | Keep quality/coverage limits attached to retained conclusions. |
+| Master integration | Existing comparative PAPER combinations are authorized by Objective 03; the canonical full/live master remains unassembled and unapproved. | Keep canonical-master assembly parked pending separate approval. |
 
 ## 6. Major chronology
 
@@ -72,25 +71,25 @@ Traceability does not declare an objective obsolete. If an older objective appea
 | 11 June | Competing non-Sieve discovery was retired. | Sieve owns discovery; FreqAI/context/orderbook remain later overlays. |
 | 13 June-10 July | Large Sieve3 exit families were generated and partly tested. | Exit utility varies by source; generic naming does not prove coherent behaviour. |
 | 11 July onward | Refined target/invalidation/layered exit comparison began. | This is a validation gate for the exit design and possible legacy regeneration. |
+| 7 August | Post-Sieve3 evidence gate defined | A Sieve-linked event-reaction stage was defined and was later superseded by the market-first Objective 02b on 12 August. | Superseded programme stage. |
+| 12 August | Market-first reaction-zone objective activated | Sieve entries/exits stopped being the prerequisite surface. Research now starts from causal indicator levels, level clusters, controls, and non-directional reaction measurements. | `../01_objectives/objective_02b_market_reaction_zone_discovery.md`. |
+| 3 September | Event-driven market hierarchy activated | Existing reaction confirmations remain frozen; the next direction stage now tests slow background, major events, market leadership, coin-group transmission, local modifiers, and post-event ranges in five breadth-first layers. | `../01_objectives/objective_02b_market_reaction_zone_discovery.md`. |
+| 26 September-5 October | Comparative PAPER trial became the primary stage | Four distinct Sieve-derived entry sources are compared in bounded paper operation. The 5 October snapshot records 16 identities (9 active, 5 draining, 2 parked); this is operational evidence, not a profitability claim. | `../01_objectives/objective_03_comparative_paper_trial.md`; `../04_results/results_recent_summary.md`. |
 
 ## 7. Cross-track roadmap
 
-1. Settle the refined Sieve3 exit-design question.
-2. Build the compact entry/exit evidence view and retain genuinely distinct exit roles.
-3. Consolidate the retained entry registry and measure overlap.
-4. Test structural price-zone staggering against one-shot and later-signal adds.
-5. Improve historical and live data continuity while preserving explicit gaps/freshness.
-6. Revalidate a small set of trader-readable FreqAI risk hypotheses.
-7. Define static entry weights, bounded dynamic risk multipliers, and stateful position management.
-8. Assemble and ablate the final master strategy before any dry-run freeze.
+1. Keep the comparative paper trial bounded and use Objective 03 plus its linked ledgers as the current authority.
+2. Preserve the 16-identity disposition (9 active, 5 draining, 2 parked) and the rule that startup/heartbeat activity is not a quality or profitability result.
+3. Carry historical Sieve, reaction-zone, FreqAI, and context findings with their audit and source-coverage caveats; do not restart them as an unbounded queue.
+4. Keep new canonical full/live master assembly and live trading outside this stage unless explicitly approved; the existing comparative PAPER combinations remain governed by Objective 03.
 
 ## 8. Track links
 
 - Sieve entry/exit: `tracks/sieve_entry_exit.md`
+- Current paper trial: `../01_objectives/objective_03_comparative_paper_trial.md`; `../04_results/results_recent_summary.md`
 - Core indicators: `tracks/indicators_core.md`
 - Pattern indicators: `tracks/indicators_patterns.md`
 - FreqAI risk/weighting: `tracks/freqai_risk_weighting.md`
 - Historical data: `tracks/data_historical.md`
 - Live data: `tracks/data_live.md`
 - Master integration: `tracks/master_integration.md`
-

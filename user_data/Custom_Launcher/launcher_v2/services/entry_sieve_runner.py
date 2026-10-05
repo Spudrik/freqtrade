@@ -1915,13 +1915,10 @@ def _adaptive_hyperopt_jobs(
     max_hyperopt_jobs: int,
     max_cores_allowed: int,
     backtest_worker_count: int,
-    completed_hyperopts: int,
     waiting_backtests: int,
     running_backtests: int,
 ) -> int:
     max_jobs = max(1, min(max_hyperopt_jobs, max_cores_allowed))
-    if completed_hyperopts < max(1, max_cores_allowed):
-        return max_jobs
     backlog = max(0, waiting_backtests + running_backtests)
     if backlog <= 0:
         return max_jobs
@@ -2401,7 +2398,6 @@ def main(argv: list[str] | None = None) -> int:
                         max_hyperopt_jobs=max_hyperopt_jobs,
                         max_cores_allowed=max_cores_allowed,
                         backtest_worker_count=backtest_worker_count,
-                        completed_hyperopts=run_index - 1,
                         waiting_backtests=len(waiting_batches),
                         running_backtests=len(running_batches),
                     )

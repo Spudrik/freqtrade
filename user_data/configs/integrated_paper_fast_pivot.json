@@ -1,0 +1,6 @@
+{
+  "bot_name": "paper_fast_pivot",
+  "strategy": "PaperFastPivot",
+  "db_url": "sqlite:///user_data/research_news_data/context_features/integrated_paper_20260926/fast_pivot_trades.sqlite",
+  "force_entry_enable": false
+}

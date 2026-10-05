@@ -4,7 +4,7 @@ default_read: routed
 owner: user+agent
 purpose: Objective routing contract for news/context integration.
 do_not_use_for: Default active trading research while parked.
-last_rebuilt: 2026-06-10
+last_rebuilt: 2026-09-04
 ---
 
 
@@ -16,7 +16,14 @@ Keep news/GDELT/GKG/web/global/context as a long-term integration goal, while pr
 
 ## Current status
 
-Parked. Resume only when the user says a dataset is ready or a source-readiness report proves a specific source block/window is usable.
+Parked as a programme-wide rebuild. Resume broadly only when the user says a dataset is
+ready or a source-readiness report proves a specific source block/window is usable.
+
+Objective 02b currently authorizes one bounded, outcome-blind semantic-data pilot over
+immutable snapshots of the existing live history. That pilot may assess and improve a
+small story sample before an incremental market-value test. It does not authorize a
+full backfill, production pipeline replacement, broad news FreqAI queue, or global
+resumption of this objective.
 
 ## In scope when resumed
 

@@ -1,0 +1,23 @@
+{
+  "bot_name": "paper_news_lab",
+  "strategy": "PaperNewsManual",
+  "fiat_display_currency": "",
+  "db_url": "sqlite:///user_data/research_news_data/context_features/integrated_paper_20260926/news_lab_trades.sqlite",
+  "force_entry_enable": true,
+  "api_server": {
+    "enabled": true,
+    "listen_ip_address": "127.0.0.1",
+    "listen_port": 8098,
+    "verbosity": "error",
+    "enable_openapi": false,
+    "jwt_secret_key": "CHANGE_ME_LOCAL_SECRET_NOT_FOR_RUNTIME",
+    "CORS_origins": [],
+    "username": "CHANGE_ME_LOCAL_USERNAME",
+    "password": "CHANGE_ME_LOCAL_SECRET_NOT_FOR_RUNTIME",
+    "ws_token": "CHANGE_ME_LOCAL_SECRET_NOT_FOR_RUNTIME"
+  },
+  "paper_manual_limits": {
+    "max_stake_pct": 0.25,
+    "max_leverage": 5
+  }
+}

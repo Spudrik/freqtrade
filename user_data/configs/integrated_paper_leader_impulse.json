@@ -1,0 +1,7 @@
+{
+  "initial_state": "paused",
+  "bot_name": "paper_leader_impulse",
+  "strategy": "PaperLeaderImpulse",
+  "db_url": "sqlite:///user_data/research_news_data/context_features/integrated_paper_20260926/leader_impulse_trades.sqlite",
+  "force_entry_enable": false
+}

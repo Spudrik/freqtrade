@@ -13,7 +13,7 @@ last_rebuilt: 2026-07-13
 
 This folder explains how the research programme evolved, where each workstream stands, and why later stages exist. It is a handoff and review layer, not a governing layer.
 
-1. `../00_project_control/objective_current.md` remains the active objective.
+1. The user's latest explicit request remains the active task contract; route through repo-root `AGENTS.md`.
 2. Routed objectives, rules, status files, result ledgers, runtime JSONL, and backtest archives remain authoritative for their own content.
 3. Traceability files summarize milestones and link to that evidence. They do not supersede it.
 4. If traceability conflicts with a current routed document, follow the routed document and flag the traceability note for coordinator review.
@@ -26,7 +26,7 @@ Read traceability only when:
 2. the user asks what has been done, what is active, or what remains;
 3. a named research stage starts, finishes, reopens, is parked, or changes direction;
 4. a cross-track decision requires the wider programme context; or
-5. the current objective or coordinating agent explicitly routes here.
+5. the user or coordinating agent explicitly routes here.
 
 For orientation, read `program_overview.md` and then only the relevant track. Do not read every track. Routine implementation and individual batch work should normally skip this folder.
 
@@ -73,4 +73,3 @@ Do not add seed rows, batch narratives, parameter dumps, broad metric tables, ge
 | `tracks/data_historical.md` | Historical acquisition, backfills, extraction, gaps, and reproducible coverage. |
 | `tracks/data_live.md` | Live collectors, freshness, outages, snapshots, and live overlap. |
 | `tracks/master_integration.md` | Static entry weights, overlap, signal voting, trade state, and final integration. |
-

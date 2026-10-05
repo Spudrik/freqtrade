@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "timezone": "UTC",
+  "note": "Paper-only official release clocks; validate weekly. An unavailable or changed release remains a monitoring item, not proof of event causation.",
+  "events": [
+    {"id": "us_jolts_sep29", "release_utc": "2026-09-29T14:00:00Z", "family": "us_jobs", "auto_eligible": false, "source": "https://www.bls.gov/schedule/2026/"},
+    {"id": "us_pce_gdp_sep30", "release_utc": "2026-09-30T12:30:00Z", "family": "us_pce_gdp", "auto_eligible": true, "source": "https://www.bea.gov/news/schedule"},
+    {"id": "jp_tankan_oct01", "release_utc": "2026-09-30T23:50:00Z", "family": "japan_tankan", "auto_eligible": false, "source": "https://www.boj.or.jp/en/about/calendar/index.htm"},
+    {"id": "us_jobs_oct02", "release_utc": "2026-10-02T12:30:00Z", "family": "us_jobs", "auto_eligible": true, "source": "https://www.bls.gov/schedule/2026/"},
+    {"id": "us_cpi_oct14", "release_utc": "2026-10-14T12:30:00Z", "family": "us_cpi", "auto_eligible": true, "source": "https://www.bls.gov/schedule/2026/"},
+    {"id": "us_ppi_oct15", "release_utc": "2026-10-15T12:30:00Z", "family": "us_ppi", "auto_eligible": true, "source": "https://www.bls.gov/schedule/2026/"},
+    {"id": "uk_cpi_oct21", "release_utc": "2026-10-21T06:00:00Z", "family": "uk_cpi", "auto_eligible": true, "source": "https://www.ons.gov.uk/releasecalendar"},
+    {"id": "us_fomc_oct28", "release_utc": "2026-10-28T18:00:00Z", "family": "us_fomc", "auto_eligible": true, "source": "https://www.federalreserve.gov/newsevents/2026-october.htm"},
+    {"id": "us_fomc_press_oct28", "release_utc": "2026-10-28T18:30:00Z", "family": "us_fomc_press", "auto_eligible": true, "source": "https://www.federalreserve.gov/newsevents/2026-october.htm"},
+    {"id": "us_pce_gdp_oct29", "release_utc": "2026-10-29T12:30:00Z", "family": "us_pce_gdp", "auto_eligible": true, "source": "https://www.bea.gov/news/schedule"},
+    {"id": "eu_ecb_oct29", "release_utc": "2026-10-29T13:15:00Z", "family": "ecb_policy", "auto_eligible": true, "source": "https://www.ecb.europa.eu/press/calendars/mgcgc/html/index.en.html"},
+    {"id": "jp_boj_press_oct30", "release_utc": "2026-10-30T06:30:00Z", "family": "boj_press", "auto_eligible": false, "source": "https://www.boj.or.jp/en/about/calendar/index.htm"},
+    {"id": "uk_boe_nov05", "release_utc": "2026-11-05T12:00:00Z", "family": "boe_policy", "auto_eligible": true, "source": "https://www.bankofengland.co.uk/monetary-policy-summary-and-minutes/2026/november-2026"},
+    {"id": "us_jobs_nov06", "release_utc": "2026-11-06T13:30:00Z", "family": "us_jobs", "auto_eligible": true, "source": "https://www.bls.gov/schedule/2026/"},
+    {"id": "us_cpi_nov10", "release_utc": "2026-11-10T13:30:00Z", "family": "us_cpi", "auto_eligible": true, "source": "https://www.bls.gov/schedule/2026/"},
+    {"id": "us_ppi_nov13", "release_utc": "2026-11-13T13:30:00Z", "family": "us_ppi", "auto_eligible": true, "source": "https://www.bls.gov/schedule/2026/"},
+    {"id": "uk_cpi_nov18", "release_utc": "2026-11-18T07:00:00Z", "family": "uk_cpi", "auto_eligible": true, "source": "https://www.ons.gov.uk/releasecalendar"}
+  ]
+}

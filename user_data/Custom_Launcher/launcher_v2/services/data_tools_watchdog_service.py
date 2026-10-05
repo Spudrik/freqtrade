@@ -8,6 +8,8 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
+from xml.sax.saxutils import escape
 
 from .collector_service import NEWS_PROFILE, WEB_PROFILE, ResearchCollectorService, is_process_running, open_path, utc_now
 from .global_context_service import GlobalContextService
@@ -354,25 +356,31 @@ class DataToolsWatchdogService:
         task_name = str(state["task_name"])
         interval_minutes = _positive_int(state.get("check_interval_minutes"), DEFAULT_CHECK_INTERVAL_MINUTES)
         hidden_wrapper = self.write_hidden_task_wrapper(state)
-        action = f'C:\\Windows\\System32\\wscript.exe //B //NoLogo "{hidden_wrapper}"'
-        hourly = subprocess.run(
-            ["schtasks", "/Create", "/TN", task_name, "/SC", "MINUTE", "/MO", str(interval_minutes), "/TR", action, "/F"],
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        startup_entry = self.write_startup_entry(state)
-        stdout = (
-            f"[{task_name}]\n{hourly.stdout or ''}\n"
-            f"[startup_entry]\nCreated {startup_entry}\n"
-        )
-        stderr = (
-            f"[{task_name}]\n{hourly.stderr or ''}\n"
-            "[startup_entry]\n"
-        )
+        task_xml = _scheduled_task_xml(hidden_wrapper, interval_minutes)
+        temp_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".xml", encoding="utf-16", delete=False) as handle:
+                handle.write(task_xml)
+                temp_path = Path(handle.name)
+            installed = subprocess.run(
+                ["schtasks", "/Create", "/TN", task_name, "/XML", str(temp_path), "/F"],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+        finally:
+            if temp_path is not None:
+                temp_path.unlink(missing_ok=True)
+
+        # The scheduled task now owns boot startup; the per-user entry required login.
+        startup_entry = self.startup_entry_path(task_name)
+        if installed.returncode == 0 and startup_entry.exists():
+            startup_entry.unlink()
+        stdout = f"[{task_name}]\n{installed.stdout or ''}\n[startup_entry]\nRemoved {startup_entry}\n"
+        stderr = f"[{task_name}]\n{installed.stderr or ''}\n[startup_entry]\n"
         return subprocess.CompletedProcess(
             args=["schtasks", task_name, str(startup_entry)],
-            returncode=0 if hourly.returncode == 0 else 1,
+            returncode=0 if installed.returncode == 0 else 1,
             stdout=stdout,
             stderr=stderr,
         )
@@ -430,6 +438,38 @@ def _positive_int(value: Any, default: int) -> int:
     except Exception:
         parsed = default
     return max(1, parsed)
+
+
+def _scheduled_task_xml(hidden_wrapper: Path, interval_minutes: int) -> str:
+    start_boundary = datetime.now().astimezone().replace(microsecond=0).isoformat()
+    arguments = escape(f'//B //NoLogo "{hidden_wrapper}"')
+    return f'''<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo><Description>Keep LauncherV2 data collectors running without requiring user login.</Description></RegistrationInfo>
+  <Triggers>
+    <BootTrigger><Enabled>true</Enabled><Delay>PT1M</Delay></BootTrigger>
+    <TimeTrigger>
+      <Repetition><Interval>PT{interval_minutes}M</Interval><StopAtDurationEnd>false</StopAtDurationEnd></Repetition>
+      <StartBoundary>{start_boundary}</StartBoundary><Enabled>true</Enabled>
+    </TimeTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="System"><UserId>S-1-5-18</UserId><RunLevel>HighestAvailable</RunLevel></Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <AllowStartOnDemand>true</AllowStartOnDemand><Enabled>true</Enabled><Hidden>false</Hidden>
+    <ExecutionTimeLimit>PT10M</ExecutionTimeLimit><Priority>7</Priority>
+  </Settings>
+  <Actions Context="System">
+    <Exec><Command>C:\\Windows\\System32\\wscript.exe</Command><Arguments>{arguments}</Arguments></Exec>
+  </Actions>
+</Task>
+'''
 
 
 def _pairs_from_preset(preset: dict[str, Any]) -> list[str]:

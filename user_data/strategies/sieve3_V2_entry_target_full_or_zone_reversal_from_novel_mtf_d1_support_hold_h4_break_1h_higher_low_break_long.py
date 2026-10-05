@@ -28,7 +28,7 @@ EXIT_HYPOTHESIS = 'The entry-defined target can close on touch or close, or wait
 PRIMARY_TRIGGER = 'hl_1h confirmed with close > range_mid_1h, bullish candle, and body_ratio_1h >= 0.29'
 PRIMARY_GUARD = 'close_1d > range_mid_1d and close_4h > prior_high_4h with a bullish 4h candle'
 TARGET_PROVIDER = 'target_1[provider=frozen 1h prior-range high;long.level=prior_high_1h]'
-INVALIDATION_PROVIDER = 'none'
+INVALIDATION_PROVIDER = 'provider=frozen 1h range midpoint execution level;mode=level;long.level=range_mid_1h'
 ACTIVE_SELL_PARAMS = ('exit_plan', 'target_band_quarter_percent', 'reversal_confirmations', 'invalidation_band_quarter_percent', 'invalidation_confirmations')
 
 RESEARCH_PATH = 'sieve3_exit_entry_target_full_or_zone_reversal'
@@ -232,9 +232,9 @@ class Sieve3V2EntryTargetFullOrZoneReversalFromNovelMtfD1SupportHoldH4Break1HHig
     SOURCE_ENTRY_STEM = 'novel_mtf_d1_support_hold_h4_break_1h_higher_low_break_long'
     ENTRY_TAG = 'novel_mtf_d1_support_hold_h4_break_1h_higher_low_break_long'
     FOCUSED_EXIT_CONTRACT = 'entry_target_full_or_zone_reversal'
-    FOCUSED_SOURCE_PROFILE = {'side': 'long', 'min_level_distance': 0.001, 'targets': {'target_1': {'provider': 'frozen 1h prior-range high', 'long': {'level': 'prior_high_1h', 'available': None}}}}
+    FOCUSED_SOURCE_PROFILE = {'side': 'long', 'min_level_distance': 0.001, 'targets': {'target_1': {'provider': 'frozen 1h prior-range high', 'long': {'level': 'prior_high_1h', 'available': None}}}, 'invalidation': {'provider': 'frozen 1h range midpoint execution level', 'mode': 'level', 'long': {'level': 'range_mid_1h', 'available': None}}}
     FOCUSED_EXIT_PLANS = {'touch_full': {'contract': 'entry_target_full_or_zone_reversal', 'name': 'touch_full', 'hard_stop_ratio': 0.03, 'max_hold_candles': 336}, 'close_full': {'contract': 'entry_target_full_or_zone_reversal', 'name': 'close_full', 'hard_stop_ratio': 0.03, 'max_hold_candles': 336}, 'zone_reversal': {'contract': 'entry_target_full_or_zone_reversal', 'name': 'zone_reversal', 'hard_stop_ratio': 0.03, 'max_hold_candles': 336}}
-    FOCUSED_REQUIRED_COLUMNS = ('close', 'date', 'high', 'low', 'open', 'prior_high_1h')
+    FOCUSED_REQUIRED_COLUMNS = ('close', 'date', 'high', 'low', 'open', 'prior_high_1h', 'range_mid_1h')
     FOCUSED_STATE_VERSION = 1
     FOCUSED_STATE_KEY = 'sieve3_v2_focused:Sieve3V2EntryTargetFullOrZoneReversalFromNovelMtfD1SupportHoldH4Break1HHigherLowBreakLong:entry_target_full_or_zone_reversal'
     LOCKED_BUY_PARAMS = {'context_lookback': 22, 'h4_lookback': 23, 'exec_lookback': 4, 'body_ratio_min': 0.47, 'range_ratio_min': 1.96, 'volume_ratio_min': 1.71, 'retest_tolerance': 0.037, 'close_follow_min': 0.29, 'require_h4_confirm': True, 'require_volume_confirm': False}

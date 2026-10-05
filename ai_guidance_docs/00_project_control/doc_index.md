@@ -4,7 +4,7 @@ default_read: no
 owner: agent
 purpose: Index of active guidance docs and when to read them.
 do_not_use_for: Research evidence details or broad context loading.
-last_rebuilt: 2026-07-13
+last_rebuilt: 2026-09-09
 ---
 
 # Document Index
@@ -12,14 +12,13 @@ last_rebuilt: 2026-07-13
 ## Read Policy Values
 
 - `yes`: read by default.
-- `routed`: read only when named by the current objective/objective file.
+- `routed`: read only when the user request, a subsystem router, or another relevant rule requires it.
 - `no`: do not read unless explicitly needed.
 
 ## 00_project_control
 
 | File | Default read | Purpose |
 |---|---:|---|
-| `objective_current.md` | yes | Current active task and required docs. This is the active objective, not only a router. |
 | `objectives_master.md` | routed | Static objective map; read when stage/routing is unclear or changing. |
 | `doc_index.md` | no | Use when unsure where guidance lives. |
 | `archive_index.md` | no | Use only when checking old documents. |
@@ -30,6 +29,8 @@ last_rebuilt: 2026-07-13
 |---|---:|---|
 | `objective_02_master_strategy_architecture.md` | routed | Returning to wider Sieve-first confluence architecture. |
 | `objective_02a_strategy_refinement.md` | routed | Refining Sieve candidates. |
+| `objective_02b_market_reaction_zone_discovery.md` | routed | Historical research reference; read only to trace retained evidence or if explicitly reopened. |
+| `objective_03_comparative_paper_trial.md` | routed | Current bounded paper-only stage: ten accounts including two manual-only and a matched 5m automatic/context-modified pair; local-first Luna briefing, source readiness, risk controls, monitoring and review. |
 | `objective_02c_orderbook_confluence.md` | routed | Using orderbook for confirmation/risk/targets. |
 | `objective_02d_news_context_integration.md` | routed | News/context work; parked unless user says ready or readiness proves a block/window. |
 | `objective_02e_generic_ta_integration.md` | routed | Generic TA side-lane integration. |
@@ -42,17 +43,19 @@ last_rebuilt: 2026-07-13
 | `rules_runtime_environment.md` | routed | Python envs, backtest lanes, raw archive paths, snapshot discipline. |
 | `rules_hyperopt_general.md` | routed | Sieve-first Hyperopt design, candidate extraction, and reporting rules. |
 | `rules_exit_and_risk_research.md` | routed | Exit logic and risk research rules. |
-| `rules_goal_mode_iteration_control.md` | routed | Bounded long-run iteration, stop, and park rules. |
+| `rules_goal_mode_iteration_control.md` | routed | Bounded long-run iteration, breadth-first event layers, whole-event holds, stop, and park rules. |
 | `rules_source_detail_taxonomy.md` | routed | Standard source-detail group names. |
-| `rules_freqai_feature_discovery.md` | routed | Parked feature discovery standards. |
-| `rules_freqai_promotion.md` | routed | Strict FreqAI promotion thresholds and preflight. |
-| `rules_direct_tests.md` | routed | Hypothesis tests, controls, ablations, metrics. |
+| `rules_freqai_feature_discovery.md` | routed | Early feature discovery, whole-episode decision-time roles, conditional modifiers, five-route branch capture, and bounded Objective 02b event-scoped direction discipline. |
+| `theory_freqai_regime_direction_level_reaction.md` | routed | Detailed method for conditional event-driven direction, market leadership, coin-group transmission, local modifiers, post-event ranges, bounded `1m` replay, and joint scoring. |
+| `reference_freqai_event_reaction_research_method.md` | routed | Reusable FreqAI method for whole-episode interpretation, technical/external events, expected-path comparisons, conditional interactions, leader/group attribution, controls, and confirmation. |
+| `rules_freqai_promotion.md` | routed | Strict FreqAI queue thresholds, conditional-interaction promotion, whole-event preflight, and abstention integrity; distinct from Objective 02b's joint-success targets. |
+| `rules_direct_tests.md` | routed | Hypothesis tests, decision-time roles, whole-episode conditional controls, event-safe partitions, ablations, and separate reaction/direction/joint-call metrics. |
 | `rules_strategy_success.md` | routed | Strategy/candidate acceptance and promotion rules. |
 | `rules_entry_exit_position.md` | routed | Entry-specific exit/add/reduce/risk architecture. |
 | `rules_sieve3_exit_hyperopt.md` | routed | Sieve3 exit-stage branching, Hyperopt test families, and result interpretation. |
 | `rules_sieve3_exit_regeneration_agent.md` | routed | Controlling implementation spec for regenerating Sieve3 exit files with nuanced categorical branch logic. |
 | `rules_orderbook_sources.md` | routed | Orderbook data readiness and usage. |
-| `rules_news_context_sources.md` | routed | News/GDELT/GKG/web/global readiness and future formatting. |
+| `rules_news_context_sources.md` | routed | News/GDELT/GKG/web/global readiness, event reconstruction, narrative accumulation, duplicate-story control, conditional meaning, and availability timing. |
 | `rules_result_reporting.md` | routed | Plain-English result reporting. |
 | `rules_document_maintenance.md` | routed | How to keep docs clean. |
 

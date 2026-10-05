@@ -291,7 +291,7 @@ class ExplorerService:
                     "name": "full_cycle_2020_2026",
                     "regime": "mixed",
                     "segment_type": "full_cycle",
-                    "timerange": "20200101-20260101",
+                    "timerange": "20200101-20260401",
                 }
             ]
         from explorer.explorer_windows import compact_window, load_window_manifest

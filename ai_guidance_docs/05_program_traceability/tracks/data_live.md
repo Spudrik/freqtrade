@@ -11,7 +11,7 @@ last_rebuilt: 2026-07-13
 
 ## 1. Boundary
 
-This track owns live-source collection and continuity history. It does not authorize live trading, collector changes, or source use; those remain governed by the current objective, source rules, and readiness status.
+This track owns live-source collection and continuity history. It does not authorize live trading, collector changes, or source use; those remain governed by explicit user scope, source rules, and readiness status.
 
 ## 2. Current state
 
@@ -53,4 +53,3 @@ This track owns live-source collection and continuity history. It does not autho
 - Runtime/snapshot rules: `../../02_rules/rules_runtime_environment.md`
 - Recent summary: `../../04_results/results_recent_summary.md`
 - Context ledger: `../../04_results/context_research_ledger.md`
-

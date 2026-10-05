@@ -12,9 +12,9 @@ FULL_CYCLE_WINDOW: dict[str, Any] = {
     "regime": "mixed",
     "segment_type": "full_cycle",
     "market_state": "mixed",
-    "timerange": "20200101-20260101",
-    "segment_length_months": 72.0,
-    "rationale": "Full available 2020-2026 validation cycle used as the primary long-range sanity check.",
+    "timerange": "20200101-20260401",
+    "segment_length_months": 75.0,
+    "rationale": "Full available 2020-April 2026 validation cycle used as the primary long-range sanity check.",
 }
 
 

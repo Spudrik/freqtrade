@@ -1,0 +1,112 @@
+{
+  "$schema": "https://schema.freqtrade.io/schema.json",
+  "dry_run": true,
+  "trading_mode": "futures",
+  "margin_mode": "isolated",
+  "max_open_trades": 1,
+  "stake_currency": "USDT",
+  "stake_amount": 100,
+  "tradable_balance_ratio": 1.0,
+  "fiat_display_currency": "USD",
+  "timeframe": "1h",
+  "dry_run_wallet": 1000,
+  "cancel_open_orders_on_exit": true,
+  "dataformat_ohlcv": "feather",
+  "exchange": {
+    "name": "binance",
+    "key": "",
+    "secret": "",
+    "skip_pair_validation": true,
+    "ccxt_config": {
+      "options": {
+        "defaultType": "swap"
+      }
+    },
+    "ccxt_async_config": {
+      "options": {
+        "defaultType": "swap"
+      }
+    },
+    "pair_whitelist": [
+      "BTC/USDT:USDT",
+      "ETH/USDT:USDT",
+      "BNB/USDT:USDT",
+      "SOL/USDT:USDT",
+      "XRP/USDT:USDT",
+      "ADA/USDT:USDT",
+      "DOGE/USDT:USDT",
+      "TRX/USDT:USDT",
+      "AVAX/USDT:USDT",
+      "LINK/USDT:USDT"
+    ],
+    "pair_blacklist": []
+  },
+  "entry_pricing": {
+    "price_side": "same",
+    "use_order_book": true
+  },
+  "exit_pricing": {
+    "price_side": "same",
+    "use_order_book": true
+  },
+  "pairlists": [
+    {
+      "method": "StaticPairList"
+    }
+  ],
+  "freqai": {
+    "enabled": true,
+    "activate_tensorboard": false,
+    "purge_old_models": 2,
+    "train_period_days": 365,
+    "backtest_period_days": 180,
+    "live_retrain_hours": 0,
+    "identifier": "market-reaction-zone-generation0-template",
+    "feature_parameters": {
+      "include_timeframes": [
+        "1h"
+      ],
+      "include_corr_pairlist": [
+        "BTC/USDT:USDT",
+        "ETH/USDT:USDT"
+      ],
+      "label_period_candles": 48,
+      "include_shifted_candles": 0,
+      "DI_threshold": 0,
+      "weight_factor": 0.999,
+      "principal_component_analysis": false,
+      "use_SVM_to_remove_outliers": false,
+      "indicator_periods_candles": [
+        14
+      ],
+      "plot_feature_importances": 0
+    },
+    "data_split_parameters": {
+      "test_size": 0.2,
+      "random_state": 42,
+      "shuffle": false
+    },
+    "model_training_parameters": {
+      "n_estimators": 100,
+      "learning_rate": 0.04,
+      "num_leaves": 15,
+      "max_depth": 4,
+      "min_child_samples": 40,
+      "subsample": 0.85,
+      "colsample_bytree": 0.8,
+      "random_state": 42,
+      "n_jobs": 1,
+      "verbosity": -1
+    }
+  },
+  "market_reaction_zone_freqai": {
+    "level_cache_dir": "C:/FreqTradeStuff/user_data/research_news_data/context_features/market_reaction_zones/generation0_cache",
+    "level_feature_shift_hours": 0
+  },
+  "bot_name": "market_reaction_zone_freqai_research",
+  "force_entry_enable": false,
+  "initial_state": "stopped",
+  "internals": {
+    "process_throttle_secs": 5
+  }
+}

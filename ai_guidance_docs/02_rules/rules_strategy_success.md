@@ -82,4 +82,4 @@ Do not require every useful variant to become the new main baseline. Classify re
 5. `parked`: logical idea tested enough for now and not worth more cycles.
 6. `rejected_for_now`: harms core metrics or fails controls without a specific repair path.
 
-Prefer improvements that increase or maintain trade count while improving win rate/risk. If trade count falls, the report must explain whether the result is a valid sparse specialist or too narrow for the active objective.
+Prefer improvements that increase or maintain trade count while improving win rate/risk. If trade count falls, the report must explain whether the result is a valid sparse specialist or too narrow for the user-approved research scope.

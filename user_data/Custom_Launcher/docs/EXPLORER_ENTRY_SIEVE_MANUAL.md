@@ -153,9 +153,6 @@ Scope:
   - Tests multiple TP/SL pairs.
   - Uses target-sweep lane distribution and the configured worker count directly.
   - Speed mode disables it.
-- Sieve controls entry exits:
-  - Keep enabled for entry-quality Sieve runs. The runner validates that the strategy class resolves to the requested fixed TP/SL.
-  - Disable only for exit-stage Sieve work, where the strategy's own exit branches should control TP/SL, trailing, partial exits, stop movement, and target-provider logic.
 
 ## 10. Entry Sieve Batches
 

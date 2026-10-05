@@ -20,9 +20,9 @@ Every active Markdown guidance file should start with:
 - `do_not_use_for`: one sentence
 - `last_rebuilt`: date
 
-## Current Objective Lifecycle
+## Task Routing
 
-`objective_current.md` is ephemeral. Replace it at stage boundaries. Do not append long run logs.
+Do not create or maintain an ephemeral current-objective file. Route each task directly from the user's latest explicit request through repo/subsystem `AGENTS.md` files to stable rules, compact status files, and approved ledgers. Do not append long run logs to routing documents.
 
 ## Master Objective Lifecycle
 

@@ -9,7 +9,7 @@ last_rebuilt: 2026-06-11
 
 # Archive Index
 
-Archive rule: do not read archive files unless the user asks for historical review, evidence verification, migration audit, or a current objective explicitly lists an archive file.
+Archive rule: do not read archive files unless the user asks for historical review, evidence verification, migration audit, or a routed rule requires a specific archived artifact.
 
 ## Archive Folders
 

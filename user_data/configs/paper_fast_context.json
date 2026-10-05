@@ -1,0 +1,8 @@
+{
+  "initial_state": "paused",
+  "bot_name": "paper_fast_context",
+  "strategy": "PaperFastContext",
+  "db_url": "sqlite:///user_data/research_news_data/context_features/integrated_paper_20260926/fast_context_trades.sqlite",
+  "fiat_display_currency": "",
+  "force_entry_enable": false
+}

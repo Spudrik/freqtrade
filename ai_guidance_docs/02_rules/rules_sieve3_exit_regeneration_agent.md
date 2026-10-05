@@ -4,7 +4,7 @@ default_read: routed
 owner: user+agent
 purpose: Implementation contract for creating or repairing standalone Sieve3 V2 exit strategies.
 do_not_use_for: Historical V2 architecture, broad strategy generation, or result promotion.
-last_rebuilt: 2026-07-20
+last_rebuilt: 2026-08-07
 ---
 
 # Rules - Sieve3 V2 Strategy Regeneration
@@ -37,7 +37,16 @@ When both target and entry-specific invalidation are available:
 
 5. `target_partial_invalidation_remainder`
 
+When no trusted active source-target branch exists, add both FreqAI-informed generic-level families:
+
+6. `generic_scored_level_full_or_reaction`
+7. `generic_scored_level_partial_progression`
+
+For the approved final generic-level diagnostic cohort, also add the focused base/higher-timeframe reactions for VA edge, prior POC, strength-qualified HVN, and quality-qualified TLV2. Each file must isolate exactly the named level provider and require directional weakening or rejection around that level. Do not silently merge these focused hypotheses into the scored files.
+
 Do not omit applicable target families merely because a previous generator failed to classify the source. Review the source indicator contract and preserved historical source-specific strategy evidence.
+
+Files under `Archive`, `isolated_possible_errors`, any other non-active directory, or a temporary `sieve3_V2_tq_*` investigation prefix do not count as coverage. Never restore an isolated strategy mechanically. It may return only after a source-specific review disproves or corrects the recorded concern and compile, import, and locked-entry parity checks pass; otherwise build a corrected new standalone file from the active locked-entry source and the approved current exit contract.
 
 ## Target And Invalidation Mapping
 
@@ -82,6 +91,18 @@ Use the source-defined target. Compare immediate/touch or close-based full exit 
 
 Take a Hyperopt-selected partial around the source target, then manage the remainder using the source invalidation and optional stage-linked stop movement. Do not substitute a generic fixed stop for a claimed source invalidation.
 
+### Generic Scored Level Full Or Reaction
+
+Use only levels available from closed candles and compare candidates to the actual fill. Merge nearby VA-edge, strength-qualified HVN, prior-POC, and qualified confluence candidates into direction-aware zones. A clean pass advances to the next available zone; a level touch alone is not treated as proof of an exit. Full exit requires the selected close/rejection/weakening reaction profile.
+
+### Generic Scored Level Partial Progression
+
+Use the same deterministic scored-zone provider. A confirmed reaction may take one or two coarse Hyperopt-sized partials; the final action closes the remainder. A clean pass advances to the next zone. Optional stop movement means stop to entry after the first protected stage, then to an earlier passed zone after later progress. Keep each partial idempotent.
+
+### Focused Named-Level Reaction
+
+Use only the filename's named level family. Base variants use the strategy timeframe; higher-timeframe variants Hyperopt the valid higher timeframe. Select the next direction-aware level relative to the actual fill, advance after a clean pass, and exit only after the selected weakening mode and confirmation profile trigger around the zone. HVN variants must qualify node strength; TLV2 variants must qualify line score, confirmations, and age. These are simple comparison branches, not generic fallbacks or scored-confluence aliases.
+
 ## Parameter Rules
 
 1. Use ordered `IntParameter`/`DecimalParameter` ranges when ordering matters.
@@ -103,3 +124,4 @@ Before queueing regenerated files, verify:
 6. `EXIT_FAMILY` matches the filename.
 7. Required indicator target/invalidation columns are populated before callbacks use them.
 8. The queue contains every active file exactly once and excludes archives.
+9. The source has valid completed evidence before it is described as Sieve3-complete; generated file count alone is not completion.

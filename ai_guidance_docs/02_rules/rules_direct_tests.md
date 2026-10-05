@@ -4,7 +4,7 @@ default_read: routed
 owner: user+agent
 purpose: Rules for named hypothesis/direct tests and threshold sweeps.
 do_not_use_for: Running broad exploratory queues without hypotheses.
-last_rebuilt: 2026-06-10
+last_rebuilt: 2026-09-09
 ---
 
 
@@ -41,8 +41,25 @@ Bad:
 5. Target: what happened afterwards.
 6. Setup rows, trigger rows, and positive target examples.
 7. Controls.
-8. Pass/fail rule defined before interpretation.
+8. Pass, conditional-lead, confirmation-only, unresolved, park, and reject meanings
+   defined before interpretation; do not force a complex result into binary pass/fail.
 9. Exact threshold settings if thresholds are used.
+10. Intended market scope: broad top-coin, frozen coin group, or asset-specific, including the grouping rationale and per-member support rule.
+11. For meme-cohort work, the exact frozen `10` most traded eligible meme coins,
+    taxonomy source, venue/market type, prior-30-completed-day median quote-turnover
+    ranking, ranking timestamp, and coverage rule.
+12. For event work, the event identifier, scheduled/unexpected class, first knowable
+    time, information cutoff, prior expectation where available, released outcome or
+    surprise, observation window, and outcome window.
+13. For event work, a whole-event development/holdout split fixed before model or
+    threshold selection. Candles from one event must never appear on both sides.
+14. Accepted facts that the test will not redundantly question.
+15. The proposed decision-time role of each input: background, driver/trigger,
+    confirmation, modifier, accumulator, duplicate/substitute, or outcome.
+16. The expected path under comparable pre-event conditions and how both the raw and
+    ordinary-adjusted outcome will be measured.
+17. The evidence decision that follows from a positive, negative, or unresolved
+    result. Do not run a test whose possible outcomes cannot change the evidence map.
 
 ## Required controls
 
@@ -54,6 +71,52 @@ Use as applicable:
 4. Shuffled labels.
 5. Price/structure-only baseline.
 6. Missing-ingredient ablations: minus volume, minus orderbook, minus structure, minus context/news, minus multi-timeframe confirmation.
+7. Same-regime non-member assets when the claim is specific to a coin group.
+8. For event chains, compare event-only, market-only, group-only, local-only, the
+   frozen combination, and a matched no-event or no-confirmation control where data
+   permits.
+9. Test BTC, ETH, and broad-market breadth as alternative leaders rather than giving
+   BTC permanent precedence.
+10. Compare the same trigger under materially different predeclared backgrounds and
+    comparable backgrounds with and without the trigger.
+11. For a named two-part interaction, compare neither, A only, B only, and A plus B
+    where each cell has usable support.
+12. Compare strong, weak, delayed, reversed, and absent responses, then use only
+    timestamp-safe development-period differences to define a later confirmation.
+13. Check whether multiple articles, indicators, timeframes, coins, or horizons repeat
+    one underlying event rather than supply independent evidence.
+
+## Whole-Episode And Interaction Rules
+
+1. Do not interpret the market as a contest in which one input must be the sole cause.
+   Ask how each timestamp-safe layer changes the balance established by the others.
+2. The same measurement can change roles over time. Pre-event volume may be
+   background or anticipation; immediate post-event volume may confirm the response;
+   later volume may be the outcome.
+3. When estimating an event's total influence, do not control on a price, volume,
+   pressure, or volatility response caused after the event. Doing so can remove the
+   path through which the event acted.
+4. It is valid to use an early response to predict a later response, but describe this
+   as a later-decision confirmation or continuation test, not as evidence that the
+   trigger did not matter.
+5. A factor with a weak standalone average may still be a rational amplifier,
+   suppressor, reverser, gate, accumulator, delay, shortener, transmission blocker, or
+   override. Test its declared conditional role rather than rejecting it solely for
+   weak average prediction.
+6. Measure whether an influence changed magnitude, timing, path, or loss relative to
+   the matched expected path. A positive influence can matter even when the final
+   return remains negative, and vice versa.
+7. Treat the same event family under different dominant concerns, expectations,
+   positioning, liquidity, narratives, and technical structures as conditional
+   evidence rather than assuming one permanent meaning.
+8. Conditions discovered by contrasting successful and unsuccessful episodes remain
+   provisional. Freeze them and test later whole events before accepting the
+   explanation.
+9. Do not average contradictions away. Report when a response was amplified,
+   suppressed, delayed, reversed, absent, or overwhelmed and which pre-event
+   conditions distinguish those paths.
+10. Do not rescue every failure. A conditional explanation must be measurable before
+    the outcome, market-rational, adequately supported, and reproducible.
 
 ## Metric interpretation rules
 
@@ -92,6 +155,32 @@ Binary event targets answer yes/no questions such as “did breakout succeed in 
 9. Setup rows, trigger rows, and positives:
    - Plain meaning: how many real examples are being tested?
    - A strong-looking result with tiny trigger/positive counts is a lead, not proof.
+
+### Joint reaction-and-direction calls
+
+When the question asks whether volume will react and which way price will respond,
+report three separate rates:
+
+1. Reaction success: the frozen abnormal volume response occurred against its causal
+   baseline/control.
+2. Conditional direction success: among real reactions, the signed direction/path
+   prediction was correct.
+3. Joint success: both were correct on the same issued call; either failure counts as
+   a joint failure.
+
+Also report eligible independent episodes, issued calls, abstentions, coverage,
+uncertainty, per-coin/per-window concentration, and the strongest base-rate,
+majority-direction, simple-trend, and no-level comparators. Also report direction on
+all issued directional calls, not only on cases that later reacted. Under the
+19 September 2026 revision, Objective 02b Section 15.4 assesses each component for its
+own role: a joint failure does not veto useful direction, activity, location or a
+conditional modifier. Joint scoring applies to joint claims, not every direct test.
+Keep historical frozen scores and label component reassessments separately. Evidence
+quality, later confirmation and trading safeguards are unchanged.
+
+For event tests, count whole events as independent confirmation units. Repeated
+candles, coins, or horizons around one event can describe that event but cannot turn it
+into many independent successes.
 
 ### Continuous/path targets
 
@@ -136,12 +225,22 @@ Do not promote vague claims such as “breakout confluence looked good”. A pro
 4. setup and trigger thresholds,
 5. setup rows, trigger rows, positives,
 6. controls and baselines,
-7. verdict.
+7. broad, coin-group, or asset-specific scope and per-member results,
+8. verdict.
 
 ## Result classification
 
 - `direct_promising`: beats controls and makes market sense.
 - `sweep_promising`: threshold sweep shows several viable settings.
+- `conditional_modifier`: changes a named trigger's probability, magnitude, timing,
+  path, or transmission under a frozen context without requiring a strong standalone
+  effect.
+- `confirmation_only`: usefully describes or updates an episode after the initiating
+  event but does not predict the event or replace it as the driver.
+- `amplified_suppressed_or_reversed`: a real-looking influence changes materially
+  across declared contexts and requires later whole-event confirmation.
+- `unexplained_inconsistency`: contradictory episodes remain informative but no
+  timestamp-safe conditional explanation has yet reproduced.
 - `needs_rework`: unclear/failed but repair path exists.
 - `deferred_for_data`: cannot test honestly yet.
 - `rejected_for_now`: failed controls, weak sample, no trader logic, likely lookahead/noise.

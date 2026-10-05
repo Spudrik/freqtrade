@@ -4,7 +4,7 @@ default_read: routed
 owner: user
 purpose: General Hyperopt design and reporting rules, routed through Sieve by default.
 do_not_use_for: Non-Sieve Hyperopt packages unless the user explicitly approves them.
-last_rebuilt: 2026-06-12
+last_rebuilt: 2026-07-20
 ---
 
 # Hyperopt General Rules
@@ -19,13 +19,13 @@ Use these rules to design Sieve Hyperopt batches for entries, exits, partial exi
 
 1. Hyperopt should search broad, explicit theory spaces that would be inefficient to check manually.
 2. Ordinary backtests are validation/sanity checks after Sieve identifies candidates, not the main discovery method.
-3. Prefer named categorical parameters over wide integer or decimal ranges.
-4. Use categorical mode values to represent explicit trading theories.
-5. Keep each Hyperopt strategy focused. A practical target is roughly `5-10` active Hyperopt parameters per strategy file.
-6. One categorical parameter may test `20-50` explicit rule modes when the modes are named and trader-readable.
+3. Use categorical parameters for genuinely unordered trading modes; use ordered integer/decimal parameters when numeric order matters.
+4. For coarse regular numeric values, Hyperopt an integer multiplier and apply the step at point of use.
+5. Keep each Hyperopt strategy focused and generally below roughly `10,000` combinations; split only along coherent trading questions.
+6. Named categorical modes remain useful for explicit rule choices, but do not hide ordered numeric structure inside categories.
 7. Avoid gates that make other Hyperopt parameters irrelevant. A disabled gate must not create fake best values for parameters that never affected trades.
-8. If an off state is needed, use an explicit categorical `off` mode or a categorical threshold that clearly makes the rule inactive.
-9. Avoid wide decimal/integer sweeps. Use sensible categorical thresholds that match trader questions.
+8. If an off state is needed, use an explicit sentinel/mode or split the file when the disabled branch would hide too many inactive parameters.
+9. Avoid wide high-resolution decimal/integer sweeps. Small contiguous sweeps and coarse multiplier sweeps are preferred over arbitrary categorical numbers.
 10. Review the top four Hyperopt objective/loss candidates per run, not only the winner. The loss calculator can lean too heavily into one metric.
 11. Do not manually analyze whole result files in chat. Use scripts, CSV summaries, or result parsers to pull candidate rows.
 12. Hyperopt loss files are first-pass ranking tools. If the scoring behaviour is wrong, propose adjusting the loss file rather than overriding results by hand.
@@ -57,23 +57,23 @@ Use these rules to design Sieve Hyperopt batches for entries, exits, partial exi
 
 ## Parameter Design
 
-1. Prefer categorical parameters that represent named trader theories:
+1. Use categorical parameters for named trader theories:
    - `exit_target_mode = fixed_tp / vp_level / tlv2_level / prior_high_low / pattern_target / invalidation`
    - `partial_exit_mode = none / first_obstacle / profit_2pct / profit_3pct / opposing_signal / volume_exhaustion`
    - `stop_mode = static / breakeven_after_partial / trail_structure / trail_vp / tighten_on_risk`
    - `stack_mode = none / same_family / independent_family / retest / profit_buffer`
    - `risk_mode = flat / reduce_chop / reduce_crash_risk / boost_confluence / cap_direction_exposure`
-2. Use categorical thresholds where practical. Prefer a short list of meaningful values over wide integer/decimal sweeps.
+2. Use ordered numeric parameters for ordered thresholds. Small integer ranges can remain ordinary `IntParameter` ranges; coarse regular steps should use an integer multiplier.
 3. Do not hide active parameters behind disabled gates. If a mode disables a concept, make the inactive state explicit as a category.
 4. For entry-family-specific management, use separate mode parameters per family when feasible instead of one global mode.
 5. Design search spaces so the result is interpretable in trader terms. A winning mode should explain what happened, not just which number won.
 6. Avoid hidden gates where possible. Hyperopt still varies parameters that sit behind Boolean enables or categorical branches, even when the branch is inactive. This can create misleading associations because inactive values may look good or bad despite having no effect.
 7. Prefer a single null/sentinel parameter over an enable flag plus value parameter when the logic allows it. For threshold-style guards, use states such as `ignore / weak / normal / strict / impossible` so the parameter remains meaningful across the whole search.
 8. Some logic still needs gates. Crossing events, trigger selection, and branch-specific rules may require Boolean enables or categorical selectors. Avoid gates where a clean null/sentinel state expresses the same thing; use gates only where the trading logic genuinely requires them.
-9. For early discovery, prefer broad categorical sweeps over wide decimal or integer ranges. Use meaningful values first, then fine-tune decimals/integers only after the broader search proves the idea has value.
+9. For early discovery, use broad named modes for unordered theories and coarse ordered numeric sweeps for thresholds. Do not use fine resolution until the broader idea proves useful.
 10. For wide numeric spaces, prefer `final_value = base_value * multiplier` over testing every integer or decimal. Example: `base_value = 1000` and `multiplier = 1..10` gives a controlled `1000..10000` sweep without wasting epochs on every intermediate value.
 11. For smaller Hyperopt windows, run two or three random states. Keep ideas or parameter regions that repeat across states; treat one-off winners with caution until they repeat or validate cleanly.
-12. For multi-branch Sieve searches, prefer categorical thresholds with null/weak states over Boolean gates plus hidden value parameters. Example states: `ignore`, `weak`, `normal`, `strict`, `impossible`, or explicit thresholds such as `always`, `profit_1pct`, `profit_2pct`, `profit_1R`, `profit_1_5R`. If the concept is irrelevant, Hyperopt must be able to choose a state that makes it genuinely low-impact rather than leaving misleading inactive parameters behind a gate.
+12. For multi-branch Sieve searches, prefer explicit null/sentinel states or a separate focused file over Boolean gates plus many hidden value parameters. If a threshold is ordered, keep it numeric rather than encoding every value as a category.
 13. Some branch-local parameters are unavoidable when a file intentionally tests several related concepts. Keep those branch sets coherent, and avoid mixing unrelated branches that make most parameters inactive most of the time.
 14. When a file contains several meaningful branch modes, increase exploration budget rather than shrinking the search into backtests. Use more epochs and multiple random states/seeds so the optimizer has a real chance to sample each mode. If the runner or sampler exposes an initial random/startup candidate setting, set it above default for these broad categorical files; do not add unsupported command flags or workaround code.
 15. Epoch count should scale with branch complexity. A file with several categorical branch modes, target-action modes, stop-action modes, and profit-gate modes needs materially more epochs than a narrow one-mode file. Do not run tiny epoch counts and then judge branch quality from under-sampled modes.
@@ -103,4 +103,4 @@ Each Hyperopt summary should include:
 
 ## Backtest Boundary
 
-Agents should bring the user the strongest Sieve Hyperopt candidates and ask which candidates should be backtested unless the current objective explicitly authorizes backtests.
+Agents should bring the user the strongest Sieve Hyperopt candidates and ask which candidates should be backtested unless the user has already authorized validation backtests for the task.

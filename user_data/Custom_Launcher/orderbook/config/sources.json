@@ -1,14 +1,13 @@
 {
   "version": 1,
+  "exchange": "multi_market",
+  "market_type": "multi",
   "market_profiles": [
     "binance_spot",
     "binance_usdm_futures",
     "bybit_spot",
     "bybit_linear"
   ],
-  "exchange": "multi_market",
-  "market_type": "multi",
-  "use_launcher_whitelist": true,
   "stream_mode": "partial_depth",
   "depth_levels": 20,
   "stream_update_ms": 500,
@@ -21,18 +20,7 @@
   ],
   "snapshot_interval_seconds": 60,
   "store_snapshots": false,
-  "store_raw_events": false,
   "max_symbols": 12,
   "capacity_warning_mb": 500,
-  "capacity_critical_mb": 102400,
-  "wall_score_threshold": 4.0,
-  "pressure_threshold": 0.35,
-  "extreme_pressure_threshold": 0.6,
-  "liquidity_bps_bands": [
-    5,
-    10,
-    25,
-    50
-  ],
-  "user_agent": "FreQ-OrderBookCollector/1.0"
+  "capacity_critical_mb": 102400
 }

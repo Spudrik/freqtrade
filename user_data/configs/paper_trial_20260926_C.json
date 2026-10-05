@@ -1,0 +1,5 @@
+{
+  "bot_name": "paper_20260926_C_level_volume",
+  "strategy": "PaperTrialLevelVolume",
+  "db_url": "sqlite:///user_data/research_news_data/context_features/paper_trial_20260926/C_trades.sqlite"
+}

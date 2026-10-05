@@ -210,3 +210,77 @@ freqtrade/user_data/
 !config_examples/config_freqai.example.json
 
 docker-compose-*.yml
+
+# Safe project backup allowlist (functional sources, selected notes, and sanitized configs).
+# Keep the four local credential-bearing configs private; their .example.json companions are safe to share.
+!user_data/configs/*.json
+user_data/configs/integrated_paper_20260926_manual.json
+user_data/configs/paper_news_lab.json
+user_data/configs/paper_news_manual.json
+user_data/configs/paper_trial_20260926_E.json
+!user_data/configs/*.example.json
+
+# Custom research source and its nested tests; generated outputs and data remain ignored below.
+!user_data/Custom_Launcher/research/**/
+!user_data/Custom_Launcher/research/**/*.py
+!user_data/Custom_Launcher/research/**/AGENTS.md
+!user_data/Custom_Launcher/research/**/README*.md
+!user_data/Custom_Launcher/research/**/requirements*.txt
+!user_data/tests/research/**/
+!user_data/tests/research/**/*.py
+!user_data/freqaimodels/*.py
+user_data/Custom_Launcher/research/**/__pycache__/
+user_data/tests/research/**/__pycache__/
+user_data/Custom_Launcher/research/**/backtest_results/**
+user_data/Custom_Launcher/research/**/hyperopt_results/**
+user_data/Custom_Launcher/research/**/models/**
+user_data/Custom_Launcher/research/**/raw/**
+user_data/Custom_Launcher/research/**/cache/**
+user_data/Custom_Launcher/research/**/*.sqlite*
+user_data/Custom_Launcher/research/**/*.parquet
+user_data/Custom_Launcher/research/**/*.feather
+user_data/Custom_Launcher/research/**/*.zip
+user_data/Custom_Launcher/research/**/*.log
+
+# Selected ignored research sources/configuration and human-readable project history.
+!user_data/research_news_data/
+user_data/research_news_data/*
+!user_data/research_news_data/context_features/
+user_data/research_news_data/context_features/*
+!user_data/research_news_data/context_features/3ki_freqai_2020_2022/
+user_data/research_news_data/context_features/3ki_freqai_2020_2022/*
+!user_data/research_news_data/context_features/3ki_freqai_2020_2022/configs/
+user_data/research_news_data/context_features/3ki_freqai_2020_2022/configs/*
+!user_data/research_news_data/context_features/3ki_freqai_2020_2022/configs/config_3ki_historical_news_freqai_btc_futures.json
+!user_data/research_news_data/context_features/3ki_freqai_2020_2022/strategies/
+user_data/research_news_data/context_features/3ki_freqai_2020_2022/strategies/*
+!user_data/research_news_data/context_features/3ki_freqai_2020_2022/strategies/ThreeKiHistoricalNewsFreqAIStrategy.py
+!user_data/research_news_data/context_features/3ki_freqai_2020_2022/tools/
+user_data/research_news_data/context_features/3ki_freqai_2020_2022/tools/*
+!user_data/research_news_data/context_features/3ki_freqai_2020_2022/tools/run_ta_confluence_freqai_sweep.py
+
+!user_data/research_news_data/context_features/integrated_paper_20260926/
+user_data/research_news_data/context_features/integrated_paper_20260926/*
+!user_data/research_news_data/context_features/integrated_paper_20260926/run_record.json
+!user_data/research_news_data/context_features/integrated_paper_20260926/decisions_auto.jsonl
+!user_data/research_news_data/context_features/integrated_paper_20260926/decisions_manual.jsonl
+!user_data/research_news_data/context_features/integrated_paper_20260926/manual_interventions.jsonl
+!user_data/research_news_data/context_features/integrated_paper_20260926/news_manual_decisions.jsonl
+!user_data/research_news_data/context_features/integrated_paper_20260926/news_lab_decisions.jsonl
+!user_data/research_news_data/context_features/integrated_paper_20260926/fast_context_decisions.jsonl
+!user_data/research_news_data/context_features/integrated_paper_20260926/paper_trial_system_review_20261004.md
+
+!user_data/research_news_data/context_features/market_reaction_zones/
+user_data/research_news_data/context_features/market_reaction_zones/*
+!user_data/research_news_data/context_features/market_reaction_zones/relationship_investigation_register.md
+!user_data/research_news_data/context_features/reports/
+user_data/research_news_data/context_features/reports/*
+!user_data/research_news_data/context_features/reports/general_exit_freqai_results_ledger.csv
+
+# Local editor/sync debris and root-level mystery artifacts are not project source.
+.vs/
+.codex/
+.codex-remote-attachments/
+/same
+/=ro
+ai_guidance_docs/Research Ideas/*.gdoc

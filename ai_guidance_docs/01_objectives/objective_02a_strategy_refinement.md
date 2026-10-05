@@ -39,7 +39,7 @@ Refine existing high-potential Sieve candidates while keeping multiple paths ali
 
 ## Required Status / Results
 
-- Current Sieve result files named by the active objective.
+- Current Sieve result files named by the active run and strategy stage.
 - `../04_results/results_recent_summary.md`
 
 ## Completion Criteria For A Refinement

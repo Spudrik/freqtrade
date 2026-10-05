@@ -4,7 +4,7 @@ default_read: routed
 owner: user+agent
 purpose: Bounded goal-mode iteration rules for overnight/high-output agents.
 do_not_use_for: Replacing strategy success rules, source readiness rules, or coding workflow review.
-last_rebuilt: 2026-06-10
+last_rebuilt: 2026-09-03
 ---
 
 # Rules - Goal-Mode Iteration Control
@@ -24,6 +24,22 @@ A goal-mode agent should behave like a bounded research controller:
 5. write compact ledgers and reports.
 
 Do not chase every possible tweak.
+
+## Permission-gated continuity
+
+1. A missing permission blocks only the exact edit, launch, scope expansion, or other
+   action that requires it.
+2. Continue useful read-only investigation, coverage checks, test design, independent
+   authorized branches, or other safe work that advances the active objective.
+3. In every user update, list each still-required permission as `Permission 1`,
+   `Permission 2`, and so on, with the exact affected files or action and intended
+   behaviour.
+4. Keep the numbering stable until the user approves, rejects, or makes the request
+   unnecessary. State when a numbered request is closed.
+5. Do not infer permission from silence and do not use parallel work to broaden the
+   objective or bypass a required approval.
+6. If no meaningful safe path remains, report the numbered permission blocker rather
+   than generating low-value work merely to appear active.
 
 ## Default caps
 
@@ -48,6 +64,66 @@ For each concept/lane:
 6. Record metrics and artifact path.
 7. Decide: `accept`, `keep_as_risk_lane`, `revise_once`, `park`, `reject`, or `blocked`.
 8. If the concept fails after logical repairs, move to the next concept.
+
+## Evidence-Triggered One-Minute Replay Cap
+
+When Objective 02b routes a repeated reaction pattern to targeted `1m` replay:
+
+1. candidate capture is a cheap queueing action, not permission to launch a run;
+2. freeze the direction-neutral selection rule before inspecting signed `1m` paths;
+3. normally use one diagnostic batch of `6-12` independent episodes, treating that
+   range as a work cap rather than an evidence threshold;
+4. run no more than one replay batch and one worker at a time while a main generation
+   is unfinished, unless a live capacity check proves the main work and the user's
+   processor reserve are unaffected;
+5. perform one direct aligned-path pass before any FreqAI run;
+6. permit at most one frozen FreqAI ladder for that queued pattern before returning to
+   the main plan;
+7. do not let the replay spawn another test, change the main batch order, or tune a
+   parent indicator before the complete generation review; and
+8. park the lane when `1m`, orderbook, trade-flow, or external-context coverage cannot
+   support the declared question without guessing.
+
+## Objective 02b Breadth-First Queue And Success Targets
+
+For Objective 02b reaction-and-event-driven direction work:
+
+1. Finish every frozen main batch before a result redirects the generation.
+2. Capture ideas from interim or final results in the rolling branch queue instead of
+   launching them immediately. Valid ideas include new indicators, mathematics,
+   timeframes, single-level or cluster definitions, convergence patterns, coins or
+   cohorts, controls, and timestamp-safe contextual sources.
+3. Record the source result, plain-language observation, route family, exact
+   hypothesis, alternative explanation/control, required data, smallest useful test,
+   cost, earliest eligible generation, and status.
+4. At the complete generation review, confirm provisional ideas, deduplicate cosmetic
+   variants, freeze one balanced next batch, and send its descendants to the following
+   review.
+5. Assess at least five materially different route families while the objective is
+   unresolved and eventually give at least five a fair terminal test. This is not a
+   requirement to consume all five authorized branch layers or invent filler tests.
+6. For meme-coin work, use only the frozen `10` most traded eligible meme coins under
+   the ranking and coverage contract in the active objective.
+7. For issued reaction-and-direction calls, score reaction success, conditional
+   direction success, and joint success separately. Joint success requires both on the
+   same call.
+8. Treat `55%` unseen joint success as the minimum acceptable research-lead floor and
+   `65%` as the main target, while also requiring meaningful coverage, adequate
+   independent support, and improvement over base-rate, majority-direction,
+   simple-trend, and no-level controls.
+9. Do not treat either percentage as a native FreqAI threshold, profit criterion, or
+   automatic trading promotion.
+10. Run the event hierarchy in order: honest historical event reconstruction,
+    individual-link tests, frozen pairwise tests, limited three-block chains and
+    post-event ranges, then untouched whole-event or later live confirmation.
+11. Complete every frozen sibling in one layer before promoting leads to the next;
+    interim ideas go to the branch queue and do not redirect the active layer.
+12. Keep every observation from one event in the same development or holdout
+    partition, and count whole events rather than candles as independent confirmation.
+13. Permit an explicit abstention when evidence conflicts or is weak. Report issued
+    calls and abstentions separately so selectivity cannot hide poor general coverage.
+14. Test BTC, ETH, and broad-market leadership instead of assuming BTC always leads,
+    and keep scheduled and unexpected events as separate evidence groups.
 
 ## Main decision table
 
@@ -96,7 +172,7 @@ The active broad research preference is to improve win rate, risk, and return wh
 1. `replacement_candidate` only if it beats the lane purpose without unacceptable trade-count loss.
 2. `risk_lane` if it reduces drawdown materially while preserving enough return.
 3. `sparse_specialist` if quality improves but trade count drops sharply.
-4. `parked` if the trade-count loss makes the result too narrow for the current objective.
+4. `parked` if the trade-count loss makes the result too narrow for the user-approved research scope.
 
 ## Combination rule
 

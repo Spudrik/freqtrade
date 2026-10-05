@@ -4,14 +4,14 @@ default_read: yes
 owner: user
 purpose: Start-here router and top-level repo contract for coding/research agents.
 do_not_use_for: Detailed research history, generated reports, or evidence dumps.
-last_rebuilt: 2026-07-13
+last_rebuilt: 2026-09-09
 ---
 
 # AGENTS.md - Start Here
 
 ## Core rule
 
-Do not read every guidance file. Read only the current objective and the files routed by that objective.
+Do not read every guidance file. Route directly from the user's request through this file to the minimum relevant subsystem `AGENTS.md` and rule files.
 
 ## Upstream Freqtrade core protection
 
@@ -30,17 +30,21 @@ Do not read every guidance file. Read only the current objective and the files r
 7. Do not expand an existing exception or create another one without explicit user approval. If an upstream update conflicts with the historical Bybit integration, propose extracting it into a standalone `user_data/**` tool before modifying upstream code further.
 8. Do not add project/research packages to Freqtrade's root requirements. Put them in an approved dependency manifest under `user_data/**`.
 
-This file incorporates the original repo-level runtime notes. The old top-level instruction that `current_objectives.md` was always canonical is superseded by the new routed structure: start at `objective_current.md`; use `objectives_master.md` only when the active stage is unclear or changing. `objective_current.md` is the active current objective, not just a pointer to another objective file.
+This file incorporates the original repo-level runtime notes. There is no ephemeral current-objective file. The user's latest explicit request defines the active task; use `objectives_master.md` only for programme-roadmap context or material stage changes.
 
 Agents may suggest objective document creation, archival, deletion, movement, splitting, or replacement, but must not do those actions without explicit user approval.
 
 ## User interaction contract
 
 1. When the user asks a question, answer first. Do not change code, move files, launch runs, or modify configuration until the user explicitly asks for action.
-2. When the user asks for implementation, act directly inside the current objective and routed rules.
+2. When the user asks for implementation, act directly inside the requested scope and routed rules.
 3. Use concise, structured answers. Start with short query/answer lines using abbreviated versions of the user's questions, then expand only where useful.
 4. Number or letter sections so the user can reference them quickly.
 5. When sharing plots or charts, share one at a time with context before the link, and link to the local file so it opens in Codex side panel.
+6. Code-edit permission is scoped to the files, subsystem, and behaviour the user explicitly approved. A broad objective, investigation request, or root-cause finding does not authorize edits outside that scope.
+7. Before changing code outside the approved scope, state the exact files and intended behavioural change, explain why it is needed, and ask for explicit approval. No response is not approval: leave the change pending and raise the request again on a later relevant turn until the user explicitly approves or rejects it.
+8. A one-time approval for named files does not widen standing permission. For current Objective 02b, the user has authorized research implementations and explicit indicator variants under `user_data/**` that are necessary to investigate reaction zones and the event-driven market hierarchy. Before editing `user_data/Indicators/**`, commit or record the clean fully tracked indicator baseline, create and switch to a dedicated experiment branch, and keep variants distinct from canonical indicators. Upstream core remains protected, and merging a variant into a canonical indicator still requires explicit user approval.
+9. Do not spawn or use sub-agents unless the user explicitly authorizes sub-agents for the specific current task. Large edits, repetitive work, reviews, urgency, or available thread capacity do not imply permission.
 
 ## Fix discipline
 
@@ -52,17 +56,21 @@ Agents may suggest objective document creation, archival, deletion, movement, sp
 
 ## Required read order
 
-1. Read `ai_guidance_docs/00_project_control/objective_current.md`.
-2. Read only the rule/status/result files listed by that objective.
-3. Read a file from `ai_guidance_docs/01_objectives/` only when `objective_current.md` explicitly routes to it.
-4. For coding tasks, also read `ai_guidance_docs/02_rules/rules_codebase_workflow.md`.
-5. For commands, backtests, dry-run startup, split-worker lanes, raw archive paths, or source data work, also read `ai_guidance_docs/02_rules/rules_runtime_environment.md`.
-6. Read `ai_guidance_docs/00_project_control/objectives_master.md` only if the current objective is missing, unclear, contradicted by the user request, or the task appears to move to a new stage.
-7. Do not read `ai_guidance_docs/99_archive/` unless the current objective explicitly says to verify historical evidence or the user asks for historical review.
-8. For Hyperopt tasks, read `ai_guidance_docs/02_rules/rules_hyperopt_general.md`.
-9. For exit/risk tasks, read `ai_guidance_docs/02_rules/rules_exit_and_risk_research.md`.
-10. Sieve is the only approved Hyperopt/discovery system unless the user explicitly approves a non-Sieve exception.
-11. Read `ai_guidance_docs/05_program_traceability/AGENTS.md` only for a new programme-level chat, an explicit history/roadmap review, a material stage transition, or when the current objective/coordinating agent routes there. It is not routine task context.
+1. Start from the user's latest explicit request and this router.
+2. Read the nearest subsystem `AGENTS.md` when one exists, then only the minimum relevant rule files.
+3. For coding tasks, read `ai_guidance_docs/02_rules/rules_codebase_workflow.md`.
+4. For commands, backtests, dry-run startup, split-worker lanes, raw archive paths, or source data work, read `ai_guidance_docs/02_rules/rules_runtime_environment.md`.
+5. For Hyperopt tasks, read `ai_guidance_docs/02_rules/rules_hyperopt_general.md`.
+6. For exit/risk tasks, read `ai_guidance_docs/02_rules/rules_exit_and_risk_research.md` and the relevant Sieve-stage rules.
+7. For the current bounded paper-trial stage, read
+   `ai_guidance_docs/01_objectives/objective_03_comparative_paper_trial.md`.
+   The old Objective 02b batch/branch queue is superseded; read it only when tracing
+   specific research evidence or if the user explicitly reopens that research.
+8. Read another file from `ai_guidance_docs/01_objectives/` only for programme architecture, a named parked objective, or a material stage change.
+9. Read `ai_guidance_docs/00_project_control/objectives_master.md` only for programme-roadmap context or when the user asks to revisit programme priorities.
+10. Do not read `ai_guidance_docs/99_archive/` unless the user asks for historical review or a routed rule requires specific historical evidence.
+11. Sieve is the only approved Hyperopt system for trading entry/exit candidate discovery unless the user explicitly approves an exception. Objective 02b direct-test/FreqAI reaction-zone research was a separate approved historical lane, not a competing entry/exit Hyperopt system; it is not the current execution queue.
+12. Read `ai_guidance_docs/05_program_traceability/AGENTS.md` only for a new programme-level chat, an explicit history/roadmap review, or a material stage transition. It is not routine task context.
 
 ## Runtime anchors
 
@@ -84,6 +92,11 @@ Agents may suggest objective document creation, archival, deletion, movement, sp
 3. Stop only processes that this agent started, or processes that are explicitly identified by exact command line, PID, log path, queue/job file, and user-approved scope.
 4. Do not kill broad `python.exe`, `freqtrade`, Hyperopt, backtest, collector, launcher, or Sieve processes just because they look duplicated. Windows venv launches can show both the venv Python and the base interpreter for one logical job.
 5. Prefer targeted worker-env commands, explicit `--logfile`/result paths, and isolated report folders so later agents can tell which process owns which task.
+6. The machine has `20` logical processors. Never copy or infer an `84`-thread setting from another environment.
+7. Before starting a new multithreaded or multi-process task, inspect current processor use and the exact existing project jobs. Do not infer available capacity from logical-processor count alone.
+8. Cap a new research workload at `4` worker threads by default, and reduce it when current load requires.
+9. Preserve at least `4` logical processors for the user. A temporary reserve of only `2` is allowed during daytime in the `Europe/London` timezone for a bounded attended run; restore the four-processor reserve afterwards. Do not use the reduced reserve for unattended or overnight work.
+10. Sub-agents and compute workers are separate limits. Do not spawn sub-agents without explicit task-specific authorization, regardless of available processor capacity.
 
 ## Long-run ownership and polling
 
@@ -97,7 +110,7 @@ Agents may suggest objective document creation, archival, deletion, movement, sp
 
 ## Hyperopt search standard
 
-1. Hyperopt/discovery work must route through Sieve unless the user explicitly approves a non-Sieve exception.
+1. Hyperopt work for trading entry/exit candidate discovery must route through Sieve unless the user explicitly approves a non-Sieve exception. Do not misapply this restriction to the direct-test and FreqAI reaction-zone or bounded event-scoped direction research explicitly governed by Objective 02b.
 2. Hyperopt should search broad, explicit theory spaces that would be inefficient to check manually.
 3. If a proposed Hyperopt run could be replaced by roughly `10-15` ordinary backtests, the search design is probably too small and should be expanded or downgraded to a simple comparison.
 4. For Hyperopt tasks, read and follow `ai_guidance_docs/02_rules/rules_hyperopt_general.md` before creating or launching a search.
@@ -115,19 +128,19 @@ Agents may suggest objective document creation, archival, deletion, movement, sp
 
 ## Goal-mode operating rule
 
-When the active objective is a bounded goal-mode run, follow the iteration caps, stop rules, and output requirements in `rules_goal_mode_iteration_control.md`. Do not turn an overnight goal into an open-ended architecture rewrite. Produce useful ledgers and reports, not long chat summaries.
+When the user starts a bounded goal-mode run, follow the iteration caps, stop rules, and output requirements in `rules_goal_mode_iteration_control.md`. Do not turn an overnight goal into an open-ended architecture rewrite. Produce useful ledgers and reports, not long chat summaries.
 
 ## If a needed rule is not routed
 
-If a clearly relevant rule file is not listed by the current objective but the work still fits the active objective, read the needed rule and note that the objective routing may need a small update.
+If a clearly relevant rule is not named by a subsystem router, read the minimum needed rule and flag the routing gap without creating an ephemeral task document.
 
-Pause and ask the user only when the request changes scope, promotes parked work, contradicts the current objective, risks live trading, or turns research evidence into strategy/promotion logic without an updated objective.
+Pause and ask the user only when the request materially broadens the approved scope, promotes parked work, conflicts with standing rules, risks live trading, or turns research evidence into strategy/promotion logic without explicit approval.
 
-## Deviation prompt rule
+## Scope-change prompt rule
 
-Ask the user whether the current objective should be updated if the requested work:
+Ask the user for explicit scope approval if the requested work:
 
-1. changes the active objective,
+1. changes the programme stage or requested subsystem,
 2. promotes a parked objective,
 3. contradicts the master objectives,
 4. starts using parked news/context data as if it is ready,
@@ -136,9 +149,9 @@ Ask the user whether the current objective should be updated if the requested wo
 7. requires new pass/fail rules not already defined for the current task,
 8. would alter the verified dry-run strategy/config after it has been frozen,
 9. would require live-trading mode or ambiguous order placement,
-10. would require large new data downloads not authorized by the current objective.
+10. would require large new data downloads not authorized by the user.
 
-Do not ask for guidance for ordinary implementation details inside the active objective. Continue using the current objective, routed rules, and the codebase-aware workflow.
+Do not ask for guidance for ordinary implementation details inside the explicit request. Continue using the routed rules and codebase-aware workflow.
 
 ## Research runtime discipline
 
@@ -150,10 +163,24 @@ Do not ask for guidance for ordinary implementation details inside the active ob
 6. If the existing FreqAI setup does not fit the requested data or theory, create or update a dedicated FreqAI environment/profile to run that request.
 7. Define trader-readable behaviour first, then encode it numerically for the requested FreqAI run.
 8. Treat overlapping signals as position-management evidence: same-direction may support add/hold/confidence; opposite-direction may support reduce/tighten/exit.
+9. For Objective 02b event-scoped direction, test event, BTC/ETH/broad-market leader,
+   coin-group transmission, coin-local modification, and post-event range information
+   separately before pairwise and limited three-block combinations.
+10. Select and hold out whole events rather than random candles from one continuing
+    episode, and allow abstention when event confirmation, market leadership, or source
+    coverage is unclear.
+11. For event and interaction interpretation, use the whole-episode, decision-time
+    role, expected-path, and conditional-modifier protocol in
+    `ai_guidance_docs/02_rules/reference_freqai_event_reaction_research_method.md`.
+    Never treat a downstream market response as a competing root cause merely because
+    it predicts continuation.
+12. Weak standalone evidence does not by itself reject a rational modifier, gate,
+    suppressor, amplifier, accumulator, delay, or override. Development-discovered
+    conditions must be frozen and confirmed on later whole episodes before acceptance.
 
 ## Global non-negotiables
 
-1. Preserve behaviour unless the current objective explicitly changes it.
+1. Preserve behaviour unless the user explicitly requests a change.
 2. Investigate existing code before adding new systems.
 3. Reuse existing helpers and ledgers before creating new ones.
 4. Do not invent dry-run safety settings, leverage caps, stake sizes, pair limits, or live-trading rules.

@@ -167,6 +167,8 @@ class EntrySieveSettings:
     take_profit_pct: str = "2"
     stoploss_pct: str = "2"
     control_entry_exits: bool = True
+    hyperopt_spaces: str = "buy"
+    target_family: str = "entries"
     target_sweep_enabled: bool = False
     target_sweep_pairs: str = ""
 
@@ -350,6 +352,8 @@ class EntrySieveService:
             "take_profit_pct": str(settings.take_profit_pct),
             "stoploss_pct": str(settings.stoploss_pct),
             "control_entry_exits": bool(settings.control_entry_exits),
+            "hyperopt_spaces": str(settings.hyperopt_spaces or "buy"),
+            "target_family": str(settings.target_family or "entries"),
             "target_sweep_enabled": bool(settings.target_sweep_enabled),
             "target_sweep_pairs": str(settings.target_sweep_pairs),
             "runtime_dir": str(self.runtime_dir),

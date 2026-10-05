@@ -167,7 +167,7 @@ EXIT_HYPOTHESIS = 'The entry-defined target can close on touch or close, or wait
 PRIMARY_TRIGGER = 'none'
 PRIMARY_GUARD = 'none'
 TARGET_PROVIDER = 'target_1[provider=d1_vp_prior_poc_after_vah_rejection;short.level=htfvp_prior_poc]'
-INVALIDATION_PROVIDER = 'none'
+INVALIDATION_PROVIDER = 'entry-frozen closed-D1 prior VAH; a close back above the rejected value-area boundary invalidates the short'
 ACTIVE_SELL_PARAMS = ('exit_plan', 'target_band_quarter_percent', 'reversal_confirmations', 'invalidation_band_quarter_percent', 'invalidation_confirmations')
 
 ENTRY_SOURCE_STAGE = "sieve2"

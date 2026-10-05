@@ -4,7 +4,7 @@ default_read: routed
 owner: user
 purpose: Runtime paths, Python environments, worker lanes, raw archive locations, and snapshot discipline.
 do_not_use_for: Strategy acceptance, research interpretation, or source feature design.
-last_rebuilt: 2026-06-10
+last_rebuilt: 2026-08-13
 ---
 
 # Rules - Runtime Environment
@@ -13,15 +13,15 @@ last_rebuilt: 2026-06-10
 
 Use this file when a task runs commands, launches the launcher, starts/stops dry-run or backtest processes, uses split worker lanes, touches raw archives, or reads/writes context/orderbook research data.
 
-This file incorporates the original top-level repo runtime notes. It replaces the old instruction that `current_objectives.md` is always canonical with the new routed guidance structure: start at repo-root `AGENTS.md`, then `ai_guidance_docs/00_project_control/objective_current.md`.
+This file incorporates the original top-level repo runtime notes. Start at repo-root `AGENTS.md`, then route directly from the user's request to the relevant subsystem and runtime rules.
 
 ## Guidance document routing
 
 1. Focused guidance lives under `C:\FreqTradeStuff\ai_guidance_docs`.
-2. The active task contract is now `ai_guidance_docs\00_project_control\objective_current.md`.
+2. The user's latest explicit request is the active task contract.
 3. Static long-term direction is `ai_guidance_docs\00_project_control\objectives_master.md`.
 4. Do not append progress logs to objective files.
-5. Use routed rule/status/result files for the current objective.
+5. Use the minimum relevant routed rule/status/result files for the requested task.
 6. Use `ai_guidance_docs\99_archive` only for evidence verification, migration audit, or explicitly routed historical review.
 7. If an objective appears complete, flag it to the user. Do not remove objectives without approval.
 
@@ -48,6 +48,11 @@ This file incorporates the original top-level repo runtime notes. It replaces th
 4. Do not kill broad `python.exe`, `freqtrade`, Hyperopt, backtest, collector, launcher, or Sieve processes just because there appear to be duplicates.
 5. On Windows, one logical venv-launched job can show both the venv Python executable and the base interpreter. Treat that as normal unless command lines prove a real duplicate.
 6. Prefer targeted worker-env commands, explicit `--logfile`/result paths, and isolated report folders so ownership and cleanup are auditable.
+7. This host has `20` logical processors. Never reuse or infer an `84`-thread configuration from another system.
+8. Before launching a multithreaded or multi-process task, inspect current processor use and exact existing jobs. Logical-processor count is not the same as available capacity.
+9. Limit each new research workload to `4` worker threads by default, and lower it when current load requires.
+10. Preserve at least `4` logical processors for the user. The reserve may temporarily fall to `2` only during daytime in the `Europe/London` timezone for a bounded attended run, after which the four-processor reserve must be restored. Never use the reduced reserve for unattended or overnight work.
+11. Do not spawn sub-agents unless the user explicitly authorizes them for the exact current task. Sub-agent count does not increase the processor budget.
 
 ## Long-running run ownership and polling
 
@@ -114,9 +119,48 @@ This file incorporates the original top-level repo runtime notes. It replaces th
 7. Record data coverage and timestamp flaws separately from model metrics.
 8. Do not remove open issues without a resolved entry.
 
+## Targeted `1m` data acquisition for Objective 02b
+
+The user has authorized downloading missing `1m` OHLCV needed by the bounded
+evidence-triggered replay lane. This authorization covers selected episode windows and
+their causal warm-up/context only; it is not permission for an automatic all-pair,
+all-history minute-data mirror.
+
+Before each acquisition:
+
+1. freeze the queued pairs, exact exchange/market type, UTC contact timestamps, causal
+   anchor timeframes, default or approved expanded replay envelopes, and feature
+   warm-up;
+2. inventory existing local `1m` files and continuity before assuming anything is
+   missing;
+3. construct per-pair intervals, merge overlaps and adjacent padded windows, and
+   calculate expected row counts;
+4. use existing Freqtrade/launcher download helpers from the controller `.venv` and
+   the explicitly selected data directory; do not use system Python or add downloader
+   logic to a strategy;
+5. do not download unselected pairs or silently fetch years between distant episodes
+   when targeted staged ranges and extracts are materially smaller;
+6. record the exact command, pair, market type, timeframe, timerange, data directory,
+   format, source, and completion status;
+7. verify timestamps, minute continuity, duplicates, gaps, expected/actual rows, and
+   readable output before accepting coverage; and
+8. align the replay to the first `1m` entry into the already-known frozen zone, not
+   merely to the opening timestamp of the parent `1h`/`4h`/`8h`/`1d` candle.
+
+Long level-construction history should normally reuse existing source-timeframe
+candles. Dense `1m` data belongs only in the source-scaled replay envelope unless a
+recorded boundary audit justifies one whole-pattern expansion.
+
+Retain existing reusable Freqtrade-formatted OHLCV in its approved data location. Put
+bulky deduplicated replay slices and staged extracts under
+`D:\FreqTradeStuffLargeData\research_outputs\market_reaction_zones`, with compact
+coverage manifests and analysis records under the routed `C:` research path. Remove
+failed, duplicate, or superseded extracts only after verifying the retained
+replacement; never delete shared source data merely because one replay is complete.
+
 ## Context/orderbook research ledger updates
 
-When adding context/orderbook sources, changing feature conditioning, running FreqAI research, validating timestamp alignment, or resolving data gaps, update the active compact ledgers/results routed by the current objective. Current replacements for the old monolithic ledger pattern are:
+When adding context/orderbook sources, changing feature conditioning, running FreqAI research, validating timestamp alignment, or resolving data gaps, update the active compact ledgers/results routed by the relevant subsystem rules. Current replacements for the old monolithic ledger pattern are:
 
 1. `ai_guidance_docs\04_results\context_research_ledger.md` for durable context/orderbook/FreqAI handoff notes.
 2. `ai_guidance_docs\04_results\results_recent_summary.md` only when broad findings change.

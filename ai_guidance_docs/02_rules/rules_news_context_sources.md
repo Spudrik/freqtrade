@@ -4,7 +4,7 @@ default_read: routed
 owner: user+agent
 purpose: News/GDELT/GKG/web/global source readiness, timestamp safety, and formatting rules.
 do_not_use_for: Orderbook readiness.
-last_rebuilt: 2026-06-10
+last_rebuilt: 2026-09-09
 ---
 
 
@@ -12,16 +12,47 @@ last_rebuilt: 2026-06-10
 
 ## Current status
 
-Parked. News, GDELT, GKG, web, global, macro, trends, ETF-flow, and similar context sources are long-term objectives but not active default inputs.
+Parked as broad or default inputs. Current Objective 02b explicitly reopens bounded
+use of news, GDELT/GKG, web, global, macro, trends, ETF-flow, and similar context for
+causal event reconstruction and the event-driven direction hierarchy, but only inside
+source blocks whose real coverage, availability timing, and missingness are proved.
+This exception does not make the sources globally ready.
 
 ## Use only when
 
 1. The user says the data is ready, or
 2. a source-readiness report proves a specific source block/window is usable.
 
+For current Objective 02b, the user's 12 August authorization permits exploratory use
+of these sources and the 3 September authorization permits their bounded use in the
+event-driven direction hierarchy. The readiness report still controls which exact
+rows and claims are valid.
+
 ## Important nuance
 
 News/context is not globally unusable. Some blocks or months may be usable if proven with coverage, timestamp, and completeness reports. Use only those proven windows/source-detail blocks.
+
+## Objective 02b event-reconstruction discipline
+
+When these sources are used to reconstruct a historical event or test direction:
+
+1. define why the event would have mattered using information available before the
+   market outcome; do not select importance because price later moved sharply;
+2. separate scheduled events, whose timing was knowable, from unexpected events,
+   whose occurrence was not predictable in advance;
+3. separate the prior expectation, the released outcome, and the surprise relative
+   to that expectation where the evidence permits it;
+4. timestamp every fact by when a trader could first have received it, not merely by
+   the date the event concerned;
+5. keep all observations from one event in the same development or holdout partition;
+6. preserve source-present, source-missing, stale, and low-coverage states rather than
+   interpreting missing material as quiet or neutral news; and
+7. call a relationship causal only when source timing and coverage support that claim;
+8. distinguish the news driver from the market's later volume, pressure, volatility,
+   or price confirmation rather than treating the response as a competing cause; and
+9. evaluate whether the event amplified, opposed, reduced, delayed, or was overwhelmed
+   by the pre-existing market background instead of assigning one permanent bullish or
+   bearish meaning to the event family.
 
 ## User terminology for source families
 
@@ -119,6 +150,59 @@ When implementing or rebuilding news/context features, preserve:
 9. Market availability timing.
 10. Story clustering and duplicate control.
 
+## Story Families, Narrative Accumulation, And Conditional Meaning
+
+News features must represent both individual major events and the rolling balance of
+several distinct smaller developments. Do not force every story to predict a price
+move by itself. A story may add pressure that only becomes visible when other stories,
+market conditions, and technical structure align.
+
+For each story or event family, preserve where source quality permits:
+
+1. first safe market-availability time;
+2. scheduled versus unexpected status;
+3. prior expectation and surprise relative to that expectation;
+4. novelty versus repetition of already-known information;
+5. credibility and confirmation stage;
+6. severity and likely duration;
+7. geographic, financial-system, crypto-market, sector, and coin scope;
+8. escalation, relief, correction, reversal, or implementation state;
+9. the dominant market concern the story addresses; and
+10. a causal decay rule for how long its pressure may remain active.
+
+Separate these cases:
+
+1. many sources repeating the same underlying story - one event with wider attention,
+   not many independent positive or negative events;
+2. several genuinely different stories pointing in the same direction - possible
+   accumulated narrative pressure;
+3. different stories applying opposing pressure - a conflicted background rather than
+   an automatic neutral state; and
+4. one exceptional event plausibly overriding the accumulated smaller background.
+
+Do not judge a story only by the final market sign. Positive information can reduce an
+otherwise likely fall, cap negative pressure, cause only an initial rise, or be
+subdued by a dominant negative background, positioning, liquidity, or technical
+obstacle. Negative information can analogously weaken an expected rise without
+turning the final candle negative. Where feasible, report raw movement and movement
+relative to matched pre-event states.
+
+The same release can carry different market meaning at different times. For example,
+lower inflation may help when inflation and rates dominate attention but may be read
+as weak growth when recession fear dominates. Determine the contemporaneous concern
+from timestamp-safe source and market information; never assign it from hindsight.
+
+Narrative interaction hypotheses may include amplification, suppression, reversal,
+delay, shortening, accumulation, transmission blocking, and dominant override. A
+weak standalone story can remain a rational modifier or accumulator. Discover such
+conditions only in development data, freeze the definition, and require later whole-
+event or prospective confirmation.
+
+Reports and models must keep story identity, source breadth, duplicate count, distinct
+story-family count, rolling positive/negative/conflicting pressure, source readiness,
+and market-response confirmation separately identifiable. Feature importance or raw
+article count cannot establish which story caused a market move.
+
 ## GDELT/GKG-specific rules
 
 1. Build any new GDELT/GKG path additively beside old aggregate backfill tables.
@@ -143,11 +227,20 @@ Reports should include, where available:
 7. late-available-at rows excluded,
 8. max source age,
 9. source-detail groups required,
-10. whether inactive rows mean true quietness or unavailable/no-signal data.
+10. whether inactive rows mean true quietness or unavailable/no-signal data,
+11. unique underlying stories versus duplicate-source coverage,
+12. distinct concurrent story families and their positive/negative/conflicting
+    balance,
+13. expectation, surprise, novelty, severity, credibility, and confirmation state
+    where reconstructable,
+14. the contemporaneous dominant concern and whether it was predeclared,
+    development-inferred, or later confirmed, and
+15. raw market outcome versus change from a matched expected path.
 
-## Out-of-scope while parked
+## Still out of scope
 
-1. Full news/context confluence claims.
+1. News/context confluence claims outside a predeclared causal event design and proven
+   source block.
 2. Broad FreqAI over incomplete context data.
 3. Treating missing GKG/news rows as zero/quiet.
 4. Using old aggregate rows as final trader-readable features.

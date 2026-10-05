@@ -6,7 +6,7 @@ from copy import deepcopy
 from datetime import datetime
 from typing import Any
 from pandas import DataFrame, Series
-from freqtrade.exchange import timeframe_to_minutes
+from freqtrade.exchange import amount_to_contract_precision, timeframe_to_minutes
 from freqtrade.strategy import stoploss_from_absolute, IntParameter
 SECONDARY_GUARD = 'none'
 SOURCE_ENTRY_SIGNATURE_SHA256 = 'eabc89fdf8c3d342b3e38f19e5f71f9f0563ba31103895ccf5c81254b8220b20'
@@ -431,21 +431,14 @@ class Sieve3V2ProfitLadderThreeStageRatchetFromPivotMidrangeRejectShort1h(IStrat
         return str(decision['tag']) if decision['action'] == 'full' else None
 
     def custom_stoploss(self, pair: str, trade: Any, current_time: datetime, current_rate: float, current_profit: float, after_fill: bool, **kwargs: Any) -> float | None:
-        _ = (pair, current_time, current_profit, after_fill, kwargs)
+        _ = (after_fill, kwargs)
         if bool(getattr(trade, 'has_open_orders', False)):
             return None
-        plan = self._focused_plan()
-        entry_rate = self._focused_float(getattr(trade, 'open_rate', None))
-        if entry_rate is None or entry_rate <= 0.0:
-            raise ValueError('focused exit runtime requires a positive trade open rate')
+        plan, state, _, _ = self._focused_context(pair, trade, current_time, current_rate, current_profit)
+        if not state:
+            return None
         is_short = bool(getattr(trade, 'is_short', False))
-        stop_price = entry_rate * (1.0 + float(plan['hard_stop_ratio']) if is_short else 1.0 - float(plan['hard_stop_ratio']))
-        exits = int(getattr(trade, 'nr_of_successful_exits', 0) or 0)
-        if exits >= 1:
-            stop_price = entry_rate
-        if exits >= 2:
-            target_1 = float(plan['target_1_ratio'])
-            stop_price = entry_rate * (1.0 - target_1 if is_short else 1.0 + target_1)
+        stop_price = self._focused_stop_overlay(plan, state, current_profit)
         if (is_short and stop_price <= current_rate) or (not is_short and stop_price >= current_rate):
             return None
         return stoploss_from_absolute(stop_price, current_rate=current_rate, is_short=is_short, leverage=float(getattr(trade, 'leverage', 1.0) or 1.0))
@@ -499,6 +492,8 @@ class Sieve3V2ProfitLadderThreeStageRatchetFromPivotMidrangeRejectShort1h(IStrat
         exit_side = getattr(trade, 'exit_side', None)
         orders = tuple(trade.select_filled_or_open_orders())
         now = self._focused_utc(current_time)
+        # Adjustment stake uses entry cost, not the proceeds at each exit price.
+        entry_unit_stake = float(state['entry_rate']) / float(trade.leverage)
         for name, candidate in stages.items():
             if not isinstance(candidate, dict):
                 continue
@@ -511,17 +506,25 @@ class Sieve3V2ProfitLadderThreeStageRatchetFromPivotMidrangeRejectShort1h(IStrat
                 and str(getattr(order, 'ft_order_tag', None) or '') == tag
             ]
             credited = sum(
-                max(0.0, float(getattr(order, 'stake_amount_filled', 0.0) or 0.0))
+                max(0.0, float(order.safe_filled)) * entry_unit_stake
                 for order in matching
             )
             stage['credited_stake'] = credited
             target = float(stage.get('target_stake') or 0.0)
+            # Freqtrade truncates the requested quantity to exchange precision.
+            # A fully filled rounded order completes its stage without a dust retry.
+            rounded_target = amount_to_contract_precision(
+                target / entry_unit_stake,
+                trade.amount_precision,
+                trade.precision_mode,
+                trade.contract_size,
+            ) * entry_unit_stake
             tolerance = max(1e-9, target * 1e-9)
             if any(bool(getattr(order, 'ft_is_open', False)) for order in matching):
                 stage['status'] = 'requested'
                 state['phase'] = f'{name}_pending'
                 continue
-            if target > 0.0 and credited >= target - tolerance:
+            if rounded_target > 0.0 and credited >= rounded_target - tolerance:
                 stage['status'] = 'filled'
                 filled_times = [
                     self._focused_utc(getattr(order, 'order_filled_utc', None))
@@ -545,13 +548,6 @@ class Sieve3V2ProfitLadderThreeStageRatchetFromPivotMidrangeRejectShort1h(IStrat
         _ = (max_stake, current_entry_rate, current_exit_rate, current_entry_profit, current_exit_profit, kwargs)
         if bool(getattr(trade, 'has_open_orders', False)):
             return None
-        plan = self._focused_plan()
-        completed = int(getattr(trade, 'nr_of_successful_exits', 0) or 0)
-        if completed >= 2:
-            return None
-        next_target = float(plan['target_1_ratio'] if completed == 0 else plan['target_2_ratio'])
-        if current_profit < next_target:
-            return None
         _, state, _, decision = self._focused_context(str(getattr(trade, 'pair', '')), trade, current_time, current_rate, current_profit)
         if not state:
             return None
@@ -571,12 +567,6 @@ class Sieve3V2ProfitLadderThreeStageRatchetFromPivotMidrangeRejectShort1h(IStrat
             request = min(current_stake, initial_stake * float(decision['fraction']))
         else:
             remaining = max(0.0, target - credited)
-            if remaining <= max(1e-8, target * 0.005):
-                stage['status'] = 'filled'
-                stage['filled_at'] = self._focused_utc(current_time).isoformat()
-                state['phase'] = 'remainder' if stage_name == 'stage_1' else 'runner'
-                self._focused_save_state(trade, state)
-                return None
             request = min(current_stake, remaining)
         if min_stake is not None and 0.0 < current_stake - request < float(min_stake):
             request = current_stake - float(min_stake)

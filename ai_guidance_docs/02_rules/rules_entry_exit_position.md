@@ -62,7 +62,7 @@ Target/invalidation levels may come from:
 4. Prior pivots, highs/lows, higher highs/lower lows.
 5. BOS/CHoCH and market-structure state.
 6. Orderbook shelves, walls, liquidity vacuums, wall removal/rebuild, and venue agreement only when a future objective explicitly routes orderbook into Sieve.
-7. Later news/context crash/risk-off signals only when data readiness and the active objective explicitly route them into Sieve.
+7. Later news/context crash/risk-off signals only when data readiness is proven and the user explicitly routes them into Sieve.
 
 ## Entry-specific exits
 
@@ -80,7 +80,7 @@ Examples of valid exit/reduce logic:
 8. Trigger invalidates and guard also flips against the trade: compare full exit, partial plus lock, and tight structure stop based on PnL bucket.
 9. Target is touched while same-direction evidence remains aligned: partial, stop shift, or trail to the next target rather than automatic full exit.
 
-For current Sieve3 exit regeneration, active project indicator target/invalidation families are VP, TLV2, pivots, BOS/CHoCH, and custom pattern families. Orderbook, FreqAI, news/context, and broader confluence sources remain parked unless the active objective explicitly routes them in.
+For Sieve3 exit regeneration, active project indicator target/invalidation families are VP, TLV2, pivots, BOS/CHoCH, and custom pattern families. Orderbook, FreqAI, news/context, and broader confluence sources remain parked unless the user explicitly routes them in.
 
 ## Adds / stacking
 

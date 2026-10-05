@@ -28,7 +28,7 @@ This rule doc is only for exit logic and risk research:
 1. Use Sieve as the default and only approved Hyperopt/discovery system for explicit exit/risk theory search.
 2. Use FreqAI, orderbook, or context data only as parked future input sources unless the user explicitly approves them for the current Sieve objective.
 3. Do not use manual one-off backtests to declare an exit/risk concept dead.
-4. Do not run ordinary backtests unless the user approves or the current objective explicitly permits it.
+4. Do not run ordinary backtests unless the user explicitly approves them for the task.
 5. Treat backtests as sanity/validation after Sieve discovery, not as the main testing engine.
 
 ## Strategy Shape
@@ -68,7 +68,7 @@ Test these as mode families:
 20. Reduce stake in chop or risk-off states.
 21. Leverage only after a stable rule family is proven.
 
-Orderbook, FreqAI, news/context, and broader confluence sources are parked future inputs unless the active objective explicitly routes them into Sieve. Do not use them as active exit evidence in current Sieve3 regeneration merely because older examples mention them.
+Orderbook, FreqAI, news/context, and broader confluence sources are parked future inputs unless the user explicitly routes them into Sieve. Do not use them as active exit evidence in Sieve3 regeneration merely because older examples mention them.
 
 ## State And Implementation Guardrails
 

@@ -4,7 +4,7 @@ default_read: routed
 owner: user+agent
 purpose: Router for the wider master strategy architecture objective.
 do_not_use_for: Detailed implementation history or single-candidate tuning.
-last_rebuilt: 2026-06-11
+last_rebuilt: 2026-08-12
 ---
 
 # Objective 02 - Master Strategy Architecture
@@ -32,7 +32,8 @@ This file is a router. Do not treat it as a full implementation plan. Open the m
 | Work type | Read |
 |---|---|
 | Existing Sieve candidate refinement | `objective_02a_strategy_refinement.md` |
-| Sieve3 exits/adds/reductions/risk | `../00_project_control/objective_current.md` plus routed Sieve3 exit rules |
+| Sieve3 exits/adds/reductions/risk | User request plus routed Sieve3 exit rules |
+| Market-first indicator level and level-cluster reaction-zone discovery | `objective_02b_market_reaction_zone_discovery.md` |
 | Orderbook confluence/targets/risk | `objective_02c_orderbook_confluence.md` |
 | News/context integration | `objective_02d_news_context_integration.md` |
 | Generic TA side-lane | `objective_02e_generic_ta_integration.md` |
@@ -67,7 +68,7 @@ These are quotas for breadth, not hard promotion targets. Do not let one promisi
 
 ## Required Ledgers / Results
 
-- Current Sieve batch/result outputs named by the active objective.
+- Current Sieve batch/result outputs named by the active run and strategy stage.
 - `../04_results/hypothesis_ledger.csv` only when adding/checking test history.
 
 ## Non-Goals

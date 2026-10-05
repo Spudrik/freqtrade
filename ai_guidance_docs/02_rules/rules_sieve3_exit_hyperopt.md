@@ -4,7 +4,7 @@ default_read: routed
 owner: user+agent
 purpose: Current Sieve3 V2 exit-family, Hyperopt, smoke, queue, and result rules.
 do_not_use_for: Entry discovery, historical V1/V2 reconstruction, or non-Sieve Hyperopt packages.
-last_rebuilt: 2026-07-22
+last_rebuilt: 2026-08-07
 ---
 
 # Rules - Sieve3 V2 Exit Hyperopt
@@ -26,7 +26,7 @@ Sieve3 V2 replaced the broad original Sieve3 exit sweep because that surface had
 7. Pattern and non-pattern strategies were mixed despite materially different trade frequency and window requirements.
 8. Historical queue construction allowed duplication and made source coverage harder to verify.
 
-The checkpoint contains `599` active standalone strategies derived from `134` fixed entry sources:
+The historical checkpoint contained `599` standalone strategies derived from `134` fixed entry sources:
 
 - `134` `profit_level_full_or_ladder` files;
 - `134` `profit_ladder_three_stage_no_ratchet` files;
@@ -34,7 +34,28 @@ The checkpoint contains `599` active standalone strategies derived from `134` fi
 - `100` applicable `entry_target_full_or_zone_reversal` files;
 - `97` applicable `target_partial_invalidation_remainder` files.
 
-The queue contains every active file exactly once across `47` standard batches and `19` pattern batches. The exact checkpoint manifest is `user_data/Custom_Launcher/launcher_v2/runtime/entry_sieve/v2/sieve3_v2_batches.json`.
+That historical queue contained every checkpoint file exactly once across `47` standard batches and `19` pattern batches. Its manifest remains historical evidence at `user_data/Custom_Launcher/launcher_v2/runtime/entry_sieve/v2/sieve3_v2_batches.json`; it is not a valid current queue because it still names the nine files that remain in `isolated_possible_errors`.
+
+## 7 August 2026 Active Surface
+
+Count permanent Sieve3 only from top-level strategy files under `user_data/strategies` that match an approved permanent Sieve3 family. The current permanent active surface is `990` files from `134` fixed entry sources:
+
+- `134` `profit_level_full_or_ladder` files;
+- `134` `profit_ladder_three_stage_no_ratchet` files;
+- `134` `profit_ladder_three_stage_ratchet` files;
+- `94` active `entry_target_full_or_zone_reversal` files;
+- `94` active `target_partial_invalidation_remainder` files;
+- `40` each of `generic_scored_level_full_or_reaction` and `generic_scored_level_partial_progression`;
+- `40` each of the eight focused named-level reaction families: base and higher-timeframe VA edge, prior POC, strength-qualified HVN, and quality-qualified TLV2.
+
+The following never count as active Sieve3 coverage or completion evidence:
+
+1. Files in `Archive`, `isolated_possible_errors`, or any other archive/isolation directory.
+2. Deleted files or historical manifest references whose strategy file is no longer active.
+3. Temporary target-quality files such as `sieve3_V2_tq_*`, even while they remain in the top-level strategy directory.
+4. Failed, incomplete, technically invalid, or superseded runs.
+
+An isolated or archived file records a rejected or unresolved idea. It cannot satisfy family coverage, enter a current queue, or contribute to Sieve3 completion unless the user explicitly approves a corrected new active strategy and that new strategy produces valid evidence.
 
 For exit work:
 
@@ -57,6 +78,22 @@ Applicability-gated families:
 4. `entry_target_full_or_zone_reversal`: only when the entry/indicator exposes an explicit target known without lookahead. Compare full target exit with target-zone reversal confirmation.
 5. `target_partial_invalidation_remainder`: only when the source exposes both an explicit target and a coherent entry-specific invalidation. Take a partial at/around the target and manage the remainder against the invalidation/ratchet contract.
 
+FreqAI-informed generic-level families for entries without a trusted active source-target branch:
+
+6. `generic_scored_level_full_or_reaction`: select the next qualifying direction-aware generic level zone and compare rational full-exit reactions. The retained candidate evidence is VA edge, strength-qualified HVN, prior POC, and cross-type/cross-timeframe confluence; TLV2 may contribute to confluence but is not a retained standalone generic target.
+7. `generic_scored_level_partial_progression`: use the same causal level-zone contract, take one or two tunable partials only when the zone produces a confirmed reaction, advance past a cleanly crossed zone, and optionally move the stop to entry or a previously passed zone.
+
+Focused named-level reaction diagnostics for the same `40` uncovered or corrected entries:
+
+8. `va_edge_reaction_base` and `va_edge_reaction_higher_tf`.
+9. `prior_poc_reaction_base` and `prior_poc_reaction_higher_tf`.
+10. `hvn_strength_reaction_base` and `hvn_strength_reaction_higher_tf`.
+11. `tlv2_quality_reaction_base` and `tlv2_quality_reaction_higher_tf`.
+
+Each focused diagnostic isolates one named directional level provider and requires Hyperopt-selected closed-candle weakening or rejection around its zone. These files answer whether a simple level-plus-weakening exit works without scored confluence. Standalone TLV2 remains excluded from the scored retained-target set; its focused files are an explicitly approved diagnostic hypothesis, not evidence that TLV2 is already a retained universal target.
+
+These families encode conclusions from the completed FreqAI level-reaction/readiness work. They must not run a FreqAI model inside Sieve3. FreqAI is the research evidence for a compact deterministic level score; Sieve Hyperopt tests the trading actions around those scored levels.
+
 Do not create a target family from keyword guesses, arbitrary OHLC columns, or a generic fallback target. Missing target/invalidation coverage is a generation problem to resolve, not a runtime fallback to fixed percentages.
 
 Trailing-only, fixed-RR control, generic breakeven-only, and broad mixed exit families are not part of the current V2 set. Add them only if the user explicitly reopens those theories.
@@ -69,6 +106,10 @@ Trailing-only, fixed-RR control, generic breakeven-only, and broad mixed exit fa
 4. Count coverage by parsed source stem after `_from_`; do not infer completeness from total file count.
 5. Archive old strategies only after the replacement coverage matrix has been checked.
 6. Queue generation must include every active V2 file exactly once and no archived file.
+7. Never count files recursively across strategy subdirectories. Count only approved permanent top-level families.
+8. File coverage is not Sieve3 completion. An entry is complete only after valid runs produce several statistically relevant positive exit solutions for that fixed entry. The solutions may come from different families or parameter selections, but must be materially distinct rather than duplicate rows.
+9. An entry with only weak, invalid, failed, isolated, archived, or superseded results remains incomplete regardless of how many files were generated for it.
+10. The final generic-level campaign manifest is `user_data/Custom_Launcher/launcher_v2/runtime/entry_sieve_v2_final_generic_levels/sieve3_v2_final_generic_level_batches.json`. It contains `401` unique files exactly once in `10` standard logic-family batches and one routed pattern batch.
 
 ## Parameter Design
 
@@ -148,6 +189,8 @@ After a complete smoke pass, do not keep describing smoke as pending. Move direc
 4. Standard batches precede pattern batches.
 5. Rebuild the queue whenever active strategy coverage changes.
 6. Historical queue IDs and result files retain their original meaning and must not be silently reused for different strategy sets.
+7. Do not launch the historical `599`-file manifest. Rebuild the queue from the approved permanent top-level families after the generic-level files are created and checked.
+8. Queue validation must fail if a referenced file resolves only in an archive or isolation directory.
 
 ## Result Interpretation
 
