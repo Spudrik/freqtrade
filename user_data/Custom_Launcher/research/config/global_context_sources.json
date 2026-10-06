@@ -292,6 +292,290 @@
         "DTWEXBGS": "Broad USD"
       },
       "notes": "Keyed FRED rates/dollar risk context. Set FRED_API_KEY or select a key file with the configured JSON path."
+    },
+    {
+      "id": "pilot_deribit_options_btc",
+      "type": "deribit_options",
+      "enabled": true,
+      "source_group": "crypto_options",
+      "market_relevance": "medium",
+      "url": "https://www.deribit.com/api/v2/public/get_book_summary_by_currency",
+      "currency": "BTC",
+      "max_expiries": 3,
+      "max_age_seconds": 1800,
+      "max_clock_gap_seconds": 300,
+      "notes": "Public BTC options 24h volume and open interest by expiry and call/put. Descriptive positioning/hedging context only; not directional alone."
+    },
+    {
+      "id": "pilot_deribit_options_eth",
+      "type": "deribit_options",
+      "enabled": true,
+      "source_group": "crypto_options",
+      "market_relevance": "medium",
+      "url": "https://www.deribit.com/api/v2/public/get_book_summary_by_currency",
+      "currency": "ETH",
+      "max_expiries": 3,
+      "max_age_seconds": 1800,
+      "max_clock_gap_seconds": 300,
+      "notes": "Public ETH options 24h volume and open interest by expiry and call/put. Descriptive positioning/hedging context only; not directional alone."
+    },
+    {
+      "id": "pilot_defillama_stablecoin_chains",
+      "type": "defillama_stablecoin_chains",
+      "enabled": true,
+      "source_group": "crypto_stablecoins",
+      "market_relevance": "medium",
+      "url": "https://stablecoins.llama.fi/stablecoinchains",
+      "chains": [
+        "Ethereum",
+        "Tron",
+        "BSC",
+        "Solana",
+        "Arbitrum"
+      ],
+      "max_chains": 5,
+      "min_interval_seconds": 3600,
+      "notes": "Current stablecoin supply levels by chain. This endpoint is a level snapshot, not a net capital-flow measure or a supply-change series."
+    },
+    {
+      "id": "pilot_defillama_dex_volume",
+      "type": "defillama_dex_volume",
+      "enabled": true,
+      "source_group": "crypto_dex_activity",
+      "market_relevance": "medium",
+      "url": "https://api.llama.fi/overview/dexs?excludeTotalDataChart=true&excludeTotalDataChartBreakdown=true",
+      "min_interval_seconds": 3600,
+      "notes": "Aggregate DEX 24h activity and comparison bucket where complete. Volume is activity, not a direct net-capital-flow measure."
+    },
+    {
+      "id": "pilot_coingecko_btc_eth_relative_strength",
+      "type": "coingecko_relative_strength",
+      "enabled": true,
+      "source_group": "crypto_relative_strength",
+      "market_relevance": "high",
+      "url": "https://api.coingecko.com/api/v3/coins/markets",
+      "vs_currency": "usd",
+      "coin_ids": [
+        "bitcoin",
+        "ethereum"
+      ],
+      "max_age_seconds": 3600,
+      "max_clock_gap_seconds": 300,
+      "notes": "BTC/ETH fetched in one provider response. Emits ETH minus BTC rolling 24h return in percentage points and ETH/BTC price ratio; distinct from average BTC/ETH change."
+    },
+    {
+      "id": "pilot_hyperliquid_sample_01",
+      "type": "hyperliquid_clearinghouse",
+      "enabled": true,
+      "source_group": "crypto_perpetual_position_sample",
+      "market_relevance": "medium",
+      "url": "https://api.hyperliquid.xyz/info",
+      "wallet": "0x0622a2198712c9527817493553dca548f42e8088",
+      "symbols": [
+        "BTC",
+        "ETH",
+        "SOL",
+        "HYPE",
+        "ZEC",
+        "XRP"
+      ],
+      "max_age_seconds": 300,
+      "min_interval_seconds": 1800,
+      "notes": "Frozen outcome-blind public sample: official Hyperliquid BTC/ETH/HYPE public trades over 45 seconds; lexicographically first eight addresses among 18 with fills >= $10k, no PnL selection. Anonymous selected account, not a representative whale or guaranteed directional signal."
+    },
+    {
+      "id": "pilot_hyperliquid_sample_02",
+      "type": "hyperliquid_clearinghouse",
+      "enabled": true,
+      "source_group": "crypto_perpetual_position_sample",
+      "market_relevance": "medium",
+      "url": "https://api.hyperliquid.xyz/info",
+      "wallet": "0x1a2e6afa298b1cc50939b4b2b0b430e3c1ef3459",
+      "symbols": [
+        "BTC",
+        "ETH",
+        "SOL",
+        "HYPE",
+        "ZEC",
+        "XRP"
+      ],
+      "max_age_seconds": 300,
+      "min_interval_seconds": 1800,
+      "notes": "Frozen outcome-blind public sample: official Hyperliquid BTC/ETH/HYPE public trades over 45 seconds; lexicographically first eight addresses among 18 with fills >= $10k, no PnL selection. Anonymous selected account, not a representative whale or guaranteed directional signal."
+    },
+    {
+      "id": "pilot_hyperliquid_sample_03",
+      "type": "hyperliquid_clearinghouse",
+      "enabled": true,
+      "source_group": "crypto_perpetual_position_sample",
+      "market_relevance": "medium",
+      "url": "https://api.hyperliquid.xyz/info",
+      "wallet": "0x37c1e493c8a452ab3f5a6d01fda87795b91e7851",
+      "symbols": [
+        "BTC",
+        "ETH",
+        "SOL",
+        "HYPE",
+        "ZEC",
+        "XRP"
+      ],
+      "max_age_seconds": 300,
+      "min_interval_seconds": 1800,
+      "notes": "Frozen outcome-blind public sample: official Hyperliquid BTC/ETH/HYPE public trades over 45 seconds; lexicographically first eight addresses among 18 with fills >= $10k, no PnL selection. Anonymous selected account, not a representative whale or guaranteed directional signal."
+    },
+    {
+      "id": "pilot_hyperliquid_sample_04",
+      "type": "hyperliquid_clearinghouse",
+      "enabled": true,
+      "source_group": "crypto_perpetual_position_sample",
+      "market_relevance": "medium",
+      "url": "https://api.hyperliquid.xyz/info",
+      "wallet": "0x4e23288cee4960f9f962195c22948e4bc7ae20c3",
+      "symbols": [
+        "BTC",
+        "ETH",
+        "SOL",
+        "HYPE",
+        "ZEC",
+        "XRP"
+      ],
+      "max_age_seconds": 300,
+      "min_interval_seconds": 1800,
+      "notes": "Frozen outcome-blind public sample: official Hyperliquid BTC/ETH/HYPE public trades over 45 seconds; lexicographically first eight addresses among 18 with fills >= $10k, no PnL selection. Anonymous selected account, not a representative whale or guaranteed directional signal."
+    },
+    {
+      "id": "pilot_hyperliquid_sample_05",
+      "type": "hyperliquid_clearinghouse",
+      "enabled": true,
+      "source_group": "crypto_perpetual_position_sample",
+      "market_relevance": "medium",
+      "url": "https://api.hyperliquid.xyz/info",
+      "wallet": "0x654086857e1fad6dcf05cf6695cce51ea3984268",
+      "symbols": [
+        "BTC",
+        "ETH",
+        "SOL",
+        "HYPE",
+        "ZEC",
+        "XRP"
+      ],
+      "max_age_seconds": 300,
+      "min_interval_seconds": 1800,
+      "notes": "Frozen outcome-blind public sample: official Hyperliquid BTC/ETH/HYPE public trades over 45 seconds; lexicographically first eight addresses among 18 with fills >= $10k, no PnL selection. Anonymous selected account, not a representative whale or guaranteed directional signal."
+    },
+    {
+      "id": "pilot_hyperliquid_sample_06",
+      "type": "hyperliquid_clearinghouse",
+      "enabled": true,
+      "source_group": "crypto_perpetual_position_sample",
+      "market_relevance": "medium",
+      "url": "https://api.hyperliquid.xyz/info",
+      "wallet": "0x6fbc9c92d1430fa2a37f18959b2a1dbcee36102d",
+      "symbols": [
+        "BTC",
+        "ETH",
+        "SOL",
+        "HYPE",
+        "ZEC",
+        "XRP"
+      ],
+      "max_age_seconds": 300,
+      "min_interval_seconds": 1800,
+      "notes": "Frozen outcome-blind public sample: official Hyperliquid BTC/ETH/HYPE public trades over 45 seconds; lexicographically first eight addresses among 18 with fills >= $10k, no PnL selection. Anonymous selected account, not a representative whale or guaranteed directional signal."
+    },
+    {
+      "id": "pilot_hyperliquid_sample_07",
+      "type": "hyperliquid_clearinghouse",
+      "enabled": true,
+      "source_group": "crypto_perpetual_position_sample",
+      "market_relevance": "medium",
+      "url": "https://api.hyperliquid.xyz/info",
+      "wallet": "0x7b7f72a28fe109fa703eeed7984f2a8a68fedee2",
+      "symbols": [
+        "BTC",
+        "ETH",
+        "SOL",
+        "HYPE",
+        "ZEC",
+        "XRP"
+      ],
+      "max_age_seconds": 300,
+      "min_interval_seconds": 1800,
+      "notes": "Frozen outcome-blind public sample: official Hyperliquid BTC/ETH/HYPE public trades over 45 seconds; lexicographically first eight addresses among 18 with fills >= $10k, no PnL selection. Anonymous selected account, not a representative whale or guaranteed directional signal."
+    },
+    {
+      "id": "pilot_hyperliquid_sample_08",
+      "type": "hyperliquid_clearinghouse",
+      "enabled": true,
+      "source_group": "crypto_perpetual_position_sample",
+      "market_relevance": "medium",
+      "url": "https://api.hyperliquid.xyz/info",
+      "wallet": "0x862c6f0373ac129fc66a324b234943139ca10c92",
+      "symbols": [
+        "BTC",
+        "ETH",
+        "SOL",
+        "HYPE",
+        "ZEC",
+        "XRP"
+      ],
+      "max_age_seconds": 300,
+      "min_interval_seconds": 1800,
+      "notes": "Frozen outcome-blind public sample: official Hyperliquid BTC/ETH/HYPE public trades over 45 seconds; lexicographically first eight addresses among 18 with fills >= $10k, no PnL selection. Anonymous selected account, not a representative whale or guaranteed directional signal."
+    },
+    {
+      "id": "pilot_bybit_eth_native_wallet",
+      "type": "bybit_eth_native_wallet",
+      "enabled": true,
+      "source_group": "crypto_exchange_wallet_transfers",
+      "market_relevance": "medium",
+      "url": "https://eth.blockscout.com/api/v2/addresses/0x1Db92e2EeBC8E0c075a02BeA49a2935BcD2dFCF4/transactions",
+      "wallet": "0x1Db92e2EeBC8E0c075a02BeA49a2935BcD2dFCF4",
+      "page_size": 50,
+      "min_interval_seconds": 3600,
+      "notes": "Dated Bybit Hot Wallet 1 attribution from the 2024-12-12 Bybit PoR audit and Blockscout tag. Fetch one latest page only; preserve per-transaction clocks and ETH units. Transfers may be internal wallet movements and are not buys/sells or complete current-hour flow."
+    },
+    {
+      "id": "pilot_bybit_eth_erc20_wallet",
+      "type": "bybit_eth_erc20_wallet",
+      "enabled": true,
+      "source_group": "crypto_exchange_wallet_transfers",
+      "market_relevance": "medium",
+      "url": "https://eth.blockscout.com/api/v2/addresses/0x1Db92e2EeBC8E0c075a02BeA49a2935BcD2dFCF4/token-transfers?type=ERC-20",
+      "wallet": "0x1Db92e2EeBC8E0c075a02BeA49a2935BcD2dFCF4",
+      "page_size": 50,
+      "min_interval_seconds": 3600,
+      "notes": "Dated Bybit Hot Wallet 1 attribution from the 2024-12-12 Bybit PoR audit and Blockscout tag. Fetch one latest page only; deduplicate by transaction hash plus log index and preserve token units/decimals and clocks. Transfers may be internal wallet movements and are not buys/sells or complete current-hour flow."
+    },
+    {
+      "id": "pilot_bybit_btc_porrow_wallet",
+      "type": "bybit_btc_wallet",
+      "enabled": true,
+      "source_group": "crypto_exchange_wallet_transfers",
+      "market_relevance": "medium",
+      "url": "https://blockstream.info/api/address/{address}/txs",
+      "address": "bc1qa2eu6p5rl9255e3xz7fcgm6snn4wl5kdfh7zpt05qp5fad9dmsys0qjg0e",
+      "page_size": 25,
+      "min_interval_seconds": 3600,
+      "notes": "Dated Bybit PoR-attributed Bitcoin address. One latest Blockstream page only; include confirmed net satoshi flows per transaction, exclude pending records, and preserve block clocks. This single wallet is not total Bybit flow; transfers are not buys/sells or complete current-hour flow."
+    },
+    {
+      "id": "pilot_bybit_liquidations_60s",
+      "type": "bybit_liquidation_observer",
+      "enabled": true,
+      "source_group": "crypto_derivatives_liquidations",
+      "market_relevance": "medium",
+      "url": "wss://stream.bybit.com/v5/public/linear",
+      "symbols": [
+        "BTCUSDT",
+        "ETHUSDT"
+      ],
+      "observation_seconds": 60,
+      "max_events": 500,
+      "max_event_age_seconds": 60,
+      "ack_timeout_seconds": 10,
+      "min_interval_seconds": 3600,
+      "notes": "Bounded one-shot public WebSocket observer only; metrics describe its verified 60-second live window, never a full hour/day. Buy maps to long liquidation, Sell to short; bankruptcy price is not fill price. No daemon or raw event persistence."
     }
   ]
 }
