@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import math
 import os
 import tempfile
 from pathlib import Path
@@ -120,13 +121,18 @@ def verified_worker(status: dict, module: str, db: Path, status_file: Path):
     except Exception as exc:
         raise RuntimeError(f"Cannot read collector process identity for pid {pid}: {exc}") from exc
 
-    expected_created = status.get("pid_create_time")
-    if expected_created is not None:
-        try:
-            if abs(float(expected_created) - float(create_time)) > 0.01:
-                return None
-        except (TypeError, ValueError) as exc:
-            raise RuntimeError(f"Invalid pid_create_time for collector pid {pid}") from exc
+    try:
+        expected_created = status["pid_create_time"]
+        if isinstance(expected_created, bool):
+            raise ValueError("Creation time cannot be a boolean")
+        expected_created = float(expected_created)
+        create_time = float(create_time)
+        if not all(math.isfinite(value) and value > 0 for value in (expected_created, create_time)):
+            raise ValueError("Creation times must be finite and positive")
+    except (KeyError, TypeError, ValueError, OverflowError) as exc:
+        raise RuntimeError(f"Invalid or missing pid_create_time for collector pid {pid}") from exc
+    if abs(expected_created - create_time) > 0.01:
+        return None
 
     expected_db = str(_canonical(Path(db)))
     expected_status = str(_canonical(Path(status_file)))

@@ -3,10 +3,55 @@ from __future__ import annotations
 # ruff: noqa: S101
 import json
 
+import pandas as pd
+
+from user_data.Custom_Launcher.collectors.orderbook.collector import (
+    BOOK_FRESHNESS_SECONDS,
+    _book_is_fresh,
+    _invalidate_book_state,
+)
+from user_data.Custom_Launcher.collectors.orderbook.feature_compaction import (
+    RAW_NUMERIC_COLUMNS,
+    _market_tick_features,
+)
 from user_data.Custom_Launcher.collectors.orderbook.markets import MARKET_PROFILES
-from user_data.Custom_Launcher.collectors.orderbook.collector import BOOK_FRESHNESS_SECONDS, _book_is_fresh, _invalidate_book_state
 from user_data.Custom_Launcher.collectors.orderbook.metrics import calculate_orderbook_metrics
 from user_data.Custom_Launcher.collectors.orderbook.streams import apply_book_update, parse_stream_message
+
+
+def test_hourly_features_use_valid_books_and_keep_raw_row_diagnostics() -> None:
+    rows = pd.DataFrame({column: [99.0] * 3600 for column in RAW_NUMERIC_COLUMNS})
+    rows["ts"] = pd.date_range("2026-10-06", periods=3600, freq="s", tz="UTC")
+    rows["book_valid"] = 0
+    rows["message_count_interval"] = 99
+    for column in (
+        "strong_bid_pressure", "strong_ask_pressure", "extreme_bid_pressure", "extreme_ask_pressure"
+    ):
+        rows[column] = 0
+    for side in ("bid", "ask"):
+        rows[f"{side}_wall_candidates_json"] = "[]"
+        rows[f"{side}_liquidity_zones_json"] = "[]"
+    rows.loc[0, ["book_valid", "message_count_interval", "strong_bid_pressure"]] = 1
+    rows.loc[0, "spread_bps"] = 2.0
+    features = _market_tick_features(rows, "bybit_linear", min_coverage_ratio=0.5)
+    prefix = "ob1h_bybit_linear"
+    assert features[f"{prefix}_tick_rows"] == 3600
+    assert features[f"{prefix}_valid_tick_rows"] == 1
+    assert features[f"{prefix}_valid_book_ratio"] == 1 / 3600
+    assert features[f"{prefix}_coverage_ratio"] == 1 / 3600
+    assert features[f"{prefix}_ready"] == 0
+    assert features[f"{prefix}_spread_bps_mean"] == 2
+    assert features[f"{prefix}_strong_bid_pressure_ratio"] == 1
+    assert features[f"{prefix}_message_count_sum"] == 1
+
+    rows.loc[3599, "book_valid"] = 1
+    features = _market_tick_features(rows, "bybit_linear", min_coverage_ratio=0.5)
+    assert features[f"{prefix}_max_gap_seconds"] == 3599
+    rows["book_valid"] = 0
+    features = _market_tick_features(rows, "bybit_linear", min_coverage_ratio=0.5)
+    assert features[f"{prefix}_tick_rows"] == 3600
+    assert features[f"{prefix}_coverage_ratio"] == features[f"{prefix}_ready"] == 0
+    assert pd.isna(features[f"{prefix}_spread_bps_mean"])
 
 
 def test_stale_book_is_gated_without_requiring_a_bybit_resnapshot() -> None:

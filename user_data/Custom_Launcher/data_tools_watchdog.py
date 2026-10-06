@@ -8,6 +8,9 @@ from pathlib import Path
 
 
 APP_DIR = Path(__file__).resolve().parent
+REPO_ROOT = APP_DIR.parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 

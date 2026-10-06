@@ -422,8 +422,10 @@ def _run(args: argparse.Namespace) -> int:
                 reconnect_delay = 5
             except Exception as exc:
                 logging.exception("Could not parse %s websocket message", profile_key)
-                status_payload["last_error"] = str(exc)
-                last_error_origin["value"] = "stream"
+                on_error(_ws, exc)
+                if profile.ws_protocol == "bybit_public":
+                    # A rejected delta can hide a book change; reconnect for a fresh snapshot.
+                    _ws.close()
 
         def on_error(_ws: Any, error: Any) -> None:
             text = str(error)
@@ -636,11 +638,11 @@ def _run(args: argparse.Namespace) -> int:
                 if args.once and inserted_any_metric:
                     terminal_status = "stopped"
                     break
-                if args.once and once_deadline is not None and now_ts >= once_deadline:
-                    if int(status_payload.get("message_count_total", 0)) <= 0:
-                        raise RuntimeError("No websocket messages received within once timeout.")
-                    if int(status_payload.get("metric_count_total", 0)) <= 0:
-                        raise RuntimeError("No valid orderbook data received within once timeout.")
+
+            if args.once and once_deadline is not None and now_ts >= once_deadline:
+                if int(status_payload.get("message_count_total", 0)) <= 0:
+                    raise RuntimeError("No websocket messages received within once timeout.")
+                raise RuntimeError("No valid orderbook data received within once timeout.")
 
             if store_snapshots and now_ts - last_snapshot_ts >= snapshot_interval:
                 conn = connect_db(args.db)
@@ -800,6 +802,7 @@ def _run(args: argparse.Namespace) -> int:
         logging.exception("Orderbook collector crashed")
         terminal_status = "error"
         status_payload["status"] = "error"
+        status_payload["active_streams"] = 0
         status_payload["last_error"] = str(exc)
         last_error_origin["value"] = "collector"
         save_json(args.status_file, status_payload)
@@ -813,6 +816,7 @@ def _run(args: argparse.Namespace) -> int:
                 except Exception:
                     pass
         status_payload["status"] = terminal_status
+        status_payload["active_streams"] = 0
         status_payload["pid"] = None
         status_payload["heartbeat_at"] = utc_now()
         save_json(args.status_file, status_payload)

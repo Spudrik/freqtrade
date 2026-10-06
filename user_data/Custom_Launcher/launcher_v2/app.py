@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from contextlib import ExitStack
 from pathlib import Path
 import queue
 import subprocess
@@ -11,12 +12,14 @@ from tkinter import ttk
 from typing import Any
 
 if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     __package__ = "launcher_v2"
 
 from .context import LauncherContext, SharedVars
 from .process_runner import ProcessRunner
 from .preset_manager import read_presets, update_auto_preset
+from .services.collector_service import protect_collector_resource_changes
 from .tabs.run_tab import RunTab
 from .tabs.common_tab import CommonTab
 from .tabs.pairs_tab import PairsTab
@@ -604,11 +607,13 @@ class LauncherV2(tk.Tk):
         }
         path = self._preset_path()
 
-        def update(existing: dict[str, Any]) -> dict[str, Any]:
-            existing.update(preset)
-            return existing
+        with ExitStack() as resources:
+            def update(existing: dict[str, Any]) -> dict[str, Any]:
+                resources.enter_context(protect_collector_resource_changes(self.context.app_dir, existing, preset))
+                existing.update(preset)
+                return existing
 
-        update_auto_preset(path, update)
+            update_auto_preset(path, update)
 
     def load_last_state(self) -> None:
         if not self.state_path.exists():

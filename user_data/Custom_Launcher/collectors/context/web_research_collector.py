@@ -649,6 +649,8 @@ def _run(args: argparse.Namespace) -> int:
                     try:
                         try:
                             apply_source_config_tags(conn, source)
+                        except sqlite3.Error:
+                            raise
                         except Exception:
                             logging.exception("Source tagging failed for %s", source_id)
                         source_max_items = max_items
@@ -673,9 +675,11 @@ def _run(args: argparse.Namespace) -> int:
                                     article_id = str(article.get("id") or "")
                                     apply_article_tags(conn, article_id, tags_from_article(article, source))
                                     upsert_article_score(conn, article_id, score_article(article, source))
+                                except sqlite3.Error:
+                                    raise
                                 except Exception:
                                     logging.exception("Scoring/tagging failed for article from %s", source_id)
-                            except sqlite3.OperationalError as exc:
+                            except sqlite3.Error as exc:
                                 logging.exception("DB error while upserting article for %s", source_id)
                                 cycle_error = str(exc)
                                 raise

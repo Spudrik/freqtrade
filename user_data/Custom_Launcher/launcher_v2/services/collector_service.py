@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
@@ -132,16 +132,61 @@ def _preset_collector_state(app_dir: Path, key: str, preset_path: Path | None) -
     auto_preset = presets.get(AUTO_PRESET_NAME, {})
     if not isinstance(auto_preset, dict):
         raise ValueError(f"Preset {AUTO_PRESET_NAME!r} must contain a JSON object.")
+    return _collector_state_from_preset(auto_preset, key) or None
+
+
+def _collector_state_from_preset(preset: dict[str, Any], key: str) -> dict[str, Any]:
     if key == "orderbook":
         field_names = ("data_dir", "config_path")
     else:
         field_names = ("data_dir", "config_path", "db_path")
-    state = {
-        field: auto_preset[f"{key}_{field}"]
+    return {
+        field: preset[f"{key}_{field}"]
         for field in field_names
-        if f"{key}_{field}" in auto_preset
+        if f"{key}_{field}" in preset
     }
-    return state or None
+
+
+@contextmanager
+def protect_collector_resource_changes(
+    app_dir: Path, previous: dict[str, Any], updated: dict[str, Any]
+) -> Iterator[None]:
+    """Keep prior resource authority until a validated preset replacement completes."""
+    from .global_context_service import GlobalContextService
+    from .orderbook_service import OrderBookService
+
+    research = ResearchCollectorService(app_dir)
+    routes = (
+        ("news", lambda state: research.paths(NEWS_PROFILE, **state), "collectors.context.news_research_collector"),
+        ("web", lambda state: research.paths(WEB_PROFILE, **state), "collectors.context.web_research_collector"),
+        ("global_context", GlobalContextService(app_dir).paths, "collectors.context.global_context_collector"),
+        ("orderbook", OrderBookService(app_dir).paths, "collectors.orderbook.collector"),
+    )
+    merged = {**previous, **updated}
+    with ExitStack() as resources:
+        for key, paths_for_state, module in routes:
+            prior_state = _collector_state_from_preset(previous, key)
+            next_state = _collector_state_from_preset(merged, key)
+            if key in {"news", "web"}:
+                prior_state = {field: str(prior_state.get(field) or "") for field in ("data_dir", "config_path", "db_path")}
+                next_state = {field: str(next_state.get(field) or "") for field in ("data_dir", "config_path", "db_path")}
+            old_paths = paths_for_state(prior_state)
+            new_paths = paths_for_state(next_state)
+            if all(old_paths[part] == new_paths[part] for part in ("db", "status")):
+                continue
+            try:
+                # Non-blocking: a start/stop holding launch while updating intent
+                # causes rejection, never an inverted-lock wait.
+                resources.enter_context(lock_resources([Path(f"{old_paths['status']}.launch")]))
+                status = _read_collector_status(old_paths["status"])
+                if verified_worker(status, module, old_paths["db"], old_paths["status"]) is not None:
+                    raise RuntimeError("The prior collector resources are actively owned.")
+                resources.enter_context(lock_resources([old_paths["db"], old_paths["status"]]))
+            except (CollectorBusyError, CollectorStatusError, RuntimeError) as exc:
+                raise RuntimeError(
+                    f"Cannot change {key} database/status resource paths: {exc} Stop the collector first and wait for it to release its resources."
+                ) from exc
+        yield
 
 
 def _request_collector_stop(

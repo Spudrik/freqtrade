@@ -6,12 +6,16 @@ import json
 import math
 import sqlite3
 import statistics
+import sys
 from collections import Counter, defaultdict
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from itertools import pairwise
 from pathlib import Path
 from typing import Any
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 
 import pandas as pd
 from user_data.Custom_Launcher.collector_runtime import atomic_write_text as write_text_atomic
