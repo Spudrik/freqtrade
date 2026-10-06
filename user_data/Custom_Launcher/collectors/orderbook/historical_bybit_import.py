@@ -12,16 +12,16 @@ from typing import Any, Iterable
 import requests
 import orjson
 
-APP_DIR = Path(__file__).resolve().parents[1]
+APP_DIR = Path(__file__).resolve().parents[2]
 USER_DATA_DIR = APP_DIR.parent
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
-from orderbook.metrics import aggregate_metric_ticks, calculate_orderbook_metrics  # noqa: E402
-from orderbook.store import init_db, insert_metric_bar  # noqa: E402
+from .metrics import aggregate_metric_ticks, calculate_orderbook_metrics  # noqa: E402
+from .store import init_db, insert_metric_bar  # noqa: E402
 
 
-DEFAULT_DB_PATH = USER_DATA_DIR / "orderbook_data" / "live" / "orderbook_events.sqlite"
+DEFAULT_DB_PATH = USER_DATA_DIR / "collector_data" / "orderbook" / "orderbook_events.sqlite"
 DEFAULT_RAW_DIR = Path("D:/FreqTradeStuffLargeData/orderbook_data/historical_bybit/spot_raw")
 DEFAULT_BASE_URL = "https://quote-saver.bycsi.com/orderbook/spot"
 DEFAULT_CONFIG = {

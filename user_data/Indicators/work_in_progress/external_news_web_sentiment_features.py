@@ -352,14 +352,14 @@ def _validate_config(cfg: NewsWebSentimentFeatureConfig) -> None:
 
 
 def _user_data_root() -> Path:
-    return Path(__file__).resolve().parents[1]
+    return Path(__file__).resolve().parents[2]
 
 
 def _default_db_path(dataset: str) -> Path:
     if dataset == "news":
-        return _user_data_root() / "research_news_data" / "news" / "news_events.sqlite"
+        return _user_data_root() / "collector_data" / "news" / "news_events.sqlite"
     if dataset == "web":
-        return _user_data_root() / "research_news_data" / "web" / "web_events.sqlite"
+        return _user_data_root() / "collector_data" / "web" / "web_events.sqlite"
     raise ValueError(f"Unknown News/Web dataset: {dataset}")
 
 

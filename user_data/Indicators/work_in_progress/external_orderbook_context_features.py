@@ -497,7 +497,7 @@ def _validate_config(cfg: OrderbookContextFeatureConfig) -> None:
 
 
 def _default_db_path() -> Path:
-    return Path(__file__).resolve().parents[1] / "orderbook_data" / "live" / "orderbook_events.sqlite"
+    return Path(__file__).resolve().parents[2] / "collector_data" / "orderbook" / "orderbook_events.sqlite"
 
 
 def _resolved_db_path(cfg: OrderbookContextFeatureConfig) -> Path:

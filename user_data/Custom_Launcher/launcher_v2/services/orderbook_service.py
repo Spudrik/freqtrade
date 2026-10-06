@@ -5,13 +5,10 @@ from pathlib import Path
 from typing import Any
 import csv
 import json
-import os
 import shutil
 import sqlite3
-import subprocess
-import sys
 
-from orderbook.markets import (
+from user_data.Custom_Launcher.collectors.orderbook.markets import (
     MARKET_PROFILES,
     market_profile_options,
     normalize_market_profile_keys,
@@ -20,9 +17,20 @@ from orderbook.markets import (
     resolve_profile_depth,
     resolve_profile_update_ms,
 )
-from orderbook.metrics import estimate_storage_usage, normalize_freqtrade_pair_to_binance_symbol, normalize_whitelist_pairs
+from user_data.Custom_Launcher.collectors.orderbook.metrics import estimate_storage_usage, normalize_freqtrade_pair_to_binance_symbol, normalize_whitelist_pairs
 
-from .collector_service import is_process_running, open_path, utc_now, utf8_subprocess_env
+from .collector_service import (
+    _read_collector_status,
+    _request_collector_stop,
+    _start_collector_detached,
+    data_tools_python_for_state,
+    open_path,
+    preferred_data_tools_python,
+    resolve_app_path,
+    sqlite_readonly_connection,
+    validate_config_file,
+)
+from user_data.Custom_Launcher.collector_runtime import verified_worker
 
 
 def tokens(text: str) -> list[str]:
@@ -31,35 +39,31 @@ def tokens(text: str) -> list[str]:
 
 class OrderBookService:
     def __init__(self, app_dir: Path, python_exe: str | None = None) -> None:
-        self.app_dir = Path(app_dir)
-        self.python_exe = python_exe or sys.executable
+        self.app_dir = Path(app_dir).resolve()
+        self.python_exe = preferred_data_tools_python(self.app_dir, python_exe)
 
     def app_path(self, value: str | Path) -> Path:
-        path = Path(value)
-        return path if path.is_absolute() else self.app_dir / path
+        return resolve_app_path(self.app_dir, value)
 
     def _resolve_data_dir(self, value: Any) -> Path:
         text = str(value or "").strip()
-        default_dir = self.app_path("../orderbook_data/live")
+        default_dir = self.app_path("../collector_data/orderbook")
         if not text:
             return default_dir
-        return Path(text)
+        return self.app_path(text)
 
     def _resolve_config_path(self, value: Any) -> Path:
         text = str(value or "").strip()
-        default_config = self.app_path("orderbook/config/sources.json")
+        default_config = self.app_path("collectors/orderbook/config/sources.json")
         if not text:
             return default_config
-        path = Path(text)
-        if not path.exists() and path.name.lower() == default_config.name.lower():
-            return default_config
-        return path
+        return self.app_path(text)
 
     def paths(self, state: dict[str, Any]) -> dict[str, Path]:
         data_dir = self._resolve_data_dir(state.get("data_dir"))
         config_path = self._resolve_config_path(state.get("config_path"))
         return {
-            "collector": self.app_path("orderbook/collector.py"),
+            "collector": self.app_path("collectors/orderbook/collector.py"),
             "config": config_path,
             "data_dir": data_dir,
             "db": data_dir / "orderbook_events.sqlite",
@@ -209,8 +213,10 @@ class OrderBookService:
 
     def build_collector_command(self, state: dict[str, Any], pairs: list[str]) -> list[str]:
         paths = self.paths(state)
+        python_exe = data_tools_python_for_state(self.app_dir, state, self.python_exe)
         if not paths["collector"].exists():
             raise FileNotFoundError(paths["collector"])
+        validate_config_file(paths["config"])
         valid, _ = self.normalized_pairs(pairs, state)
         if not valid:
             raise ValueError("No usable whitelist pairs found. Add pairs on the Pairs tab first.")
@@ -223,10 +229,10 @@ class OrderBookService:
             seen_pairs.add(canonical)
             pair_args.append(str(item["pair"]))
         return [
-            self.python_exe,
+            python_exe,
             "-u",
             "-m",
-            "orderbook.collector",
+            "collectors.orderbook.collector",
             "--config",
             str(paths["config"]),
             "--data-dir",
@@ -245,44 +251,43 @@ class OrderBookService:
             ",".join(pair_args),
         ]
 
-    def start_detached(self, state: dict[str, Any], pairs: list[str]) -> int:
-        self.write_runtime_config(state)
+    def start_detached(
+        self,
+        state: dict[str, Any],
+        pairs: list[str],
+        *,
+        automatic: bool = False,
+        preset_path: Path | None = None,
+    ) -> int | None:
         paths = self.paths(state)
-        paths["data_dir"].mkdir(parents=True, exist_ok=True)
-        paths["log"].parent.mkdir(parents=True, exist_ok=True)
-        try:
-            paths["stop"].unlink(missing_ok=True)
-        except Exception:
-            pass
-        if paths["pid"].exists():
-            try:
-                pid = int(paths["pid"].read_text(encoding="utf-8").strip())
-                if is_process_running(pid):
-                    return pid
-            except Exception:
-                pass
-        command = self.build_collector_command(state, pairs)
-        with open(paths["log"], "ab") as log_handle:
-            kwargs: dict[str, Any] = {
-                "stdin": subprocess.DEVNULL,
-                "stdout": log_handle,
-                "stderr": subprocess.STDOUT,
-                "cwd": str(self.app_dir),
-                "env": utf8_subprocess_env(),
-                "close_fds": True,
-            }
-            if os.name == "nt":
-                kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
-            else:
-                kwargs["start_new_session"] = True
-            process = subprocess.Popen(command, **kwargs)
-        return int(process.pid)
+        return _start_collector_detached(
+            app_dir=self.app_dir,
+            key="orderbook",
+            module="collectors.orderbook.collector",
+            db_path=paths["db"],
+            status_path=paths["status"],
+            stop_path=paths["stop"],
+            log_path=paths["log"],
+            command=lambda: self.build_collector_command(state, pairs),
+            automatic=automatic,
+            preset_path=preset_path,
+            prepare=lambda: self._prepare_collector_start(state, pairs),
+        )
 
-    def request_stop(self, state: dict[str, Any]) -> Path:
+    def _prepare_collector_start(self, state: dict[str, Any], pairs: list[str]) -> None:
+        self.build_collector_command(state, pairs)
+        self.write_runtime_config(state)
+
+    def request_stop(self, state: dict[str, Any], *, preset_path: Path | None = None) -> Path:
         paths = self.paths(state)
-        paths["stop"].parent.mkdir(parents=True, exist_ok=True)
-        paths["stop"].write_text(utc_now() + "\n", encoding="utf-8")
-        return paths["stop"]
+        return _request_collector_stop(
+            app_dir=self.app_dir,
+            key="orderbook",
+            preset_path=preset_path,
+            state=state,
+            paths_for_state=self.paths,
+            module="collectors.orderbook.collector",
+        )
 
     def _drive_usage_status(self, path: Path) -> dict[str, Any]:
         target = path.expanduser()
@@ -309,22 +314,16 @@ class OrderBookService:
 
     def read_status(self, state: dict[str, Any]) -> dict[str, Any]:
         paths = self.paths(state)
-        status: dict[str, Any] = {}
-        if paths["status"].exists():
-            try:
-                loaded = json.loads(paths["status"].read_text(encoding="utf-8"))
-                if isinstance(loaded, dict):
-                    status = loaded
-            except Exception:
-                status = {}
+        status = _read_collector_status(paths["status"])
         if paths["pid"].exists():
             try:
                 pid_text = paths["pid"].read_text(encoding="utf-8").strip()
                 status["pid_text"] = pid_text
-                if pid_text and not is_process_running(int(pid_text)) and str(status.get("status") or "").lower() == "running":
-                    status["status"] = "stale/unknown"
             except Exception:
                 pass
+        process = verified_worker(status, "collectors.orderbook.collector", paths["db"], paths["status"])
+        status["verified_running"] = process is not None
+        status["verified_pid"] = int(process.pid) if process is not None else None
         try:
             status.update(self._drive_usage_status(paths["data_dir"]))
         except OSError as exc:
@@ -336,7 +335,7 @@ class OrderBookService:
         paths = self.paths(state)
         if not paths["db"].exists():
             return []
-        with sqlite3.connect(str(paths["db"]), timeout=5.0) as conn:
+        with sqlite_readonly_connection(paths["db"]) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 """
@@ -353,7 +352,7 @@ class OrderBookService:
         paths = self.paths(state)
         if not paths["db"].exists():
             return []
-        with sqlite3.connect(str(paths["db"]), timeout=5.0) as conn:
+        with sqlite_readonly_connection(paths["db"]) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 """
@@ -396,7 +395,7 @@ class OrderBookService:
         paths = self.paths(state)
         if not paths["db"].exists():
             return []
-        with sqlite3.connect(str(paths["db"]), timeout=5.0) as conn:
+        with sqlite_readonly_connection(paths["db"]) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 """
@@ -446,7 +445,7 @@ class OrderBookService:
         paths = self.paths(state)
         if not paths["db"].exists():
             return []
-        with sqlite3.connect(str(paths["db"]), timeout=5.0) as conn:
+        with sqlite_readonly_connection(paths["db"]) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 """

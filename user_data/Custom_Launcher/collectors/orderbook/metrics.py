@@ -13,19 +13,31 @@ def normalize_freqtrade_pair_to_binance_symbol(pair: str) -> str | None:
     return pair_to_symbol(pair, MARKET_PROFILES["binance_usdm_futures"])
 
 
-def parse_book_side(levels: Any, *, reverse: bool = False) -> list[tuple[float, float]]:
+def parse_book_side(levels: Any, *, reverse: bool = False, strict: bool = False) -> list[tuple[float, float]]:
     parsed: list[tuple[float, float]] = []
     if not isinstance(levels, list):
+        if strict:
+            raise ValueError("Orderbook side must be a list")
         return parsed
     for level in levels:
-        if not isinstance(level, (list, tuple)) or len(level) < 2:
+        if not isinstance(level, (list, tuple)) or len(level) != 2:
+            if strict:
+                raise ValueError("Orderbook level must contain exactly price and quantity")
             continue
         try:
             price = float(level[0])
             qty = float(level[1])
-        except Exception:
+        except (TypeError, ValueError, OverflowError) as exc:
+            if strict:
+                raise ValueError("Orderbook price and quantity must be numeric") from exc
             continue
+        if not math.isfinite(price) or not math.isfinite(qty):
+            if strict:
+                raise ValueError("Orderbook price and quantity must be finite")
+            return []
         if price <= 0 or qty < 0:
+            if strict:
+                raise ValueError("Orderbook price must be positive and quantity nonnegative")
             continue
         parsed.append((price, qty))
     parsed.sort(key=lambda item: item[0], reverse=reverse)
@@ -196,7 +208,14 @@ def _liquidity_zone_candidates(
 
 def calculate_orderbook_metrics(pair: str, symbol: str, bids: list[tuple[float, float]], asks: list[tuple[float, float]], config: dict[str, Any], message_count_interval: int) -> dict[str, Any]:
     depth_levels = int(config.get("depth_levels", 20))
-    book_valid = bool(bids and asks)
+    book_valid = bool(
+        bids
+        and asks
+        and all(math.isfinite(price) and math.isfinite(qty) and price > 0 and qty >= 0 for price, qty in (*bids, *asks))
+        and all(bids[index][0] >= bids[index + 1][0] for index in range(len(bids) - 1))
+        and all(asks[index][0] <= asks[index + 1][0] for index in range(len(asks) - 1))
+        and asks[0][0] > bids[0][0]
+    )
     output: dict[str, Any] = {
         "pair": pair,
         "symbol": symbol,
@@ -209,9 +228,6 @@ def calculate_orderbook_metrics(pair: str, symbol: str, bids: list[tuple[float, 
 
     best_bid, top_bid_qty = bids[0]
     best_ask, top_ask_qty = asks[0]
-    if best_bid <= 0 or best_ask <= 0 or best_ask < best_bid:
-        return output
-
     mid_price = (best_bid + best_ask) / 2.0
     spread_bps = (best_ask - best_bid) / mid_price * 10000.0 if mid_price else None
     microprice = None

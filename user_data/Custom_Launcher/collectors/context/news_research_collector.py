@@ -12,6 +12,8 @@ from urllib import error as urllib_error
 from urllib import parse as urllib_parse
 from urllib import request as urllib_request
 
+from user_data.Custom_Launcher.collector_runtime import CollectorBusyError, lock_resources, pid_create_time
+
 from .news_research_store import (
     apply_article_tags,
     apply_source_config_tags,
@@ -36,6 +38,7 @@ from .research_collector_common import (
     load_json,
     normalize_text,
     parse_rss_items,
+    resolve_collector_paths,
     save_json,
     save_raw_snapshot,
     sleep_with_stop,
@@ -47,8 +50,8 @@ from .research_collector_common import (
 
 
 THIS_DIR = Path(__file__).resolve().parent
-DEFAULT_CONFIG_PATH = THIS_DIR.parent / "config" / "news_research_sources.json"
-DEFAULT_DATA_DIR = THIS_DIR.parents[2] / "research_news_data" / "news"
+DEFAULT_CONFIG_PATH = THIS_DIR / "config" / "news_research_sources.json"
+DEFAULT_DATA_DIR = THIS_DIR.parents[2] / "collector_data" / "news"
 DEFAULT_DB_PATH = DEFAULT_DATA_DIR / "news_events.sqlite"
 DEFAULT_STATUS_PATH = DEFAULT_DATA_DIR / "collector_status.json"
 DEFAULT_PID_PATH = DEFAULT_DATA_DIR / "collector.pid"
@@ -306,16 +309,26 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Standalone News Lab collector")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
-    parser.add_argument("--db", type=Path, default=DEFAULT_DB_PATH)
-    parser.add_argument("--status-file", type=Path, default=DEFAULT_STATUS_PATH)
-    parser.add_argument("--pid-file", type=Path, default=DEFAULT_PID_PATH)
-    parser.add_argument("--log-file", type=Path, default=DEFAULT_LOG_PATH)
-    parser.add_argument("--stop-file", type=Path, default=DEFAULT_STOP_PATH)
+    parser.add_argument("--db", type=Path, default=None)
+    parser.add_argument("--status-file", type=Path, default=None)
+    parser.add_argument("--pid-file", type=Path, default=None)
+    parser.add_argument("--log-file", type=Path, default=None)
+    parser.add_argument("--stop-file", type=Path, default=None)
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--interval-seconds", type=int, default=900)
     parser.add_argument("--max-items-per-source", type=int, default=100)
     args = parser.parse_args()
+    resolve_collector_paths(args, db_filename=DEFAULT_DB_PATH.name, log_filename=DEFAULT_LOG_PATH.name)
 
+    try:
+        with lock_resources([args.db, args.status_file]):
+            return _run(args)
+    except CollectorBusyError as exc:
+        print(str(exc))
+        return 2
+
+
+def _run(args: argparse.Namespace) -> int:
     raw_dirs = ensure_runtime_dirs(args.data_dir)
     configure_logging(args.log_file)
     ensure_config(args.config)
@@ -406,8 +419,9 @@ def main() -> int:
     status_payload: dict[str, Any] = {
         "run_id": run_id,
         "status": "running",
-        "status_reason": "normal_exit",
+        "status_reason": "running",
         "pid": os.getpid(),
+        "pid_create_time": pid_create_time(),
         "started_at": started_at,
         "heartbeat_at": started_at,
         "last_cycle_finished_at": None,
@@ -495,6 +509,7 @@ def main() -> int:
                             except sqlite3.OperationalError as exc:
                                 logging.exception("DB error while upserting article")
                                 cycle_error = str(exc)
+                                raise
                         upsert_source_health(
                             conn,
                             source,
@@ -550,7 +565,7 @@ def main() -> int:
                                 "last_success_at": None,
                                 "last_failure_at": utc_now(),
                                 "last_error": err_text,
-                                "last_http_status": None,
+                                "last_http_status": exc.code if isinstance(exc, urllib_error.HTTPError) else None,
                                 "items_last_fetch": 0,
                                 "inserted_last_fetch": 0,
                                 "duplicates_last_fetch": 0,

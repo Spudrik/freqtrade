@@ -26,7 +26,7 @@ class GlobalContextFeatureConfig:
 
     Data source:
     The collector stores rows in:
-    ``user_data/research_news_data/global_context/global_context.sqlite``
+    ``user_data/collector_data/global_context/global_context.sqlite``
 
     Relevant SQLite table:
     ``global_context_ticks(ts, source_ts, source_id, source_group, source_type,
@@ -164,7 +164,7 @@ def _validate_config(cfg: GlobalContextFeatureConfig) -> None:
 
 
 def _default_db_path() -> Path:
-    return Path(__file__).resolve().parents[1] / "research_news_data" / "global_context" / "global_context.sqlite"
+    return Path(__file__).resolve().parents[2] / "collector_data" / "global_context" / "global_context.sqlite"
 
 
 def _resolved_db_path(cfg: GlobalContextFeatureConfig) -> Path:

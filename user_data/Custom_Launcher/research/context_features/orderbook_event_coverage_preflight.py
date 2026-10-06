@@ -10,7 +10,7 @@ from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
-DEFAULT_DB = REPO_ROOT / "user_data" / "orderbook_data" / "live" / "orderbook_events.sqlite"
+DEFAULT_DB = REPO_ROOT / "user_data" / "collector_data" / "orderbook" / "orderbook_events.sqlite"
 DEFAULT_EVENT_CATALOG = (
     REPO_ROOT
     / "user_data"

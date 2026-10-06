@@ -13,7 +13,7 @@ from urllib.parse import urljoin
 import requests
 
 
-APP_DIR = Path(__file__).resolve().parents[1]
+APP_DIR = Path(__file__).resolve().parents[2]
 USER_DATA_DIR = APP_DIR.parent
 DEFAULT_RAW_DIR = Path("D:/FreqTradeStuffLargeData/orderbook_data/historical_bybit/spot_raw")
 DEFAULT_BASE_URL = "https://quote-saver.bycsi.com/orderbook/spot"

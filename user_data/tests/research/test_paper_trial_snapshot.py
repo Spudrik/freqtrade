@@ -20,7 +20,7 @@ def _write_article_source(root, key, folder, articles):
 
 def test_source_snapshot_uses_web_cadence_and_keeps_publication_age_separate(monkeypatch,tmp_path):
     now=datetime(2026,10,5,12,tzinfo=timezone.utc)
-    config_dir=tmp_path/"user_data"/"Custom_Launcher"/"research"/"config"
+    config_dir=tmp_path/"user_data"/"Custom_Launcher"/"collectors"/"context"/"config"
     config_dir.mkdir(parents=True)
     (config_dir/"web_research_sources.json").write_text(json.dumps({"poll_interval_seconds":21600}),encoding="utf-8")
     five_hours_ago=(now-timedelta(hours=5)).isoformat()
@@ -36,8 +36,8 @@ def test_source_snapshot_uses_web_cadence_and_keeps_publication_age_separate(mon
             (now-timedelta(hours=5,minutes=minutes)).isoformat(),"web"))
     web_articles.append(("web beyond cadence","https://web/7h",None,
         (now-timedelta(hours=7)).isoformat(),(now-timedelta(hours=7)).isoformat(),"web"))
-    _write_article_source(tmp_path,"web","research_news_data/web",web_articles)
-    _write_article_source(tmp_path,"news","research_news_data/news",[("news collected 5h ago","https://news/5h",None,
+    _write_article_source(tmp_path,"web","collector_data/web",web_articles)
+    _write_article_source(tmp_path,"news","collector_data/news",[("news collected 5h ago","https://news/5h",None,
         (now-timedelta(hours=5)).isoformat(),five_hours_ago,"news")])
     monkeypatch.setattr(snapshot,"ROOT",tmp_path)
     monkeypatch.setattr(snapshot,"_recent_pressure",lambda *_:(None,0))
@@ -65,7 +65,7 @@ def test_source_snapshot_uses_web_cadence_and_keeps_publication_age_separate(mon
     ({"poll_interval_seconds":"21600"},"poll_interval_seconds"),
 ])
 def test_source_snapshot_rejects_invalid_web_cadence_config(monkeypatch,tmp_path,config,message):
-    config_dir=tmp_path/"user_data"/"Custom_Launcher"/"research"/"config"
+    config_dir=tmp_path/"user_data"/"Custom_Launcher"/"collectors"/"context"/"config"
     config_dir.mkdir(parents=True)
     (config_dir/"web_research_sources.json").write_text(json.dumps(config),encoding="utf-8")
     monkeypatch.setattr(snapshot,"ROOT",tmp_path)
@@ -81,10 +81,10 @@ def test_source_snapshot_requires_web_cadence_config(monkeypatch,tmp_path):
 
 def test_source_snapshot_includes_pilot_sources_and_bounds_latest_wallet_facts(monkeypatch,tmp_path):
     now=datetime(2026,10,5,12,tzinfo=timezone.utc)
-    config_dir=tmp_path/"user_data"/"Custom_Launcher"/"research"/"config"
+    config_dir=tmp_path/"user_data"/"Custom_Launcher"/"collectors"/"context"/"config"
     config_dir.mkdir(parents=True)
     (config_dir/"web_research_sources.json").write_text(json.dumps({"poll_interval_seconds":21600}),encoding="utf-8")
-    data_dir=tmp_path/"user_data"/"research_news_data"/"global_context"
+    data_dir=tmp_path/"user_data"/"collector_data"/"global_context"
     data_dir.mkdir(parents=True)
     db_path=data_dir/"global_context.sqlite"
     pilot_ids=[f"pilot_source_{index:02d}" for index in range(16)]+["pilot_bybit_btc_porrow_wallet"]

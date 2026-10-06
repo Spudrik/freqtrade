@@ -10,7 +10,6 @@ from tkinter import messagebox, ttk
 from ..base_tab import BaseTab
 from ..command_builder import command_text, freqtrade_command
 from ..console_pane import ConsolePane
-from ..services.collector_service import is_process_running
 from .pairs_tab import parse_pairs
 from ..ui_helpers import labeled_entry
 
@@ -302,10 +301,17 @@ class RunTab(BaseTab):
         try:
             state = dict(tab.get_state())
             state["once"] = False
+            state["python_exe"] = self.context.shared.python_exe.get()
+            started_pid = tab.service.start_detached(tab.profile, state, automatic=True)
             status = tab.service.read_status(tab.profile, state)
-            pid = self._running_pid(status)
-            if pid is None:
-                pid = int(tab.service.start_detached(tab.profile, state))
+            if started_pid is None:
+                self._refresh_tab_status(tab)
+                return True, f"{label}: stopped by user"
+            if status.get("verified_running") is not True:
+                raise RuntimeError("collector is not verified running")
+            pid = status.get("verified_pid")
+            if not isinstance(pid, int) or pid <= 0:
+                raise RuntimeError("collector status has no verified PID")
             self._refresh_tab_status(tab)
             return True, f"{label}: PID {pid}"
         except Exception as exc:
@@ -319,10 +325,17 @@ class RunTab(BaseTab):
         try:
             state = dict(tab.get_state())
             state["once"] = False
+            state["python_exe"] = self.context.shared.python_exe.get()
+            started_pid = tab.service.start_detached(state, automatic=True)
             status = tab.service.read_status(state)
-            pid = self._running_pid(status)
-            if pid is None:
-                pid = int(tab.service.start_detached(state))
+            if started_pid is None:
+                self._refresh_tab_status(tab)
+                return True, "Global: stopped by user"
+            if status.get("verified_running") is not True:
+                raise RuntimeError("collector is not verified running")
+            pid = status.get("verified_pid")
+            if not isinstance(pid, int) or pid <= 0:
+                raise RuntimeError("collector status has no verified PID")
             self._refresh_tab_status(tab)
             return True, f"Global: PID {pid}"
         except Exception as exc:
@@ -335,10 +348,17 @@ class RunTab(BaseTab):
             return False, "Order book: tab not loaded"
         try:
             state = tab.get_state()
+            state["python_exe"] = self.context.shared.python_exe.get()
+            started_pid = tab.service.start_detached(state, self._main_pairs(), automatic=True)
             status = tab.service.read_status(state)
-            pid = self._running_pid(status)
-            if pid is None:
-                pid = int(tab.service.start_detached(state, self._main_pairs()))
+            if started_pid is None:
+                self._refresh_tab_status(tab)
+                return True, "Order book: stopped by user"
+            if status.get("verified_running") is not True:
+                raise RuntimeError("collector is not verified running")
+            pid = status.get("verified_pid")
+            if not isinstance(pid, int) or pid <= 0:
+                raise RuntimeError("collector status has no verified PID")
             self._refresh_tab_status(tab)
             return True, f"Order book: PID {pid}"
         except Exception as exc:
@@ -347,17 +367,6 @@ class RunTab(BaseTab):
 
     def _main_pairs(self) -> list[str]:
         return parse_pairs(str(self._tab_state("pairs").get("pairs") or ""))
-
-    @staticmethod
-    def _running_pid(status: dict[str, Any]) -> int | None:
-        for key in ("pid_text", "pid"):
-            try:
-                pid = int(str(status.get(key) or "").strip())
-            except (TypeError, ValueError):
-                continue
-            if is_process_running(pid):
-                return pid
-        return None
 
     @staticmethod
     def _refresh_tab_status(tab: Any) -> None:

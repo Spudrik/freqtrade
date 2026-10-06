@@ -46,7 +46,7 @@ def read_json(path):
 
 
 def _web_headline_window():
-    path = ROOT/"user_data"/"Custom_Launcher"/"research"/"config"/"web_research_sources.json"
+    path = ROOT/"user_data"/"Custom_Launcher"/"collectors"/"context"/"config"/"web_research_sources.json"
     config = read_json(path)
     if not isinstance(config, dict):
         raise ValueError(f"Web research config must be an object: {path}")
@@ -78,8 +78,8 @@ def source_snapshot(now):
         raise ValueError("Source snapshot clock must be timezone-aware")
     now = now.astimezone(timezone.utc)
     web_window, web_window_seconds = _web_headline_window()
-    for key, folder in (("news","research_news_data/news"),("web","research_news_data/web"),
-                        ("global","research_news_data/global_context"),("orderbook","orderbook_data/live")):
+    for key, folder in (("news","collector_data/news"),("web","collector_data/web"),
+                        ("global","collector_data/global_context"),("orderbook","collector_data/orderbook")):
         path = ROOT/"user_data"/folder/"collector_status.json"
         if not path.is_file():
             output[key] = {"status":"missing"}; continue

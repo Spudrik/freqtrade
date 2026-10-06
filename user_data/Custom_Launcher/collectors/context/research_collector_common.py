@@ -10,7 +10,24 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from user_data.Custom_Launcher.collector_runtime import atomic_write_text
+
 from .news_research_scoring import detect_event_tags
+
+
+def resolve_collector_paths(args: Any, *, db_filename: str, log_filename: str) -> None:
+    """Resolve default collector files under the selected data directory."""
+    args.data_dir = Path(args.data_dir).resolve()
+    defaults = {
+        "db": args.data_dir / db_filename,
+        "status_file": args.data_dir / "collector_status.json",
+        "pid_file": args.data_dir / "collector.pid",
+        "stop_file": args.data_dir / "collector.stop",
+        "log_file": args.data_dir / "logs" / log_filename,
+    }
+    for name, default_path in defaults.items():
+        value = getattr(args, name)
+        setattr(args, name, Path(value).resolve() if value is not None else default_path)
 
 
 def utc_now() -> str:
@@ -27,8 +44,7 @@ def slugify(value: str) -> str:
 
 
 def save_json(path: Path, payload: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    atomic_write_text(path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 
 def load_json(path: Path, default: Any) -> Any:
@@ -97,7 +113,7 @@ def parse_rss_items(content: bytes) -> tuple[list[dict[str, Any]], str | None]:
             categories = [cat.text.strip() for cat in node.findall(f"{atom_ns}category") if cat.text and cat.text.strip()]
         items.append(
             {
-                "title": node.findtext("title") or "",
+                "title": node.findtext("title") or node.findtext(f"{atom_ns}title") or "",
                 "link": link,
                 "guid": node.findtext("guid") or node.findtext(f"{atom_ns}id") or "",
                 "published_at": node.findtext("pubDate")

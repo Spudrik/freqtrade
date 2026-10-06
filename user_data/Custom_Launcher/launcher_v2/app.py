@@ -16,6 +16,7 @@ if __package__ in {None, ""}:
 
 from .context import LauncherContext, SharedVars
 from .process_runner import ProcessRunner
+from .preset_manager import read_presets, update_auto_preset
 from .tabs.run_tab import RunTab
 from .tabs.common_tab import CommonTab
 from .tabs.pairs_tab import PairsTab
@@ -150,17 +151,7 @@ class LauncherV2(tk.Tk):
         return self.context.app_dir / "launcher_v2" / "config" / "presets.json"
 
     def _load_presets(self) -> dict[str, Any]:
-        path = self._preset_path()
-        if not path.exists():
-            return {}
-        for encoding in ("utf-8", "utf-8-sig"):
-            try:
-                payload = json.loads(path.read_text(encoding=encoding))
-                if isinstance(payload, dict):
-                    return payload
-            except Exception:
-                continue
-        return {}
+        return read_presets(self._preset_path())
 
     def load_execute_preset(self) -> None:
         presets = self._load_presets()
@@ -404,7 +395,6 @@ class LauncherV2(tk.Tk):
                 tab.set_state(filtered)
 
     def save_execute_preset(self, reason: str = "execute") -> None:
-        presets = self._load_presets()
         tabs = self.collect_state()
         common = tabs.get("common", {})
         pairs = tabs.get("pairs", {})
@@ -612,10 +602,13 @@ class LauncherV2(tk.Tk):
             "file_converter_replace_existing": bool(file_converter.get("replace_existing", True)),
             "file_converter_console": dict(file_converter.get("console") or {}),
         }
-        presets[AUTO_PRESET_NAME] = preset
         path = self._preset_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(presets, indent=2, sort_keys=False) + "\n", encoding="utf-8")
+
+        def update(existing: dict[str, Any]) -> dict[str, Any]:
+            existing.update(preset)
+            return existing
+
+        update_auto_preset(path, update)
 
     def load_last_state(self) -> None:
         if not self.state_path.exists():

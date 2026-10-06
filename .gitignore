@@ -30,6 +30,8 @@ user_data/Custom_Launcher/*
 !user_data/Custom_Launcher/explorer/**
 !user_data/Custom_Launcher/orderbook/
 !user_data/Custom_Launcher/orderbook/**
+!user_data/Custom_Launcher/collectors/
+!user_data/Custom_Launcher/collectors/**
 !user_data/Custom_Launcher/docs/
 !user_data/Custom_Launcher/docs/**
 !user_data/Custom_Launcher/research/

@@ -17,8 +17,8 @@ from pandas import DataFrame, Series
 
 
 SCHEMA_VERSION = "2"
-DEFAULT_USER_DATA_DIR = Path(__file__).resolve().parents[2]
-DEFAULT_DB_PATH = DEFAULT_USER_DATA_DIR / "orderbook_data" / "live" / "orderbook_events.sqlite"
+DEFAULT_USER_DATA_DIR = Path(__file__).resolve().parents[3]
+DEFAULT_DB_PATH = DEFAULT_USER_DATA_DIR / "collector_data" / "orderbook" / "orderbook_events.sqlite"
 DEFAULT_EXPORT_DIR = DEFAULT_USER_DATA_DIR / "orderbook_data" / "live" / "exports"
 DEFAULT_OHLCV_PATH = DEFAULT_USER_DATA_DIR / "data" / "binance" / "BTC_USDT-1h.feather"
 DEFAULT_PAIRS = ("BTC/USDT",)
