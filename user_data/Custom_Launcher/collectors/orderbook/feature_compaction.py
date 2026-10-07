@@ -589,6 +589,9 @@ def _load_ticks(conn: sqlite3.Connection, pair_values: list[str], start: pd.Time
         "canonical_pair",
         "pair",
         "book_valid",
+        "best_bid",
+        "best_ask",
+        "mid_price",
         "message_count_interval",
         *RAW_NUMERIC_COLUMNS,
         "bid_wall_candidates_json",
@@ -690,7 +693,17 @@ def _build_pair_features(
 def _market_tick_features(group: DataFrame, market: str, *, min_coverage_ratio: float) -> dict[str, float]:
     prefix = f"ob1h_{market}"
     row_count = int(len(group))
-    group = group.loc[pd.to_numeric(group["book_valid"], errors="coerce").eq(1)]
+    valid = pd.to_numeric(group["book_valid"], errors="coerce").eq(1)
+    # Older crossed books could carry book_valid=1 with absent metrics.
+    for column in ("best_bid", "best_ask", "mid_price", "spread_bps"):
+        values = _numeric(group, column)
+        valid &= np.isfinite(values) & values.gt(0.0)
+    valid &= _numeric(group, "best_ask").gt(_numeric(group, "best_bid"))
+    for depth in (1, 5, 10, 20):
+        for side in ("bid", "ask"):
+            values = _numeric(group, f"{side}_notional_top{depth}")
+            valid &= np.isfinite(values) & values.ge(0.0)
+    group = group.loc[valid]
     valid_count = len(group)
     ts = pd.to_datetime(group["ts"], utc=True, errors="coerce").dropna().sort_values()
     coverage = min(1.0, valid_count / DEFAULT_EXPECTED_SAMPLES_PER_HOUR)

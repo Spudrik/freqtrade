@@ -16,7 +16,7 @@ import webbrowser
 from urllib.parse import urlparse
 
 from user_data.Custom_Launcher.collector_runtime import CollectorBusyError, lock_resources, verified_worker
-from ..preset_manager import AUTO_PRESET_NAME, collector_desired, read_presets, set_collector_desired
+from ..preset_manager import AUTO_PRESET_NAME, _preset_path, collector_desired, read_presets, set_collector_desired
 
 
 def utc_now() -> str:
@@ -127,8 +127,7 @@ def _process_option(process: Any, option: str) -> str | None:
 
 
 def _preset_collector_state(app_dir: Path, key: str, preset_path: Path | None) -> dict[str, Any] | None:
-    default_path = Path(app_dir) / "launcher_v2" / "config" / "presets.json"
-    presets = read_presets(Path(preset_path) if preset_path is not None else default_path)
+    presets = read_presets(_preset_path(app_dir, preset_path))
     auto_preset = presets.get(AUTO_PRESET_NAME, {})
     if not isinstance(auto_preset, dict):
         raise ValueError(f"Preset {AUTO_PRESET_NAME!r} must contain a JSON object.")
@@ -149,9 +148,9 @@ def _collector_state_from_preset(preset: dict[str, Any], key: str) -> dict[str, 
 
 @contextmanager
 def protect_collector_resource_changes(
-    app_dir: Path, previous: dict[str, Any], updated: dict[str, Any]
+    app_dir: Path, previous: dict[str, Any], updated: dict[str, Any], *, for_start: bool = False
 ) -> Iterator[None]:
-    """Keep prior resource authority until a validated preset replacement completes."""
+    """Keep prior authority during replacement; Start already holds the new launch lock."""
     from .global_context_service import GlobalContextService
     from .orderbook_service import OrderBookService
 
@@ -177,11 +176,21 @@ def protect_collector_resource_changes(
             try:
                 # Non-blocking: a start/stop holding launch while updating intent
                 # causes rejection, never an inverted-lock wait.
-                resources.enter_context(lock_resources([Path(f"{old_paths['status']}.launch")]))
+                if not for_start or old_paths["status"] != new_paths["status"]:
+                    resources.enter_context(lock_resources([Path(f"{old_paths['status']}.launch")]))
                 status = _read_collector_status(old_paths["status"])
                 if verified_worker(status, module, old_paths["db"], old_paths["status"]) is not None:
                     raise RuntimeError("The prior collector resources are actively owned.")
-                resources.enter_context(lock_resources([old_paths["db"], old_paths["status"]]))
+                prior_resources = [old_paths["db"], old_paths["status"]]
+                if for_start:
+                    shared = set(prior_resources) & {new_paths["db"], new_paths["status"]}
+                    resources.enter_context(lock_resources([path for path in prior_resources if path not in shared]))
+                    # Only shared resources must be released for the new worker;
+                    # the prior launch and distinct resource guards remain held.
+                    with lock_resources(shared):
+                        pass
+                else:
+                    resources.enter_context(lock_resources(prior_resources))
             except (CollectorBusyError, CollectorStatusError, RuntimeError) as exc:
                 raise RuntimeError(
                     f"Cannot change {key} database/status resource paths: {exc} Stop the collector first and wait for it to release its resources."
@@ -252,9 +261,18 @@ def _start_collector_detached(
             return None
     launch_lock = Path(f"{status_path}.launch")
     try:
-        with lock_resources([launch_lock]):
-            if automatic and not collector_desired(app_dir, key, preset_path):
-                return None
+        with ExitStack() as resources:
+            resources.enter_context(lock_resources([launch_lock]))
+            with lock_resources([_preset_path(app_dir, preset_path)]):
+                if automatic and not collector_desired(app_dir, key, preset_path):
+                    return None
+                previous = _preset_collector_state(app_dir, key, preset_path) or {}
+                resources.enter_context(protect_collector_resource_changes(
+                    app_dir,
+                    {f"{key}_{field}": value for field, value in previous.items()},
+                    {f"{key}_data_dir": str(status_path.parent), f"{key}_db_path": str(db_path)},
+                    for_start=True,
+                ))
             if not automatic:
                 set_collector_desired(app_dir, key, True, preset_path)
             try:

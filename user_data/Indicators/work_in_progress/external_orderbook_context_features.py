@@ -612,7 +612,7 @@ def _load_metric_bars(
 
     conn: sqlite3.Connection | None = None
     try:
-        conn = sqlite3.connect(str(db_path), timeout=10.0)
+        conn = sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True, timeout=10.0)
         existing_columns = _table_columns(conn, "orderbook_metric_bars")
         select_exprs = [
             column if column in existing_columns else f"NULL AS {column}"
@@ -1496,7 +1496,7 @@ def _load_market_context(
     params: list[Any] = [canonical_pair, *cfg.market_keys, query_start, query_end]
     conn: sqlite3.Connection | None = None
     try:
-        conn = sqlite3.connect(str(db_path), timeout=10.0)
+        conn = sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True, timeout=10.0)
         return pd.read_sql_query(query, conn, params=params)
     except sqlite3.Error as exc:
         if cfg.allow_missing:

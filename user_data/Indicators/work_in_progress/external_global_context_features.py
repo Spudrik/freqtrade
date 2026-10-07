@@ -204,7 +204,7 @@ def _load_context_ticks(cfg: GlobalContextFeatureConfig) -> DataFrame:
 
     conn: sqlite3.Connection | None = None
     try:
-        conn = sqlite3.connect(str(db_path), timeout=10.0)
+        conn = sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True, timeout=10.0)
         ticks = pd.read_sql_query(query, conn, params=params)
     except sqlite3.Error as exc:
         if cfg.allow_missing:

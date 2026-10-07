@@ -15,7 +15,10 @@ from user_data.Custom_Launcher.collectors.orderbook.feature_compaction import (
     _market_tick_features,
 )
 from user_data.Custom_Launcher.collectors.orderbook.markets import MARKET_PROFILES
-from user_data.Custom_Launcher.collectors.orderbook.metrics import calculate_orderbook_metrics
+from user_data.Custom_Launcher.collectors.orderbook.metrics import (
+    aggregate_metric_ticks,
+    calculate_orderbook_metrics,
+)
 from user_data.Custom_Launcher.collectors.orderbook.streams import apply_book_update, parse_stream_message
 
 
@@ -23,6 +26,9 @@ def test_hourly_features_use_valid_books_and_keep_raw_row_diagnostics() -> None:
     rows = pd.DataFrame({column: [99.0] * 3600 for column in RAW_NUMERIC_COLUMNS})
     rows["ts"] = pd.date_range("2026-10-06", periods=3600, freq="s", tz="UTC")
     rows["book_valid"] = 0
+    rows["best_bid"] = 100.0
+    rows["best_ask"] = 101.0
+    rows["mid_price"] = 100.5
     rows["message_count_interval"] = 99
     for column in (
         "strong_bid_pressure", "strong_ask_pressure", "extreme_bid_pressure", "extreme_ask_pressure"
@@ -52,6 +58,52 @@ def test_hourly_features_use_valid_books_and_keep_raw_row_diagnostics() -> None:
     assert features[f"{prefix}_tick_rows"] == 3600
     assert features[f"{prefix}_coverage_ratio"] == features[f"{prefix}_ready"] == 0
     assert pd.isna(features[f"{prefix}_spread_bps_mean"])
+
+
+def test_hourly_features_reject_legacy_valid_labels_with_unusable_metrics() -> None:
+    metric = calculate_orderbook_metrics(
+        "BTC/USDT", "BTCUSDT", [(100.0, 1.0)], [(101.0, 1.0)], {}, 1
+    )
+    rows = pd.DataFrame([metric] * 1800)
+    rows["ts"] = pd.date_range("2026-10-06", periods=1800, freq="s", tz="UTC")
+    for column in ("best_bid", "best_ask", "mid_price", *RAW_NUMERIC_COLUMNS):
+        rows[column] = float("nan")
+    prefix = "ob1h_bybit_linear"
+    features = _market_tick_features(rows, "bybit_linear", min_coverage_ratio=0.5)
+    assert features[f"{prefix}_tick_rows"] == 1800
+    assert features[f"{prefix}_valid_tick_rows"] == features[f"{prefix}_coverage_ratio"] == 0
+    assert features[f"{prefix}_ready"] == 0
+    assert pd.isna(features[f"{prefix}_spread_bps_mean"])
+    assert rows["book_valid"].eq(1).all()
+
+    for column, value in metric.items():
+        rows.at[0, column] = json.dumps(value) if isinstance(value, list) else value
+    # Positive spread labels alone cannot rescue crossed or overflowing legacy rows.
+    for index in (1, 2):
+        for column, value in metric.items():
+            rows.at[index, column] = json.dumps(value) if isinstance(value, list) else value
+    rows.at[1, "best_bid"] = 102.0
+    rows.at[2, "bid_notional_top20"] = float("inf")
+    features = _market_tick_features(rows, "bybit_linear", min_coverage_ratio=0.5)
+    assert features[f"{prefix}_valid_tick_rows"] == 1
+    assert features[f"{prefix}_spread_bps_mean"] == metric["spread_bps"]
+    assert features[f"{prefix}_message_count_sum"] == 1
+
+
+def test_finite_book_levels_with_overflowing_metrics_are_invalid_for_bars() -> None:
+    overflow = calculate_orderbook_metrics(
+        "BTC/USDT", "BTCUSDT", [(100.0, 1e308)], [(101.0, 1e308)], {}, 1
+    )
+    assert overflow == {
+        "pair": "BTC/USDT", "symbol": "BTCUSDT", "book_valid": 0,
+        "depth_levels": 20, "message_count_interval": 1,
+    }
+    valid = calculate_orderbook_metrics(
+        "BTC/USDT", "BTCUSDT", [(100.0, 1.0)], [(101.0, 1.0)], {}, 1
+    )
+    bar = aggregate_metric_ticks([overflow, valid], 60, 60)
+    assert bar["valid_samples"] == 1
+    assert bar["spread_bps_mean"] == valid["spread_bps"]
 
 
 def test_stale_book_is_gated_without_requiring_a_bybit_resnapshot() -> None:
@@ -149,6 +201,34 @@ def test_bybit_malformed_delta_rejected_instead_of_becoming_empty_update() -> No
         profile,
         json.dumps({"topic": "orderbook.50.BTCUSDT", "type": "delta", "data": {"s": "BTCUSDT", "b": [], "a": []}}),
     ) == ("BTCUSDT", [], [], "delta")
+
+
+def test_recognized_bybit_update_rejects_malformed_bodies_but_ignores_controls() -> None:
+    profile = MARKET_PROFILES["bybit_linear"]
+    for update_type in ("snapshot", "delta"):
+        for body in ([], None, "not-an-object", {}):
+            payload = {"topic": "orderbook.50.BTCUSDT", "type": update_type, "data": body}
+            try:
+                parse_stream_message(profile, json.dumps(payload))
+            except ValueError:
+                pass
+            else:
+                raise AssertionError(f"malformed {update_type} body was accepted: {body!r}")
+        try:
+            parse_stream_message(
+                profile, json.dumps({"topic": "orderbook.50.BTCUSDT", "type": update_type})
+            )
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"{update_type} missing its body was accepted")
+
+    for payload in (
+        {"success": True, "op": "subscribe"},
+        {"op": "pong", "data": []},
+        {"topic": "ticker.BTCUSDT", "type": "snapshot", "data": []},
+    ):
+        assert parse_stream_message(profile, json.dumps(payload)) == (None, [], [], "")
 
 
 def test_bybit_reset_update_id_is_applied_as_a_fresh_snapshot() -> None:

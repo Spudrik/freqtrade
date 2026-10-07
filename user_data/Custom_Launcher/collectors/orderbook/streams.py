@@ -59,8 +59,10 @@ def parse_stream_message(profile: MarketProfile, message: str) -> tuple[str | No
         topic = str(payload.get("topic") or "")
         data = payload.get("data")
         update_type = str(payload.get("type") or "")
-        if not topic.startswith("orderbook.") or update_type not in {"snapshot", "delta"} or not isinstance(data, dict):
+        if not topic.startswith("orderbook.") or update_type not in {"snapshot", "delta"}:
             return None, [], [], ""
+        if not isinstance(data, dict):
+            raise ValueError("Bybit orderbook update data must be an object")
         update_id = data.get("u")
         is_reset_snapshot = (
             update_type == "delta"
@@ -73,7 +75,7 @@ def parse_stream_message(profile: MarketProfile, message: str) -> tuple[str | No
                 raise ValueError("Bybit snapshot must include both bid and ask sides")
             update_type = "snapshot"
         elif not any(key in data for key in ("b", "a")):
-            return None, [], [], ""
+            raise ValueError("Bybit delta must include a bid or ask side")
         symbol = str(data.get("s") or topic.rsplit(".", 1)[-1]).upper()
         bids = parse_book_side(data["b"], reverse=True, strict=True) if "b" in data else []
         asks = parse_book_side(data["a"], reverse=False, strict=True) if "a" in data else []
