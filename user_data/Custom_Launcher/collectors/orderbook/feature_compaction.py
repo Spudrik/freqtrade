@@ -699,6 +699,9 @@ def _market_tick_features(group: DataFrame, market: str, *, min_coverage_ratio: 
         values = _numeric(group, column)
         valid &= np.isfinite(values) & values.gt(0.0)
     valid &= _numeric(group, "best_ask").gt(_numeric(group, "best_bid"))
+    for column in RAW_NUMERIC_COLUMNS:
+        values = _numeric(group, column)
+        valid &= values.isna() | np.isfinite(values)
     for depth in (1, 5, 10, 20):
         for side in ("bid", "ask"):
             values = _numeric(group, f"{side}_notional_top{depth}")

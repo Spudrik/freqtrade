@@ -148,7 +148,8 @@ def _collector_state_from_preset(preset: dict[str, Any], key: str) -> dict[str, 
 
 @contextmanager
 def protect_collector_resource_changes(
-    app_dir: Path, previous: dict[str, Any], updated: dict[str, Any], *, for_start: bool = False
+    app_dir: Path, previous: dict[str, Any], updated: dict[str, Any], *, for_start: bool = False,
+    automatic: bool = False,
 ) -> Iterator[None]:
     """Keep prior authority during replacement; Start already holds the new launch lock."""
     from .global_context_service import GlobalContextService
@@ -173,6 +174,10 @@ def protect_collector_resource_changes(
             new_paths = paths_for_state(next_state)
             if all(old_paths[part] == new_paths[part] for part in ("db", "status")):
                 continue
+            if automatic:
+                raise RuntimeError(
+                    f"Cannot automatically start {key}: requested database/status resource paths differ from the current saved preset."
+                )
             try:
                 # Non-blocking: a start/stop holding launch while updating intent
                 # causes rejection, never an inverted-lock wait.
@@ -182,15 +187,23 @@ def protect_collector_resource_changes(
                 if verified_worker(status, module, old_paths["db"], old_paths["status"]) is not None:
                     raise RuntimeError("The prior collector resources are actively owned.")
                 prior_resources = [old_paths["db"], old_paths["status"]]
+                shared = set(prior_resources) & {new_paths["db"], new_paths["status"]}
+                resources.enter_context(lock_resources([path for path in prior_resources if path not in shared]))
+                new_owner = None
+                if shared:
+                    new_status = _read_collector_status(new_paths["status"])
+                    new_owner = verified_worker(new_status, module, new_paths["db"], new_paths["status"])
+                if new_owner is not None:
+                    # The requested worker owns these overlapping claims; keep
+                    # distinct prior claims guarded until adoption/save finishes.
+                    continue
                 if for_start:
-                    shared = set(prior_resources) & {new_paths["db"], new_paths["status"]}
-                    resources.enter_context(lock_resources([path for path in prior_resources if path not in shared]))
                     # Only shared resources must be released for the new worker;
                     # the prior launch and distinct resource guards remain held.
                     with lock_resources(shared):
                         pass
                 else:
-                    resources.enter_context(lock_resources(prior_resources))
+                    resources.enter_context(lock_resources(shared))
             except (CollectorBusyError, CollectorStatusError, RuntimeError) as exc:
                 raise RuntimeError(
                     f"Cannot change {key} database/status resource paths: {exc} Stop the collector first and wait for it to release its resources."
@@ -272,6 +285,7 @@ def _start_collector_detached(
                     {f"{key}_{field}": value for field, value in previous.items()},
                     {f"{key}_data_dir": str(status_path.parent), f"{key}_db_path": str(db_path)},
                     for_start=True,
+                    automatic=automatic,
                 ))
             if not automatic:
                 set_collector_desired(app_dir, key, True, preset_path)
