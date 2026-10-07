@@ -8,6 +8,7 @@ import csv
 import io
 import json
 import os
+import re
 import subprocess
 import tempfile
 import xml.etree.ElementTree as ET
@@ -442,7 +443,7 @@ class DataToolsWatchdogService:
         state = self.normalize_state(state)
         task_name = str(state["task_name"])
         interval_minutes = _positive_int(state.get("check_interval_minutes"), DEFAULT_CHECK_INTERVAL_MINUTES)
-        user_sid = _current_user_sid()
+        user_account, user_sid = _current_user_identity()
         hidden_wrapper = self.write_hidden_task_wrapper(state)
         task_xml = _scheduled_task_xml(hidden_wrapper, interval_minutes, user_sid)
         temp_path: Path | None = None
@@ -474,6 +475,7 @@ class DataToolsWatchdogService:
                 hidden_wrapper,
                 interval_minutes,
                 user_sid,
+                user_account,
             )
         else:
             queried = None
@@ -552,7 +554,7 @@ def _positive_int(value: Any, default: int) -> int:
     return max(1, parsed)
 
 
-def _current_user_sid() -> str:
+def _current_user_identity() -> tuple[str, str]:
     try:
         result = subprocess.run(
             ["whoami", "/user", "/fo", "csv", "/nh"],
@@ -561,18 +563,18 @@ def _current_user_sid() -> str:
             check=False,
         )
     except OSError as exc:
-        raise RuntimeError(f"Could not determine the current Windows user SID with whoami: {exc}") from exc
+        raise RuntimeError(f"Could not determine the current Windows user identity with whoami: {exc}") from exc
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "no command output").strip()
-        raise RuntimeError(f"Could not determine the current Windows user SID with whoami: {detail}")
+        raise RuntimeError(f"Could not determine the current Windows user identity with whoami: {detail}")
     try:
-        rows = list(csv.reader(io.StringIO(result.stdout)))
-        user_sid = rows[0][1].strip() if len(rows) == 1 and len(rows[0]) == 2 else ""
+        rows = list(csv.reader(io.StringIO(result.stdout), strict=True))
+        user_account, user_sid = (value.strip() for value in rows[0]) if len(rows) == 1 and len(rows[0]) == 2 else ("", "")
     except (csv.Error, IndexError):
-        user_sid = ""
-    if not user_sid.startswith("S-"):
-        raise RuntimeError("Could not determine the current Windows user SID: whoami returned unexpected CSV output.")
-    return user_sid
+        user_account, user_sid = "", ""
+    if not re.fullmatch(r"[^\\]+\\[^\\]+", user_account) or not re.fullmatch(r"S-[0-9]+(?:-[0-9]+)+", user_sid):
+        raise RuntimeError("Could not determine the current Windows user identity: whoami returned unexpected CSV output.")
+    return user_account, user_sid
 
 
 def _scheduled_task_xml(hidden_wrapper: Path, interval_minutes: int, user_sid: str) -> str:
@@ -609,7 +611,28 @@ def _scheduled_task_xml(hidden_wrapper: Path, interval_minutes: int, user_sid: s
 '''
 
 
-def _scheduled_task_xml_matches(xml_text: str, hidden_wrapper: Path, interval_minutes: int, user_sid: str) -> bool:
+def _task_duration_seconds(duration: str) -> int | None:
+    match = re.fullmatch(r"P(?:([0-9]+)D)?(?:T(?:([0-9]+)H)?(?:([0-9]+)M)?(?:([0-9]+)S)?)?", duration.strip())
+    if match is None or not any(match.groups()) or duration.strip().endswith("T"):
+        return None
+    return sum(int(value or 0) * seconds for value, seconds in zip(match.groups(), (86400, 3600, 60, 1)))
+
+
+def _scheduled_task_xml_matches(
+    xml_text: str,
+    hidden_wrapper: Path,
+    interval_minutes: int,
+    user_sid: str,
+    user_account: str | None = None,
+) -> bool:
+    # The optional account must come from the same whoami /user row as the SID.
+    if not re.fullmatch(r"S-[0-9]+(?:-[0-9]+)+", user_sid.strip()):
+        return False
+    user_ids = {user_sid.strip().casefold()}
+    if user_account is not None:
+        if not re.fullmatch(r"[^\\]+\\[^\\]+", user_account.strip()):
+            return False
+        user_ids.add(user_account.strip().casefold())
     try:
         root = ET.fromstring(xml_text)
     except ET.ParseError:
@@ -618,7 +641,9 @@ def _scheduled_task_xml_matches(xml_text: str, hidden_wrapper: Path, interval_mi
     principal = root.find(".//task:Principals/task:Principal", namespace)
     user_id = principal.findtext("task:UserId", default="", namespaces=namespace) if principal is not None else ""
     logon_type = principal.findtext("task:LogonType", default="", namespaces=namespace) if principal is not None else ""
+    run_level = principal.findtext("task:RunLevel", default="LeastPrivilege", namespaces=namespace) if principal is not None else ""
     multiple_instances = root.findtext(".//task:Settings/task:MultipleInstancesPolicy", default="", namespaces=namespace)
+    enabled = root.findtext(".//task:Settings/task:Enabled", default="true", namespaces=namespace)
     actions = root.find(".//task:Actions/task:Exec", namespace)
     command = actions.findtext("task:Command", default="", namespaces=namespace) if actions is not None else ""
     arguments = actions.findtext("task:Arguments", default="", namespaces=namespace) if actions is not None else ""
@@ -627,7 +652,7 @@ def _scheduled_task_xml_matches(xml_text: str, hidden_wrapper: Path, interval_mi
         trigger.tag == f"{{{namespace['task']}}}LogonTrigger"
         and trigger.findtext("task:Enabled", default="true", namespaces=namespace).strip().casefold() == "true"
         and trigger.findtext("task:UserId", default="", namespaces=namespace).strip().casefold()
-        == user_sid.strip().casefold()
+        in user_ids
         for trigger in triggers
     )
     time_triggers = (
@@ -636,14 +661,17 @@ def _scheduled_task_xml_matches(xml_text: str, hidden_wrapper: Path, interval_mi
         else []
     )
     has_hourly = any(
-        trigger.findtext("task:Enabled", default="true", namespaces=namespace).lower() == "true"
-        and trigger.findtext("task:Repetition/task:Interval", default="", namespaces=namespace) == f"PT{interval_minutes}M"
+        trigger.findtext("task:Enabled", default="true", namespaces=namespace).strip().casefold() == "true"
+        and _task_duration_seconds(trigger.findtext("task:Repetition/task:Interval", default="", namespaces=namespace))
+        == interval_minutes * 60
         for trigger in time_triggers
     )
     expected_arguments = f'//B //NoLogo "{hidden_wrapper}"'
     return (
-        user_id.strip().casefold() == user_sid.strip().casefold()
+        user_id.strip().casefold() in user_ids
         and logon_type == "InteractiveToken"
+        and run_level == "LeastPrivilege"
+        and enabled.strip().casefold() == "true"
         and multiple_instances == "IgnoreNew"
         and command.rstrip("\\/").casefold() == r"C:\Windows\System32\wscript.exe".rstrip("\\/").casefold()
         and arguments == expected_arguments

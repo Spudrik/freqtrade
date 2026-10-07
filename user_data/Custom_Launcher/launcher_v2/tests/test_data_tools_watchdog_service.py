@@ -4,6 +4,8 @@ import sys
 from types import SimpleNamespace
 import subprocess
 
+import pytest
+
 import launcher_v2.services.data_tools_watchdog_service as watchdog_module
 from launcher_v2.services.data_tools_watchdog_service import (
     DataToolsWatchdogService,
@@ -11,6 +13,18 @@ from launcher_v2.services.data_tools_watchdog_service import (
     _scheduled_task_xml_matches,
 )
 from data_tools_watchdog import _state_from_args, parse_args
+
+
+def _windows_normalized_task_xml(wrapper: Path, user_sid: str, user_account: str) -> str:
+    return f'''<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <Triggers>
+    <LogonTrigger><UserId>{user_account}</UserId></LogonTrigger>
+    <TimeTrigger><Repetition><Interval>PT1H</Interval><StopAtDurationEnd>false</StopAtDurationEnd></Repetition></TimeTrigger>
+  </Triggers>
+  <Principals><Principal id="Author"><UserId>{user_sid}</UserId><LogonType>InteractiveToken</LogonType></Principal></Principals>
+  <Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy></Settings>
+  <Actions Context="Author"><Exec><Command>C:\\Windows\\System32\\wscript.exe</Command><Arguments>//B //NoLogo "{wrapper}"</Arguments></Exec></Actions>
+</Task>'''
 
 
 def test_scheduled_task_runs_for_current_user_on_logon_and_hourly() -> None:
@@ -57,21 +71,73 @@ def test_scheduled_task_escapes_wrapper_path() -> None:
     assert "watchdog &amp; tools" in xml
 
 
+def test_scheduled_task_verifies_windows_normalized_identity_interval_and_defaults() -> None:
+    wrapper = Path(r"C:\watchdog\runner.vbs")
+    user_sid = "S-1-5-21-2001307574-2720987186-41185893-1001"
+    user_account = r"DESKTOP-VQFCI0P\engin"
+    xml = _windows_normalized_task_xml(wrapper, user_sid, user_account)
+
+    assert _scheduled_task_xml_matches(xml, wrapper, 60, user_sid, user_account.lower())
+    assert not _scheduled_task_xml_matches(xml, wrapper, 60, user_sid)
+    assert _scheduled_task_xml_matches(xml.replace(user_sid, user_account), wrapper, 60, user_sid, user_account)
+    for wrong_account in (r"DESKTOP-VQFCI0P\other", r"OTHER-DOMAIN\engin", "engin"):
+        assert not _scheduled_task_xml_matches(xml.replace(user_account, wrong_account), wrapper, 60, user_sid, user_account)
+    assert not _scheduled_task_xml_matches(xml.replace(f"<UserId>{user_account}</UserId>", ""), wrapper, 60, user_sid, user_account)
+    assert not _scheduled_task_xml_matches(xml.replace(user_sid, "S-1-5-21-2001307574-2720987186-41185893-1002"), wrapper, 60, user_sid, user_account)
+    assert not _scheduled_task_xml_matches(xml.replace(f"<UserId>{user_sid}</UserId>", ""), wrapper, 60, user_sid, user_account)
+    assert not _scheduled_task_xml_matches(xml, wrapper, 60, "", user_account)
+    assert not _scheduled_task_xml_matches(xml, wrapper, 60, user_sid, "engin")
+
+
+def test_scheduled_task_verifies_equivalent_durations_and_rejects_wrong_or_invalid_intervals() -> None:
+    wrapper = Path(r"C:\watchdog\runner.vbs")
+    user_sid = "S-1-5-21-123-456-789-1001"
+    xml = _scheduled_task_xml(wrapper, 60, user_sid)
+
+    for duration in ("PT1H", "PT3600S", "PT0H60M0S"):
+        assert _scheduled_task_xml_matches(xml.replace("PT60M", duration), wrapper, 60, user_sid)
+    assert _scheduled_task_xml_matches(xml.replace("PT60M", "P1D"), wrapper, 1440, user_sid)
+    assert _scheduled_task_xml_matches(xml.replace("PT60M", "P1DT1H"), wrapper, 1500, user_sid)
+    for duration in ("PT59M", "PT61M", "PT1M", "P1D", "", "P", "PT", "P1DT", "P1M", "P1W", "PT-1H", "PT1Hjunk", "PT\u0666\u0660M"):
+        assert not _scheduled_task_xml_matches(xml.replace("PT60M", duration), wrapper, 60, user_sid)
+    assert not _scheduled_task_xml_matches(xml.replace("<Interval>PT60M</Interval>", ""), wrapper, 60, user_sid)
+
+
+def test_scheduled_task_rejects_explicit_elevation_and_disabled_defaults() -> None:
+    wrapper = Path(r"C:\watchdog\runner.vbs")
+    user_sid = "S-1-5-21-123-456-789-1001"
+    user_account = r"DESKTOP-VQFCI0P\engin"
+    xml = _windows_normalized_task_xml(wrapper, user_sid, user_account)
+
+    assert not _scheduled_task_xml_matches(xml.replace("</Principal>", "<RunLevel>HighestAvailable</RunLevel></Principal>"), wrapper, 60, user_sid, user_account)
+    for parent in ("LogonTrigger", "TimeTrigger", "Settings"):
+        assert not _scheduled_task_xml_matches(xml.replace(f"</{parent}>", f"<Enabled>false</Enabled></{parent}>"), wrapper, 60, user_sid, user_account)
+
+
+def test_current_user_identity_rejects_unattested_or_incomplete_rows(monkeypatch) -> None:
+    for output in ('"engin","S-1-5-21-123-456-789-1001"', '"DOMAIN\\engin",""', '"DOMAIN\\engin","S-1-5-21-123-456-789-1001"\n"OTHER\\user","S-1-5-21-123-456-789-1002"'):
+        monkeypatch.setattr(watchdog_module.subprocess, "run", lambda args, **kwargs: subprocess.CompletedProcess(args, 0, output, ""))
+        with pytest.raises(RuntimeError, match="unexpected CSV output"):
+            watchdog_module._current_user_identity()
+
+
 def test_install_verifies_xml_and_retains_legacy_startup_entry(tmp_path: Path, monkeypatch) -> None:
     user_sid = "S-1-5-21-123-456-789-1001"
+    user_account = r"DESKTOP-VQFCI0P\engin"
     wrapper = Path(r"C:\watchdog\runner.vbs")
     startup_entry = tmp_path / "FreqtradeDataToolsWatchdog_OnLogon.vbs"
     startup_entry.write_text("legacy entry", encoding="ascii")
     service = DataToolsWatchdogService(tmp_path)
     monkeypatch.setattr(watchdog_module, "os", SimpleNamespace(name="nt"))
-    monkeypatch.setattr(watchdog_module, "_current_user_sid", lambda: user_sid)
     monkeypatch.setattr(service, "write_hidden_task_wrapper", lambda state: wrapper)
     monkeypatch.setattr(service, "startup_entry_path", lambda task_name: startup_entry)
-    queried_xml = _scheduled_task_xml(wrapper, 60, user_sid)
+    queried_xml = _windows_normalized_task_xml(wrapper, user_sid, user_account)
     calls: list[list[str]] = []
 
     def fake_run(args, **kwargs):
         calls.append(args)
+        if args[0] == "whoami":
+            return subprocess.CompletedProcess(args, 0, f'"{user_account}","{user_sid}"\n', "")
         if args[1] == "/Create":
             return subprocess.CompletedProcess(args, 0, "created", "")
         return subprocess.CompletedProcess(args, 0, queried_xml, "")
@@ -81,8 +147,9 @@ def test_install_verifies_xml_and_retains_legacy_startup_entry(tmp_path: Path, m
     result = service.install_scheduled_task()
 
     assert result.returncode == 0
-    assert len(calls) == 2
-    assert calls[1][1:4] == ["/Query", "/TN", "FreqtradeDataToolsWatchdog"]
+    assert len(calls) == 3
+    assert calls[0] == ["whoami", "/user", "/fo", "csv", "/nh"]
+    assert calls[2][1:4] == ["/Query", "/TN", "FreqtradeDataToolsWatchdog"]
     assert startup_entry.read_text(encoding="ascii") == "legacy entry"
     assert f"Retained {startup_entry} | exists=True" in result.stdout
     assert "Removed" not in result.stdout
@@ -94,7 +161,7 @@ def test_install_keeps_startup_entry_when_scheduler_xml_verification_fails(tmp_p
     startup_entry.write_text("legacy entry", encoding="ascii")
     service = DataToolsWatchdogService(tmp_path)
     monkeypatch.setattr(watchdog_module, "os", SimpleNamespace(name="nt"))
-    monkeypatch.setattr(watchdog_module, "_current_user_sid", lambda: user_sid)
+    monkeypatch.setattr(watchdog_module, "_current_user_identity", lambda: (r"DESKTOP-VQFCI0P\engin", user_sid))
     monkeypatch.setattr(service, "write_hidden_task_wrapper", lambda state: Path(r"C:\watchdog\runner.vbs"))
     monkeypatch.setattr(service, "startup_entry_path", lambda task_name: startup_entry)
     monkeypatch.setattr(
