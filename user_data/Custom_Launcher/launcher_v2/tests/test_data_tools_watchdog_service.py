@@ -5,7 +5,11 @@ from types import SimpleNamespace
 import subprocess
 
 import launcher_v2.services.data_tools_watchdog_service as watchdog_module
-from launcher_v2.services.data_tools_watchdog_service import DataToolsWatchdogService, _scheduled_task_xml
+from launcher_v2.services.data_tools_watchdog_service import (
+    DataToolsWatchdogService,
+    _scheduled_task_xml,
+    _scheduled_task_xml_matches,
+)
 from data_tools_watchdog import _state_from_args, parse_args
 
 
@@ -21,6 +25,29 @@ def test_scheduled_task_runs_for_current_user_on_logon_and_hourly() -> None:
     assert "<StartWhenAvailable>true</StartWhenAvailable>" in xml
     assert "<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>" in xml
     assert "<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>" in xml
+
+
+def test_scheduled_task_verification_requires_current_user_logon_trigger() -> None:
+    wrapper = Path(r"C:\watchdog\runner.vbs")
+    user_sid = "S-1-5-21-123-456-789-1001"
+    other_sid = "S-1-5-21-123-456-789-1002"
+    xml = _scheduled_task_xml(wrapper, 60, user_sid)
+    logon_trigger = f"<LogonTrigger><Enabled>true</Enabled><UserId>{user_sid}</UserId></LogonTrigger>"
+
+    assert _scheduled_task_xml_matches(xml, wrapper, 60, user_sid)
+    assert f"<Principal id=\"Author\"><UserId>{user_sid}</UserId>" in xml
+    assert not _scheduled_task_xml_matches(
+        xml.replace(logon_trigger, "<LogonTrigger><Enabled>true</Enabled></LogonTrigger>"),
+        wrapper,
+        60,
+        user_sid,
+    )
+    assert not _scheduled_task_xml_matches(
+        xml.replace(logon_trigger, f"<LogonTrigger><Enabled>true</Enabled><UserId>{other_sid}</UserId></LogonTrigger>"),
+        wrapper,
+        60,
+        user_sid,
+    )
 
 
 def test_scheduled_task_escapes_wrapper_path() -> None:

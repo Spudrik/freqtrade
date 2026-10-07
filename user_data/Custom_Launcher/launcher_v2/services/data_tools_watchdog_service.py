@@ -584,7 +584,7 @@ def _scheduled_task_xml(hidden_wrapper: Path, interval_minutes: int, user_sid: s
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo><Description>Run LauncherV2 data collectors for the signed-in user on logon and hourly.</Description></RegistrationInfo>
   <Triggers>
-    <LogonTrigger><Enabled>true</Enabled></LogonTrigger>
+    <LogonTrigger><Enabled>true</Enabled><UserId>{escape(user_sid.strip())}</UserId></LogonTrigger>
     <TimeTrigger>
       <Repetition><Interval>PT{interval_minutes}M</Interval><StopAtDurationEnd>false</StopAtDurationEnd></Repetition>
       <StartBoundary>{start_boundary}</StartBoundary><Enabled>true</Enabled>
@@ -625,7 +625,9 @@ def _scheduled_task_xml_matches(xml_text: str, hidden_wrapper: Path, interval_mi
     triggers = root.find("task:Triggers", namespace)
     has_logon = triggers is not None and any(
         trigger.tag == f"{{{namespace['task']}}}LogonTrigger"
-        and trigger.findtext("task:Enabled", default="true", namespaces=namespace).lower() == "true"
+        and trigger.findtext("task:Enabled", default="true", namespaces=namespace).strip().casefold() == "true"
+        and trigger.findtext("task:UserId", default="", namespaces=namespace).strip().casefold()
+        == user_sid.strip().casefold()
         for trigger in triggers
     )
     time_triggers = (
