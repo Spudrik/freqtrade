@@ -259,6 +259,7 @@ class OrderBookTab(BaseTab):
 
     def _state(self) -> dict[str, Any]:
         return {
+            "python_exe": self.context.shared.python_exe.get(),
             "config_path": self.config_path_var.get(),
             "data_dir": self.data_dir_var.get(),
             "market_profiles": [key for key, var in self.market_profile_vars.items() if var.get()],

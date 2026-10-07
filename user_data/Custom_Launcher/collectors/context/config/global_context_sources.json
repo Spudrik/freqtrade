@@ -1,0 +1,581 @@
+{
+  "version": 1,
+  "poll_interval_seconds": 1800,
+  "request_timeout_seconds": 20,
+  "store_raw_payloads": true,
+  "user_agent": "FreQ-GlobalContextCollector/1.0",
+  "fred_api_key_env": "FRED_API_KEY",
+  "fred_api_key_json_path": "fred.api_key",
+  "sources": [
+    {
+      "id": "google_trends_crypto_attention",
+      "type": "google_trends_interest",
+      "enabled": true,
+      "source_group": "attention",
+      "market_relevance": "high",
+      "keywords": [
+        "bitcoin",
+        "btc",
+        "crypto",
+        "bitcoin etf",
+        "ethereum"
+      ],
+      "metric_key": "google_trends_crypto_attention_composite",
+      "metric_prefix": "google_trends",
+      "timeframe": "now 7-d",
+      "geo": "",
+      "gprop": "",
+      "emit": "latest",
+      "availability_mode": "source_ts",
+      "min_interval_seconds": 43200,
+      "notes": "Primary live crypto-attention proxy from Google Trends. Stores only the latest point from each fetch to avoid retroactively backfilling rescaled historical values, and is spaced to reduce rate-limit pressure."
+    },
+    {
+      "id": "google_trends_macro_attention",
+      "type": "google_trends_interest",
+      "enabled": false,
+      "source_group": "attention",
+      "market_relevance": "medium",
+      "keywords": [
+        "recession",
+        "inflation",
+        "interest rates",
+        "bank crisis",
+        "war"
+      ],
+      "metric_key": "google_trends_macro_attention_composite",
+      "metric_prefix": "google_trends",
+      "timeframe": "now 7-d",
+      "geo": "",
+      "gprop": "",
+      "emit": "latest",
+      "availability_mode": "source_ts",
+      "min_interval_seconds": 43200,
+      "notes": "Secondary macro attention proxy from Google Trends. Disabled by default because FRED/Stooq already cover much of this information with lower rate-limit risk."
+    },
+    {
+      "id": "google_trends_market_stress_attention",
+      "type": "google_trends_interest",
+      "enabled": false,
+      "source_group": "attention",
+      "market_relevance": "medium",
+      "keywords": [
+        "stock market crash",
+        "vix",
+        "gold price",
+        "oil price",
+        "bond yields"
+      ],
+      "metric_key": "google_trends_market_stress_attention_composite",
+      "metric_prefix": "google_trends",
+      "timeframe": "now 7-d",
+      "geo": "",
+      "gprop": "",
+      "emit": "latest",
+      "availability_mode": "source_ts",
+      "min_interval_seconds": 43200,
+      "notes": "Secondary market-stress attention proxy from Google Trends. Disabled by default because Stooq/FRED already cover market-stress state with lower request cost."
+    },
+    {
+      "id": "google_trends_systemic_risk_attention",
+      "type": "google_trends_interest",
+      "enabled": false,
+      "source_group": "attention",
+      "market_relevance": "medium",
+      "keywords": [
+        "bank crisis",
+        "recession",
+        "china property crisis",
+        "war",
+        "ai bubble"
+      ],
+      "metric_key": "google_trends_systemic_risk_attention_composite",
+      "metric_prefix": "google_trends",
+      "timeframe": "now 7-d",
+      "geo": "",
+      "gprop": "",
+      "emit": "latest",
+      "availability_mode": "source_ts",
+      "min_interval_seconds": 43200,
+      "notes": "Medium-relevance systemic-risk attention proxy from Google Trends. Disabled to keep live Trends requests focused on the higher-value crypto basket and reduce 429 rate-limit pressure."
+    },
+    {
+      "id": "farside_btc_spot_etf_flows",
+      "type": "farside_btc_etf_flows",
+      "enabled": true,
+      "source_group": "institutional_flows",
+      "market_relevance": "high",
+      "url": "https://farside.co.uk/bitcoin-etf-flow-all-data/",
+      "metric_prefix": "btc_spot_etf",
+      "emit": "latest_reported",
+      "available_hour_utc": 0,
+      "min_interval_seconds": 86400,
+      "score_scale_musd": 500,
+      "fund_metrics": [
+        "IBIT",
+        "FBTC",
+        "GBTC"
+      ],
+      "notes": "Daily US spot BTC ETF flow table. Uses the latest non-empty reported row so placeholder all-zero current-day rows are ignored. Available timestamp is shifted to the day after the flow date to avoid intraday lookahead."
+    },
+    {
+      "id": "alternative_fear_greed",
+      "type": "alternative_fng",
+      "enabled": true,
+      "source_group": "sentiment",
+      "market_relevance": "medium",
+      "url": "https://api.alternative.me/fng/?limit=1",
+      "notes": "0 is extreme fear; 100 is extreme greed."
+    },
+    {
+      "id": "coingecko_global",
+      "type": "coingecko_global",
+      "enabled": true,
+      "source_group": "market",
+      "market_relevance": "high",
+      "url": "https://api.coingecko.com/api/v3/global",
+      "notes": "Global crypto market cap, volume, BTC dominance, and 24h market-cap change."
+    },
+    {
+      "id": "coingecko_btc_eth",
+      "type": "coingecko_markets",
+      "enabled": true,
+      "source_group": "market",
+      "market_relevance": "high",
+      "url": "https://api.coingecko.com/api/v3/coins/markets",
+      "vs_currency": "usd",
+      "coin_ids": [
+        "bitcoin",
+        "ethereum"
+      ],
+      "notes": "BTC/ETH price, 24h change, and 7d change from the public markets endpoint."
+    },
+    {
+      "id": "defillama_stablecoins",
+      "type": "defillama_stablecoins",
+      "enabled": true,
+      "source_group": "defi",
+      "market_relevance": "medium",
+      "url": "https://stablecoins.llama.fi/stablecoins?includePrices=true",
+      "notes": "Stablecoin supply trend proxy for crypto liquidity."
+    },
+    {
+      "id": "defillama_chains",
+      "type": "defillama_chains",
+      "enabled": true,
+      "source_group": "defi",
+      "market_relevance": "medium",
+      "url": "https://api.llama.fi/v2/chains",
+      "notes": "Aggregate DeFi TVL and weighted chain TVL change."
+    },
+    {
+      "id": "stooq_us_equity_risk",
+      "type": "stooq_quotes",
+      "enabled": false,
+      "source_group": "equity_indices",
+      "market_relevance": "high",
+      "url": "https://stooq.com/q/l/",
+      "metric_key": "us_equity_risk_basket_change",
+      "symbols": [
+        "^spx",
+        "^ndq",
+        "^dji",
+        "iwm.us"
+      ],
+      "symbol_labels": {
+        "^SPX": "S&P 500",
+        "^NDQ": "Nasdaq",
+        "^DJI": "Dow",
+        "IWM.US": "Russell 2000 ETF"
+      },
+      "notes": "No-key Stooq headline basket for US equity risk. Disabled because the Stooq quote endpoint is currently returning HTTP 404 from the collector environment; FRED US equity context remains enabled."
+    },
+    {
+      "id": "stooq_global_equity_risk",
+      "type": "stooq_quotes",
+      "enabled": false,
+      "source_group": "equity_indices",
+      "market_relevance": "medium",
+      "url": "https://stooq.com/q/l/",
+      "metric_key": "global_equity_risk_basket_change",
+      "symbols": [
+        "^ukx",
+        "^dax",
+        "^cac",
+        "^nkx",
+        "^hsi",
+        "^tsx"
+      ],
+      "symbol_labels": {
+        "^UKX": "FTSE 100",
+        "^DAX": "DAX",
+        "^CAC": "CAC 40",
+        "^NKX": "Nikkei",
+        "^HSI": "Hang Seng",
+        "^TSX": "TSX"
+      },
+      "notes": "No-key Stooq headline basket for non-US equity risk. Disabled because the Stooq quote endpoint is currently returning HTTP 404 from the collector environment."
+    },
+    {
+      "id": "stooq_safe_haven_risk",
+      "type": "stooq_quotes",
+      "enabled": false,
+      "source_group": "rates_fx",
+      "market_relevance": "medium",
+      "url": "https://stooq.com/q/l/",
+      "metric_key": "safe_haven_proxy_change",
+      "inverse_risk_score": true,
+      "symbols": [
+        "vxx.us",
+        "tlt.us",
+        "gld.us",
+        "uup.us"
+      ],
+      "symbol_labels": {
+        "VXX.US": "VIX ETF",
+        "TLT.US": "Long bonds",
+        "GLD.US": "Gold",
+        "UUP.US": "USD ETF"
+      },
+      "notes": "No-key ETF proxies for volatility, bonds, gold, and dollar pressure. Disabled because the Stooq quote endpoint is currently returning HTTP 404 from the collector environment; FRED rates/dollar context remains enabled."
+    },
+    {
+      "id": "fred_us_equity_daily",
+      "type": "fred_series_basket",
+      "enabled": true,
+      "source_group": "equity_indices",
+      "market_relevance": "high",
+      "url": "https://api.stlouisfed.org/fred/series/observations",
+      "api_key_env": "FRED_API_KEY",
+      "metric_key": "fred_us_equity_daily_change",
+      "series_ids": [
+        "SP500",
+        "DJIA",
+        "NASDAQCOM",
+        "NASDAQ100",
+        "VIXCLS"
+      ],
+      "inverse_risk_series": [
+        "VIXCLS"
+      ],
+      "series_labels": {
+        "SP500": "S&P 500",
+        "DJIA": "Dow",
+        "NASDAQCOM": "Nasdaq Composite",
+        "NASDAQ100": "Nasdaq 100",
+        "VIXCLS": "VIX"
+      },
+      "notes": "Keyed FRED daily US market context. Set FRED_API_KEY or select a key file with the configured JSON path."
+    },
+    {
+      "id": "fred_rates_risk_daily",
+      "type": "fred_series_basket",
+      "enabled": true,
+      "source_group": "rates_fx",
+      "market_relevance": "medium",
+      "url": "https://api.stlouisfed.org/fred/series/observations",
+      "api_key_env": "FRED_API_KEY",
+      "metric_key": "fred_rates_risk_daily_change",
+      "series_ids": [
+        "DGS2",
+        "DGS10",
+        "DTWEXBGS"
+      ],
+      "inverse_risk_series": [
+        "DGS2",
+        "DGS10",
+        "DTWEXBGS"
+      ],
+      "series_labels": {
+        "DGS2": "US 2Y",
+        "DGS10": "US 10Y",
+        "DTWEXBGS": "Broad USD"
+      },
+      "notes": "Keyed FRED rates/dollar risk context. Set FRED_API_KEY or select a key file with the configured JSON path."
+    },
+    {
+      "id": "pilot_deribit_options_btc",
+      "type": "deribit_options",
+      "enabled": true,
+      "source_group": "crypto_options",
+      "market_relevance": "medium",
+      "url": "https://www.deribit.com/api/v2/public/get_book_summary_by_currency",
+      "currency": "BTC",
+      "max_expiries": 3,
+      "max_age_seconds": 1800,
+      "max_clock_gap_seconds": 300,
+      "notes": "Public BTC options 24h volume and open interest by expiry and call/put. Descriptive positioning/hedging context only; not directional alone."
+    },
+    {
+      "id": "pilot_deribit_options_eth",
+      "type": "deribit_options",
+      "enabled": true,
+      "source_group": "crypto_options",
+      "market_relevance": "medium",
+      "url": "https://www.deribit.com/api/v2/public/get_book_summary_by_currency",
+      "currency": "ETH",
+      "max_expiries": 3,
+      "max_age_seconds": 1800,
+      "max_clock_gap_seconds": 300,
+      "notes": "Public ETH options 24h volume and open interest by expiry and call/put. Descriptive positioning/hedging context only; not directional alone."
+    },
+    {
+      "id": "pilot_defillama_stablecoin_chains",
+      "type": "defillama_stablecoin_chains",
+      "enabled": true,
+      "source_group": "crypto_stablecoins",
+      "market_relevance": "medium",
+      "url": "https://stablecoins.llama.fi/stablecoinchains",
+      "chains": [
+        "Ethereum",
+        "Tron",
+        "BSC",
+        "Solana",
+        "Arbitrum"
+      ],
+      "max_chains": 5,
+      "min_interval_seconds": 3600,
+      "notes": "Current stablecoin supply levels by chain. This endpoint is a level snapshot, not a net capital-flow measure or a supply-change series."
+    },
+    {
+      "id": "pilot_defillama_dex_volume",
+      "type": "defillama_dex_volume",
+      "enabled": true,
+      "source_group": "crypto_dex_activity",
+      "market_relevance": "medium",
+      "url": "https://api.llama.fi/overview/dexs?excludeTotalDataChart=true&excludeTotalDataChartBreakdown=true",
+      "min_interval_seconds": 3600,
+      "notes": "Aggregate DEX 24h activity and comparison bucket where complete. Volume is activity, not a direct net-capital-flow measure."
+    },
+    {
+      "id": "pilot_coingecko_btc_eth_relative_strength",
+      "type": "coingecko_relative_strength",
+      "enabled": true,
+      "source_group": "crypto_relative_strength",
+      "market_relevance": "high",
+      "url": "https://api.coingecko.com/api/v3/coins/markets",
+      "vs_currency": "usd",
+      "coin_ids": [
+        "bitcoin",
+        "ethereum"
+      ],
+      "max_age_seconds": 3600,
+      "max_clock_gap_seconds": 300,
+      "notes": "BTC/ETH fetched in one provider response. Emits ETH minus BTC rolling 24h return in percentage points and ETH/BTC price ratio; distinct from average BTC/ETH change."
+    },
+    {
+      "id": "pilot_hyperliquid_sample_01",
+      "type": "hyperliquid_clearinghouse",
+      "enabled": true,
+      "source_group": "crypto_perpetual_position_sample",
+      "market_relevance": "medium",
+      "url": "https://api.hyperliquid.xyz/info",
+      "wallet": "0x0622a2198712c9527817493553dca548f42e8088",
+      "symbols": [
+        "BTC",
+        "ETH",
+        "SOL",
+        "HYPE",
+        "ZEC",
+        "XRP"
+      ],
+      "max_age_seconds": 300,
+      "min_interval_seconds": 1800,
+      "notes": "Frozen outcome-blind public sample: official Hyperliquid BTC/ETH/HYPE public trades over 45 seconds; lexicographically first eight addresses among 18 with fills >= $10k, no PnL selection. Anonymous selected account, not a representative whale or guaranteed directional signal."
+    },
+    {
+      "id": "pilot_hyperliquid_sample_02",
+      "type": "hyperliquid_clearinghouse",
+      "enabled": true,
+      "source_group": "crypto_perpetual_position_sample",
+      "market_relevance": "medium",
+      "url": "https://api.hyperliquid.xyz/info",
+      "wallet": "0x1a2e6afa298b1cc50939b4b2b0b430e3c1ef3459",
+      "symbols": [
+        "BTC",
+        "ETH",
+        "SOL",
+        "HYPE",
+        "ZEC",
+        "XRP"
+      ],
+      "max_age_seconds": 300,
+      "min_interval_seconds": 1800,
+      "notes": "Frozen outcome-blind public sample: official Hyperliquid BTC/ETH/HYPE public trades over 45 seconds; lexicographically first eight addresses among 18 with fills >= $10k, no PnL selection. Anonymous selected account, not a representative whale or guaranteed directional signal."
+    },
+    {
+      "id": "pilot_hyperliquid_sample_03",
+      "type": "hyperliquid_clearinghouse",
+      "enabled": true,
+      "source_group": "crypto_perpetual_position_sample",
+      "market_relevance": "medium",
+      "url": "https://api.hyperliquid.xyz/info",
+      "wallet": "0x37c1e493c8a452ab3f5a6d01fda87795b91e7851",
+      "symbols": [
+        "BTC",
+        "ETH",
+        "SOL",
+        "HYPE",
+        "ZEC",
+        "XRP"
+      ],
+      "max_age_seconds": 300,
+      "min_interval_seconds": 1800,
+      "notes": "Frozen outcome-blind public sample: official Hyperliquid BTC/ETH/HYPE public trades over 45 seconds; lexicographically first eight addresses among 18 with fills >= $10k, no PnL selection. Anonymous selected account, not a representative whale or guaranteed directional signal."
+    },
+    {
+      "id": "pilot_hyperliquid_sample_04",
+      "type": "hyperliquid_clearinghouse",
+      "enabled": true,
+      "source_group": "crypto_perpetual_position_sample",
+      "market_relevance": "medium",
+      "url": "https://api.hyperliquid.xyz/info",
+      "wallet": "0x4e23288cee4960f9f962195c22948e4bc7ae20c3",
+      "symbols": [
+        "BTC",
+        "ETH",
+        "SOL",
+        "HYPE",
+        "ZEC",
+        "XRP"
+      ],
+      "max_age_seconds": 300,
+      "min_interval_seconds": 1800,
+      "notes": "Frozen outcome-blind public sample: official Hyperliquid BTC/ETH/HYPE public trades over 45 seconds; lexicographically first eight addresses among 18 with fills >= $10k, no PnL selection. Anonymous selected account, not a representative whale or guaranteed directional signal."
+    },
+    {
+      "id": "pilot_hyperliquid_sample_05",
+      "type": "hyperliquid_clearinghouse",
+      "enabled": true,
+      "source_group": "crypto_perpetual_position_sample",
+      "market_relevance": "medium",
+      "url": "https://api.hyperliquid.xyz/info",
+      "wallet": "0x654086857e1fad6dcf05cf6695cce51ea3984268",
+      "symbols": [
+        "BTC",
+        "ETH",
+        "SOL",
+        "HYPE",
+        "ZEC",
+        "XRP"
+      ],
+      "max_age_seconds": 300,
+      "min_interval_seconds": 1800,
+      "notes": "Frozen outcome-blind public sample: official Hyperliquid BTC/ETH/HYPE public trades over 45 seconds; lexicographically first eight addresses among 18 with fills >= $10k, no PnL selection. Anonymous selected account, not a representative whale or guaranteed directional signal."
+    },
+    {
+      "id": "pilot_hyperliquid_sample_06",
+      "type": "hyperliquid_clearinghouse",
+      "enabled": true,
+      "source_group": "crypto_perpetual_position_sample",
+      "market_relevance": "medium",
+      "url": "https://api.hyperliquid.xyz/info",
+      "wallet": "0x6fbc9c92d1430fa2a37f18959b2a1dbcee36102d",
+      "symbols": [
+        "BTC",
+        "ETH",
+        "SOL",
+        "HYPE",
+        "ZEC",
+        "XRP"
+      ],
+      "max_age_seconds": 300,
+      "min_interval_seconds": 1800,
+      "notes": "Frozen outcome-blind public sample: official Hyperliquid BTC/ETH/HYPE public trades over 45 seconds; lexicographically first eight addresses among 18 with fills >= $10k, no PnL selection. Anonymous selected account, not a representative whale or guaranteed directional signal."
+    },
+    {
+      "id": "pilot_hyperliquid_sample_07",
+      "type": "hyperliquid_clearinghouse",
+      "enabled": true,
+      "source_group": "crypto_perpetual_position_sample",
+      "market_relevance": "medium",
+      "url": "https://api.hyperliquid.xyz/info",
+      "wallet": "0x7b7f72a28fe109fa703eeed7984f2a8a68fedee2",
+      "symbols": [
+        "BTC",
+        "ETH",
+        "SOL",
+        "HYPE",
+        "ZEC",
+        "XRP"
+      ],
+      "max_age_seconds": 300,
+      "min_interval_seconds": 1800,
+      "notes": "Frozen outcome-blind public sample: official Hyperliquid BTC/ETH/HYPE public trades over 45 seconds; lexicographically first eight addresses among 18 with fills >= $10k, no PnL selection. Anonymous selected account, not a representative whale or guaranteed directional signal."
+    },
+    {
+      "id": "pilot_hyperliquid_sample_08",
+      "type": "hyperliquid_clearinghouse",
+      "enabled": true,
+      "source_group": "crypto_perpetual_position_sample",
+      "market_relevance": "medium",
+      "url": "https://api.hyperliquid.xyz/info",
+      "wallet": "0x862c6f0373ac129fc66a324b234943139ca10c92",
+      "symbols": [
+        "BTC",
+        "ETH",
+        "SOL",
+        "HYPE",
+        "ZEC",
+        "XRP"
+      ],
+      "max_age_seconds": 300,
+      "min_interval_seconds": 1800,
+      "notes": "Frozen outcome-blind public sample: official Hyperliquid BTC/ETH/HYPE public trades over 45 seconds; lexicographically first eight addresses among 18 with fills >= $10k, no PnL selection. Anonymous selected account, not a representative whale or guaranteed directional signal."
+    },
+    {
+      "id": "pilot_bybit_eth_native_wallet",
+      "type": "bybit_eth_native_wallet",
+      "enabled": true,
+      "source_group": "crypto_exchange_wallet_transfers",
+      "market_relevance": "medium",
+      "url": "https://eth.blockscout.com/api/v2/addresses/0x1Db92e2EeBC8E0c075a02BeA49a2935BcD2dFCF4/transactions",
+      "wallet": "0x1Db92e2EeBC8E0c075a02BeA49a2935BcD2dFCF4",
+      "page_size": 50,
+      "min_interval_seconds": 3600,
+      "notes": "Dated Bybit Hot Wallet 1 attribution from the 2024-12-12 Bybit PoR audit and Blockscout tag. Fetch one latest page only; preserve per-transaction clocks and ETH units. Transfers may be internal wallet movements and are not buys/sells or complete current-hour flow."
+    },
+    {
+      "id": "pilot_bybit_eth_erc20_wallet",
+      "type": "bybit_eth_erc20_wallet",
+      "enabled": true,
+      "source_group": "crypto_exchange_wallet_transfers",
+      "market_relevance": "medium",
+      "url": "https://eth.blockscout.com/api/v2/addresses/0x1Db92e2EeBC8E0c075a02BeA49a2935BcD2dFCF4/token-transfers?type=ERC-20",
+      "wallet": "0x1Db92e2EeBC8E0c075a02BeA49a2935BcD2dFCF4",
+      "page_size": 50,
+      "min_interval_seconds": 3600,
+      "notes": "Dated Bybit Hot Wallet 1 attribution from the 2024-12-12 Bybit PoR audit and Blockscout tag. Fetch one latest page only; deduplicate by transaction hash plus log index and preserve token units/decimals and clocks. Transfers may be internal wallet movements and are not buys/sells or complete current-hour flow."
+    },
+    {
+      "id": "pilot_bybit_btc_porrow_wallet",
+      "type": "bybit_btc_wallet",
+      "enabled": true,
+      "source_group": "crypto_exchange_wallet_transfers",
+      "market_relevance": "medium",
+      "url": "https://blockstream.info/api/address/{address}/txs",
+      "address": "bc1qa2eu6p5rl9255e3xz7fcgm6snn4wl5kdfh7zpt05qp5fad9dmsys0qjg0e",
+      "page_size": 25,
+      "min_interval_seconds": 3600,
+      "notes": "Dated Bybit PoR-attributed Bitcoin address. One latest Blockstream page only; include confirmed net satoshi flows per transaction, exclude pending records, and preserve block clocks. This single wallet is not total Bybit flow; transfers are not buys/sells or complete current-hour flow."
+    },
+    {
+      "id": "pilot_bybit_liquidations_60s",
+      "type": "bybit_liquidation_observer",
+      "enabled": true,
+      "source_group": "crypto_derivatives_liquidations",
+      "market_relevance": "medium",
+      "url": "wss://stream.bybit.com/v5/public/linear",
+      "symbols": [
+        "BTCUSDT",
+        "ETHUSDT"
+      ],
+      "observation_seconds": 60,
+      "max_events": 500,
+      "max_event_age_seconds": 60,
+      "ack_timeout_seconds": 10,
+      "min_interval_seconds": 3600,
+      "notes": "Bounded one-shot public WebSocket observer only; metrics describe its verified 60-second live window, never a full hour/day. Buy maps to long liquidation, Sell to short; bankruptcy price is not fill price. No daemon or raw event persistence."
+    }
+  ]
+}

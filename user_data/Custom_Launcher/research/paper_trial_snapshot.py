@@ -30,12 +30,23 @@ from user_data.strategies.paper_news_manual import decision_rows
 from user_data.strategies.paper_trial_level_orderbook import _recent_pressure
 
 
+GLOBAL_CONTEXT_SOURCE_LIMIT = 40
+GLOBAL_CONTEXT_METRIC_LIMITS = {
+    "deribit_options": 18,
+    "hyperliquid_clearinghouse": 7,
+    "bybit_eth_native_wallet": 5,
+    "bybit_eth_erc20_wallet": 5,
+    "bybit_btc_wallet": 5,
+}
+GLOBAL_CONTEXT_DEFAULT_METRIC_LIMIT = 20
+
+
 def read_json(path):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _web_headline_window():
-    path = ROOT/"user_data"/"Custom_Launcher"/"research"/"config"/"web_research_sources.json"
+    path = ROOT/"user_data"/"Custom_Launcher"/"collectors"/"context"/"config"/"web_research_sources.json"
     config = read_json(path)
     if not isinstance(config, dict):
         raise ValueError(f"Web research config must be an object: {path}")
@@ -67,8 +78,8 @@ def source_snapshot(now):
         raise ValueError("Source snapshot clock must be timezone-aware")
     now = now.astimezone(timezone.utc)
     web_window, web_window_seconds = _web_headline_window()
-    for key, folder in (("news","research_news_data/news"),("web","research_news_data/web"),
-                        ("global","research_news_data/global_context"),("orderbook","orderbook_data/live")):
+    for key, folder in (("news","collector_data/news"),("web","collector_data/web"),
+                        ("global","collector_data/global_context"),("orderbook","collector_data/orderbook")):
         path = ROOT/"user_data"/folder/"collector_status.json"
         if not path.is_file():
             output[key] = {"status":"missing"}; continue
@@ -108,15 +119,54 @@ def source_snapshot(now):
                     titles[title] = entry
                     headlines.append(entry)
             elif key=="global":
-                sources=con.execute("SELECT source_id,source_group,enabled,url,last_success_at,last_failure_at,last_error FROM context_sources ORDER BY source_id LIMIT 25").fetchall()
+                source_count=int(con.execute("SELECT COUNT(*) FROM context_sources").fetchone()[0])
+                sources=con.execute(
+                    "SELECT source_id,source_group,source_type,enabled,url,last_success_at,last_failure_at,last_error,last_notes "
+                    "FROM context_sources ORDER BY source_id LIMIT ?",
+                    (GLOBAL_CONTEXT_SOURCE_LIMIT,),
+                ).fetchall()
                 output["global"]["sources"]=[]
+                output["global"]["source_count"]=source_count
+                output["global"]["source_limit"]=GLOBAL_CONTEXT_SOURCE_LIMIT
+                output["global"]["sources_truncated"]=source_count>len(sources)
                 for source in sources:
                     tick=con.execute("SELECT ts,source_ts,metric_key,value,unit,notes FROM global_context_ticks WHERE source_id=? ORDER BY ts DESC LIMIT 1",(source["source_id"],)).fetchone()
-                    metrics=con.execute("SELECT t.ts,t.source_ts,t.metric_key,t.value,t.unit,t.notes FROM global_context_ticks t JOIN (SELECT metric_key,MAX(ts) AS ts FROM global_context_ticks WHERE source_id=? GROUP BY metric_key) latest ON t.metric_key=latest.metric_key AND t.ts=latest.ts WHERE t.source_id=? ORDER BY t.metric_key LIMIT 20",(source["source_id"],source["source_id"])).fetchall() if source["enabled"] else []
+                    metric_limit=GLOBAL_CONTEXT_METRIC_LIMITS.get(
+                        str(source["source_type"] or ""), GLOBAL_CONTEXT_DEFAULT_METRIC_LIMIT
+                    )
+                    metric_count=0
+                    metrics=[]
+                    if source["enabled"]:
+                        metric_count=int(con.execute(
+                            "SELECT COUNT(DISTINCT metric_key) FROM global_context_ticks WHERE source_id=?",
+                            (source["source_id"],),
+                        ).fetchone()[0])
+                        metrics=con.execute(
+                            "WITH latest AS ("
+                            "SELECT metric_key,MAX(id) AS id FROM global_context_ticks "
+                            "WHERE source_id=? GROUP BY metric_key) "
+                            "SELECT t.ts,t.source_ts,t.metric_key,t.value,t.unit,t.notes "
+                            "FROM global_context_ticks t JOIN latest ON latest.id=t.id "
+                            "WHERE t.source_id=? "
+                            "ORDER BY COALESCE(NULLIF(t.source_ts,''),t.ts) DESC,t.ts DESC,t.metric_key "
+                            "LIMIT ?",
+                            (source["source_id"],source["source_id"],metric_limit),
+                        ).fetchall()
+                    latest_metrics=[]
+                    for metric in metrics:
+                        item=dict(metric)
+                        notes=item["notes"]
+                        item["notes_truncated"]=notes is not None and len(notes)>500
+                        if item["notes_truncated"]:
+                            item["notes"]=notes[:500]
+                        latest_metrics.append(item)
                     output["global"]["sources"].append({**dict(source),
                         "last_observation_at":None if tick is None else tick["source_ts"],
                         "last_collected_at":None if tick is None else tick["ts"],
-                        "latest_metrics":[dict(metric) for metric in metrics],"metric_limit":20})
+                        "latest_metrics":latest_metrics,
+                        "metric_count":metric_count,
+                        "metric_limit":metric_limit,
+                        "metrics_truncated":metric_count>len(metrics)})
     output["recent_unique_headlines"] = headlines[:20]
     output["book_pressure"] = {pair:{"imbalance":value,"coverage":coverage} for pair in
         ("BTC/USDT:USDT","ETH/USDT:USDT","SOL/USDT:USDT","BNB/USDT:USDT","DOGE/USDT:USDT","1000PEPE/USDT:USDT")

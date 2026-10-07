@@ -20,7 +20,7 @@ def _write_article_source(root, key, folder, articles):
 
 def test_source_snapshot_uses_web_cadence_and_keeps_publication_age_separate(monkeypatch,tmp_path):
     now=datetime(2026,10,5,12,tzinfo=timezone.utc)
-    config_dir=tmp_path/"user_data"/"Custom_Launcher"/"research"/"config"
+    config_dir=tmp_path/"user_data"/"Custom_Launcher"/"collectors"/"context"/"config"
     config_dir.mkdir(parents=True)
     (config_dir/"web_research_sources.json").write_text(json.dumps({"poll_interval_seconds":21600}),encoding="utf-8")
     five_hours_ago=(now-timedelta(hours=5)).isoformat()
@@ -36,8 +36,8 @@ def test_source_snapshot_uses_web_cadence_and_keeps_publication_age_separate(mon
             (now-timedelta(hours=5,minutes=minutes)).isoformat(),"web"))
     web_articles.append(("web beyond cadence","https://web/7h",None,
         (now-timedelta(hours=7)).isoformat(),(now-timedelta(hours=7)).isoformat(),"web"))
-    _write_article_source(tmp_path,"web","research_news_data/web",web_articles)
-    _write_article_source(tmp_path,"news","research_news_data/news",[("news collected 5h ago","https://news/5h",None,
+    _write_article_source(tmp_path,"web","collector_data/web",web_articles)
+    _write_article_source(tmp_path,"news","collector_data/news",[("news collected 5h ago","https://news/5h",None,
         (now-timedelta(hours=5)).isoformat(),five_hours_ago,"news")])
     monkeypatch.setattr(snapshot,"ROOT",tmp_path)
     monkeypatch.setattr(snapshot,"_recent_pressure",lambda *_:(None,0))
@@ -65,7 +65,7 @@ def test_source_snapshot_uses_web_cadence_and_keeps_publication_age_separate(mon
     ({"poll_interval_seconds":"21600"},"poll_interval_seconds"),
 ])
 def test_source_snapshot_rejects_invalid_web_cadence_config(monkeypatch,tmp_path,config,message):
-    config_dir=tmp_path/"user_data"/"Custom_Launcher"/"research"/"config"
+    config_dir=tmp_path/"user_data"/"Custom_Launcher"/"collectors"/"context"/"config"
     config_dir.mkdir(parents=True)
     (config_dir/"web_research_sources.json").write_text(json.dumps(config),encoding="utf-8")
     monkeypatch.setattr(snapshot,"ROOT",tmp_path)
@@ -77,6 +77,64 @@ def test_source_snapshot_requires_web_cadence_config(monkeypatch,tmp_path):
     monkeypatch.setattr(snapshot,"ROOT",tmp_path)
     with pytest.raises(FileNotFoundError):
         snapshot.source_snapshot(datetime(2026,10,5,12,tzinfo=timezone.utc))
+
+
+def test_source_snapshot_includes_pilot_sources_and_bounds_latest_wallet_facts(monkeypatch,tmp_path):
+    now=datetime(2026,10,5,12,tzinfo=timezone.utc)
+    config_dir=tmp_path/"user_data"/"Custom_Launcher"/"collectors"/"context"/"config"
+    config_dir.mkdir(parents=True)
+    (config_dir/"web_research_sources.json").write_text(json.dumps({"poll_interval_seconds":21600}),encoding="utf-8")
+    data_dir=tmp_path/"user_data"/"collector_data"/"global_context"
+    data_dir.mkdir(parents=True)
+    db_path=data_dir/"global_context.sqlite"
+    pilot_ids=[f"pilot_source_{index:02d}" for index in range(16)]+["pilot_bybit_btc_porrow_wallet"]
+    source_rows=[(f"legacy_source_{index:02d}","legacy","legacy_type",1) for index in range(15)]
+    source_rows.extend((source_id,"crypto_exchange_wallet_transfers",
+        "bybit_btc_wallet" if source_id.endswith("porrow_wallet") else "pilot_type",1)
+        for source_id in pilot_ids)
+    wallet_id="pilot_bybit_btc_porrow_wallet"
+    source_note="Selected-sample and malformed-row caveats: "+("x"*520)+" SOURCE_NOTE_END"
+    metric_note="One confirmed wallet page only; transfers are not buys/sells. "+("x"*520)+" METRIC_NOTE_END"
+    with snapshot.sqlite3.connect(db_path) as con:
+        con.execute("CREATE TABLE context_sources (source_id TEXT,source_group TEXT,source_type TEXT,enabled INTEGER,url TEXT,last_success_at TEXT,last_failure_at TEXT,last_error TEXT,last_notes TEXT)")
+        con.execute("CREATE TABLE global_context_ticks (id INTEGER PRIMARY KEY,ts TEXT,source_ts TEXT,source_id TEXT,metric_key TEXT,value REAL,unit TEXT,notes TEXT)")
+        con.executemany(
+            "INSERT INTO context_sources(source_id,source_group,source_type,enabled,url,last_success_at,last_failure_at,last_error,last_notes) "
+            "VALUES (?, ?, ?, ?, NULL, NULL, NULL, NULL, ?)",
+            [(*row,source_note if row[0]==wallet_id else None) for row in source_rows],
+        )
+        for index in range(6):
+            con.execute("INSERT INTO global_context_ticks(ts,source_ts,source_id,metric_key,value,unit,notes) VALUES (?,?,?,?,?,?,?)",
+                (now.isoformat(),(now-timedelta(days=6-index)).isoformat(),wallet_id,
+                 f"bybit_btc_wallet_net_confirmed_flow_sats_tx{index}",float(index),"satoshi","One confirmed wallet page only; transfers are not buys/sells."))
+        con.execute("INSERT INTO global_context_ticks(ts,source_ts,source_id,metric_key,value,unit,notes) VALUES (?,?,?,?,?,?,?)",
+            (now.isoformat(),(now-timedelta(hours=1)).isoformat(),wallet_id,
+             "bybit_btc_confirmed_parsed_page_transaction_count",6.0,"transactions",metric_note))
+    (data_dir/"collector_status.json").write_text(json.dumps({"status":"running","db_path":str(db_path)}),encoding="utf-8")
+    monkeypatch.setattr(snapshot,"ROOT",tmp_path)
+    monkeypatch.setattr(snapshot,"_recent_pressure",lambda *_:(None,0))
+
+    result=snapshot.source_snapshot(now)["global"]
+    sources={row["source_id"]:row for row in result["sources"]}
+    assert result["source_count"]==32
+    assert result["source_limit"]==40
+    assert not result["sources_truncated"]
+    assert set(pilot_ids)<=set(sources)
+    wallet=sources["pilot_bybit_btc_porrow_wallet"]
+    assert wallet["metric_count"]==7
+    assert wallet["metric_limit"]==5
+    assert wallet["metrics_truncated"]
+    assert wallet["last_notes"]==source_note
+    metrics={row["metric_key"]:row for row in wallet["latest_metrics"]}
+    assert "bybit_btc_wallet_net_confirmed_flow_sats_tx5" in metrics
+    assert "bybit_btc_wallet_net_confirmed_flow_sats_tx0" not in metrics
+    assert metrics["bybit_btc_confirmed_parsed_page_transaction_count"]["source_ts"]
+    transaction_metric=metrics["bybit_btc_confirmed_parsed_page_transaction_count"]
+    assert transaction_metric["notes"]==metric_note[:500]
+    assert transaction_metric["notes_truncated"]
+    assert "METRIC_NOTE_END" not in transaction_metric["notes"]
+    assert not metrics["bybit_btc_wallet_net_confirmed_flow_sats_tx5"]["notes_truncated"]
+    assert all("last_notes" not in metric for metric in metrics.values())
 
 
 def test_higher_snapshot_excludes_open_candles_and_bounds_requests(monkeypatch):

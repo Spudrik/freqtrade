@@ -10,7 +10,7 @@ from typing import Any
 import pandas as pd
 
 
-APP_DIR = Path(__file__).resolve().parents[1]
+APP_DIR = Path(__file__).resolve().parents[2]
 USER_DATA_DIR = APP_DIR.parent
 DEFAULT_RAW_DIR = Path("D:/FreqTradeStuffLargeData/orderbook_data/historical_bybit/spot_raw")
 DEFAULT_FEATURE_PATH = USER_DATA_DIR / "orderbook_data" / "historical_bybit" / "features" / "orderbook_trader_state_1h_latest.parquet"

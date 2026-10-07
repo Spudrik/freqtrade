@@ -13,19 +13,31 @@ def normalize_freqtrade_pair_to_binance_symbol(pair: str) -> str | None:
     return pair_to_symbol(pair, MARKET_PROFILES["binance_usdm_futures"])
 
 
-def parse_book_side(levels: Any, *, reverse: bool = False) -> list[tuple[float, float]]:
+def parse_book_side(levels: Any, *, reverse: bool = False, strict: bool = False) -> list[tuple[float, float]]:
     parsed: list[tuple[float, float]] = []
     if not isinstance(levels, list):
+        if strict:
+            raise ValueError("Orderbook side must be a list")
         return parsed
     for level in levels:
-        if not isinstance(level, (list, tuple)) or len(level) < 2:
+        if not isinstance(level, (list, tuple)) or len(level) != 2:
+            if strict:
+                raise ValueError("Orderbook level must contain exactly price and quantity")
             continue
         try:
             price = float(level[0])
             qty = float(level[1])
-        except Exception:
+        except (TypeError, ValueError, OverflowError) as exc:
+            if strict:
+                raise ValueError("Orderbook price and quantity must be numeric") from exc
             continue
+        if not math.isfinite(price) or not math.isfinite(qty):
+            if strict:
+                raise ValueError("Orderbook price and quantity must be finite")
+            return []
         if price <= 0 or qty < 0:
+            if strict:
+                raise ValueError("Orderbook price must be positive and quantity nonnegative")
             continue
         parsed.append((price, qty))
     parsed.sort(key=lambda item: item[0], reverse=reverse)
@@ -196,11 +208,18 @@ def _liquidity_zone_candidates(
 
 def calculate_orderbook_metrics(pair: str, symbol: str, bids: list[tuple[float, float]], asks: list[tuple[float, float]], config: dict[str, Any], message_count_interval: int) -> dict[str, Any]:
     depth_levels = int(config.get("depth_levels", 20))
-    book_valid = bool(bids and asks)
+    book_valid = bool(
+        bids
+        and asks
+        and all(math.isfinite(price) and math.isfinite(qty) and price > 0 and qty >= 0 for price, qty in (*bids, *asks))
+        and all(bids[index][0] >= bids[index + 1][0] for index in range(len(bids) - 1))
+        and all(asks[index][0] <= asks[index + 1][0] for index in range(len(asks) - 1))
+        and asks[0][0] > bids[0][0]
+    )
     output: dict[str, Any] = {
         "pair": pair,
         "symbol": symbol,
-        "book_valid": int(book_valid),
+        "book_valid": 0,
         "depth_levels": depth_levels,
         "message_count_interval": int(message_count_interval),
     }
@@ -209,9 +228,6 @@ def calculate_orderbook_metrics(pair: str, symbol: str, bids: list[tuple[float, 
 
     best_bid, top_bid_qty = bids[0]
     best_ask, top_ask_qty = asks[0]
-    if best_bid <= 0 or best_ask <= 0 or best_ask < best_bid:
-        return output
-
     mid_price = (best_bid + best_ask) / 2.0
     spread_bps = (best_ask - best_bid) / mid_price * 10000.0 if mid_price else None
     microprice = None
@@ -289,60 +305,69 @@ def calculate_orderbook_metrics(pair: str, symbol: str, bids: list[tuple[float, 
     pressure_threshold = float(config.get("pressure_threshold", 0.35))
     extreme_threshold = float(config.get("extreme_pressure_threshold", 0.60))
 
-    output.update(
-        {
-            "best_bid": best_bid,
-            "best_ask": best_ask,
-            "mid_price": mid_price,
-            "spread_bps": spread_bps,
-            "microprice": microprice,
-            "microprice_offset_bps": microprice_offset_bps,
-            "bid_notional_top1": top1_bid,
-            "ask_notional_top1": top1_ask,
-            "imbalance_top1": _imbalance(top1_bid, top1_ask),
-            "bid_notional_top5": top5_bid,
-            "ask_notional_top5": top5_ask,
-            "imbalance_top5": _imbalance(top5_bid, top5_ask),
-            "bid_notional_top10": top10_bid,
-            "ask_notional_top10": top10_ask,
-            "imbalance_top10": _imbalance(top10_bid, top10_ask),
-            "bid_notional_top20": top20_bid,
-            "ask_notional_top20": top20_ask,
-            "imbalance_top20": imbalance_top20,
-            "bid_liquidity_5bps": band_values.get(5, (None, None, None))[0],
-            "ask_liquidity_5bps": band_values.get(5, (None, None, None))[1],
-            "imbalance_5bps": band_values.get(5, (None, None, None))[2],
-            "bid_liquidity_10bps": band_values.get(10, (None, None, None))[0],
-            "ask_liquidity_10bps": band_values.get(10, (None, None, None))[1],
-            "imbalance_10bps": band_values.get(10, (None, None, None))[2],
-            "bid_liquidity_25bps": band_values.get(25, (None, None, None))[0],
-            "ask_liquidity_25bps": band_values.get(25, (None, None, None))[1],
-            "imbalance_25bps": band_values.get(25, (None, None, None))[2],
-            "bid_liquidity_50bps": band_values.get(50, (None, None, None))[0],
-            "ask_liquidity_50bps": band_values.get(50, (None, None, None))[1],
-            "imbalance_50bps": band_values.get(50, (None, None, None))[2],
-            "nearest_bid_wall_price": nearest_bid["price"],
-            "nearest_bid_wall_distance_bps": nearest_bid["distance_bps"],
-            "nearest_bid_wall_notional": nearest_bid["notional"],
-            "nearest_bid_wall_score": nearest_bid["score"],
-            "nearest_ask_wall_price": nearest_ask["price"],
-            "nearest_ask_wall_distance_bps": nearest_ask["distance_bps"],
-            "nearest_ask_wall_notional": nearest_ask["notional"],
-            "nearest_ask_wall_score": nearest_ask["score"],
-            "strongest_bid_wall_price_50bps": strongest_bid["price"],
-            "strongest_bid_wall_score_50bps": strongest_bid["score"],
-            "strongest_ask_wall_price_50bps": strongest_ask["price"],
-            "strongest_ask_wall_score_50bps": strongest_ask["score"],
-            "bid_wall_candidates_json": bid_wall_candidates,
-            "ask_wall_candidates_json": ask_wall_candidates,
-            "bid_liquidity_zones_json": bid_liquidity_zones,
-            "ask_liquidity_zones_json": ask_liquidity_zones,
-            "strong_bid_pressure": int(bool(imbalance_top20 is not None and imbalance_top20 >= pressure_threshold)),
-            "strong_ask_pressure": int(bool(imbalance_top20 is not None and imbalance_top20 <= -pressure_threshold)),
-            "extreme_bid_pressure": int(bool(imbalance_top20 is not None and imbalance_top20 >= extreme_threshold)),
-            "extreme_ask_pressure": int(bool(imbalance_top20 is not None and imbalance_top20 <= -extreme_threshold)),
-        }
-    )
+    derived = {
+        "best_bid": best_bid,
+        "best_ask": best_ask,
+        "mid_price": mid_price,
+        "spread_bps": spread_bps,
+        "microprice": microprice,
+        "microprice_offset_bps": microprice_offset_bps,
+        "bid_notional_top1": top1_bid,
+        "ask_notional_top1": top1_ask,
+        "imbalance_top1": _imbalance(top1_bid, top1_ask),
+        "bid_notional_top5": top5_bid,
+        "ask_notional_top5": top5_ask,
+        "imbalance_top5": _imbalance(top5_bid, top5_ask),
+        "bid_notional_top10": top10_bid,
+        "ask_notional_top10": top10_ask,
+        "imbalance_top10": _imbalance(top10_bid, top10_ask),
+        "bid_notional_top20": top20_bid,
+        "ask_notional_top20": top20_ask,
+        "imbalance_top20": imbalance_top20,
+        "bid_liquidity_5bps": band_values.get(5, (None, None, None))[0],
+        "ask_liquidity_5bps": band_values.get(5, (None, None, None))[1],
+        "imbalance_5bps": band_values.get(5, (None, None, None))[2],
+        "bid_liquidity_10bps": band_values.get(10, (None, None, None))[0],
+        "ask_liquidity_10bps": band_values.get(10, (None, None, None))[1],
+        "imbalance_10bps": band_values.get(10, (None, None, None))[2],
+        "bid_liquidity_25bps": band_values.get(25, (None, None, None))[0],
+        "ask_liquidity_25bps": band_values.get(25, (None, None, None))[1],
+        "imbalance_25bps": band_values.get(25, (None, None, None))[2],
+        "bid_liquidity_50bps": band_values.get(50, (None, None, None))[0],
+        "ask_liquidity_50bps": band_values.get(50, (None, None, None))[1],
+        "imbalance_50bps": band_values.get(50, (None, None, None))[2],
+        "nearest_bid_wall_price": nearest_bid["price"],
+        "nearest_bid_wall_distance_bps": nearest_bid["distance_bps"],
+        "nearest_bid_wall_notional": nearest_bid["notional"],
+        "nearest_bid_wall_score": nearest_bid["score"],
+        "nearest_ask_wall_price": nearest_ask["price"],
+        "nearest_ask_wall_distance_bps": nearest_ask["distance_bps"],
+        "nearest_ask_wall_notional": nearest_ask["notional"],
+        "nearest_ask_wall_score": nearest_ask["score"],
+        "strongest_bid_wall_price_50bps": strongest_bid["price"],
+        "strongest_bid_wall_score_50bps": strongest_bid["score"],
+        "strongest_ask_wall_price_50bps": strongest_ask["price"],
+        "strongest_ask_wall_score_50bps": strongest_ask["score"],
+        "bid_wall_candidates_json": bid_wall_candidates,
+        "ask_wall_candidates_json": ask_wall_candidates,
+        "bid_liquidity_zones_json": bid_liquidity_zones,
+        "ask_liquidity_zones_json": ask_liquidity_zones,
+        "strong_bid_pressure": int(bool(imbalance_top20 is not None and imbalance_top20 >= pressure_threshold)),
+        "strong_ask_pressure": int(bool(imbalance_top20 is not None and imbalance_top20 <= -pressure_threshold)),
+        "extreme_bid_pressure": int(bool(imbalance_top20 is not None and imbalance_top20 >= extreme_threshold)),
+        "extreme_ask_pressure": int(bool(imbalance_top20 is not None and imbalance_top20 <= -extreme_threshold)),
+    }
+    numeric_values = [value for value in derived.values() if isinstance(value, (int, float))]
+    for value in derived.values():
+        if isinstance(value, list):
+            numeric_values.extend(
+                number for record in value for number in record.values()
+                if isinstance(number, (int, float))
+            )
+    if not all(math.isfinite(value) for value in numeric_values):
+        return output
+    output.update(derived)
+    output["book_valid"] = 1
     return output
 
 

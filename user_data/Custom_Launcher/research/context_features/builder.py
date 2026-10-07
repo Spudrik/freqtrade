@@ -428,14 +428,15 @@ class BuildSummary:
 
 def default_paths(app_dir: Path | None = None) -> ContextFeaturePaths:
     resolved_app_dir = Path(app_dir) if app_dir else Path(__file__).resolve().parents[2]
-    data_root = (resolved_app_dir / "../research_news_data").resolve()
-    feature_root = data_root / "context_features"
     user_data_dir = resolved_app_dir.parent
+    data_root = user_data_dir / "research_news_data"
+    collector_root = user_data_dir / "collector_data"
+    feature_root = data_root / "context_features"
     return ContextFeaturePaths(
         app_dir=resolved_app_dir,
-        news_db=data_root / "news" / "news_events.sqlite",
-        web_db=data_root / "web" / "web_events.sqlite",
-        global_db=data_root / "global_context" / "global_context.sqlite",
+        news_db=collector_root / "news" / "news_events.sqlite",
+        web_db=collector_root / "web" / "web_events.sqlite",
+        global_db=collector_root / "global_context" / "global_context.sqlite",
         gdelt_db=data_root / "gdelt" / "gdelt_context.sqlite",
         feature_db=feature_root / "context_features.sqlite",
         export_dir=feature_root / "exports",

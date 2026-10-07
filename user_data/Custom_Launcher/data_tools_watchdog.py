@@ -8,10 +8,13 @@ from pathlib import Path
 
 
 APP_DIR = Path(__file__).resolve().parent
+REPO_ROOT = APP_DIR.parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
-from launcher_v2.services.data_tools_watchdog_service import DataToolsWatchdogService, SERVICE_KEYS
+from launcher_v2.services.data_tools_watchdog_service import DataToolsWatchdogService
 
 
 def parse_args() -> argparse.Namespace:
@@ -20,8 +23,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--loop", action="store_true", help="Run continuously in this process.")
     parser.add_argument("--interval-seconds", type=int, default=300, help="Loop sleep interval when --loop is used.")
     parser.add_argument("--preset", default="", help="Path to LauncherV2 presets.json.")
-    parser.add_argument("--heartbeat-stale-minutes", default="10", help="Heartbeat age that counts as stale.")
-    parser.add_argument("--services", default=",".join(SERVICE_KEYS), help="Comma-separated service keys to monitor.")
+    parser.add_argument("--heartbeat-stale-minutes", default=None, help="Heartbeat age that counts as stale.")
+    parser.add_argument("--services", default=None, help="Comma-separated service keys to monitor; an empty value checks none.")
     parser.add_argument("--no-restart-dead", action="store_true", help="Warn only; do not restart dead processes.")
     return parser.parse_args()
 
@@ -29,11 +32,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     service = DataToolsWatchdogService(APP_DIR)
-    state = {
-        "heartbeat_stale_minutes": args.heartbeat_stale_minutes,
-        "services": [part.strip() for part in str(args.services or "").split(",") if part.strip()],
-        "restart_dead": not args.no_restart_dead,
-    }
+    state = _state_from_args(args)
     preset = args.preset or None
     if args.loop and not args.once:
         while True:
@@ -43,6 +42,17 @@ def main() -> int:
     payload = service.run_once(state, preset_path=preset)
     print(json.dumps(_summary(payload), sort_keys=False))
     return 0
+
+
+def _state_from_args(args: argparse.Namespace) -> dict:
+    state = {}
+    if args.heartbeat_stale_minutes is not None:
+        state["heartbeat_stale_minutes"] = args.heartbeat_stale_minutes
+    if args.services is not None:
+        state["services"] = [part.strip() for part in str(args.services).split(",") if part.strip()]
+    if args.no_restart_dead:
+        state["restart_dead"] = False
+    return state
 
 
 def _summary(payload: dict) -> dict:

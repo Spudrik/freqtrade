@@ -2,15 +2,23 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import html
 import json
 import logging
 import os
+import re
 import sqlite3
+import ssl
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 from urllib import error as urllib_error
 from urllib import parse as urllib_parse
 from urllib import request as urllib_request
+
+from user_data.Custom_Launcher.collector_runtime import CollectorBusyError, lock_resources, pid_create_time
+
+import certifi
 
 from .news_research_store import (
     apply_article_tags,
@@ -36,6 +44,7 @@ from .research_collector_common import (
     load_json,
     normalize_text,
     parse_rss_items,
+    resolve_collector_paths,
     save_json,
     save_raw_snapshot,
     sleep_with_stop,
@@ -47,20 +56,158 @@ from .research_collector_common import (
 
 
 THIS_DIR = Path(__file__).resolve().parent
-DEFAULT_CONFIG_PATH = THIS_DIR.parent / "config" / "news_research_sources.json"
-DEFAULT_DATA_DIR = THIS_DIR.parents[2] / "research_news_data" / "news"
-DEFAULT_DB_PATH = DEFAULT_DATA_DIR / "news_events.sqlite"
+DEFAULT_CONFIG_PATH = THIS_DIR / "config" / "web_research_sources.json"
+DEFAULT_DATA_DIR = THIS_DIR.parents[2] / "collector_data" / "web"
+DEFAULT_DB_PATH = DEFAULT_DATA_DIR / "web_events.sqlite"
 DEFAULT_STATUS_PATH = DEFAULT_DATA_DIR / "collector_status.json"
 DEFAULT_PID_PATH = DEFAULT_DATA_DIR / "collector.pid"
 DEFAULT_STOP_PATH = DEFAULT_DATA_DIR / "collector.stop"
-DEFAULT_LOG_PATH = DEFAULT_DATA_DIR / "logs" / "news_collector.log"
+DEFAULT_LOG_PATH = DEFAULT_DATA_DIR / "logs" / "web_collector.log"
+HTTPS_SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
+
+STARTER_CONFIG: dict[str, Any] = {
+    "version": 1,
+    "poll_interval_seconds": 21600,
+    "request_timeout_seconds": 20,
+    "max_items_per_source": 60,
+    "store_raw_payloads": True,
+    "user_agent": "FreQ-WebResearchCollector/1.0",
+    "sources": [
+        {
+            "id": "binance_support_announcements",
+            "type": "html_links",
+            "enabled": True,
+            "source_group": "exchange_announcements",
+            "region": "global",
+            "topic": "binance_announcements",
+            "market_relevance": "high",
+            "url": "https://www.binance.com/en/support/announcement",
+            "include_url_substrings": ["/support/announcement/"],
+            "exclude_url_substrings": ["/support/announcement?", "#"],
+            "include_text_substrings": ["list", "delist", "launchpool", "futures", "margin", "airdrop", "earn", "support"],
+            "exclude_text_substrings": ["announcement center", "view more"],
+            "min_text_length": 18,
+        },
+        {
+            "id": "bybit_announcements",
+            "type": "html_links",
+            "enabled": True,
+            "source_group": "exchange_announcements",
+            "region": "global",
+            "topic": "bybit_announcements",
+            "market_relevance": "high",
+            "url": "https://announcements.bybit.com/en/",
+            "include_url_substrings": ["/en/article/"],
+            "exclude_url_substrings": ["#"],
+            "include_text_substrings": ["list", "delist", "launch", "upgrade", "support", "futures", "margin", "staking"],
+            "exclude_text_substrings": ["announcement"],
+            "min_text_length": 18,
+        },
+        {
+            "id": "kraken_asset_listings",
+            "type": "html_links",
+            "enabled": True,
+            "source_group": "exchange_announcements",
+            "region": "global",
+            "topic": "kraken_asset_listings",
+            "market_relevance": "high",
+            "url": "https://blog.kraken.com/product/asset-listings",
+            "include_url_substrings": ["/product/asset-listings/"],
+            "exclude_url_substrings": ["#"],
+            "include_text_substrings": ["available for trading", "listing", "trade"],
+            "exclude_text_substrings": ["asset listings"],
+            "min_text_length": 18,
+        },
+        {
+            "id": "coinbase_blog",
+            "type": "html_links",
+            "enabled": True,
+            "source_group": "exchange_announcements",
+            "region": "us",
+            "topic": "coinbase_blog",
+            "market_relevance": "medium",
+            "url": "https://www.coinbase.com/blog",
+            "include_url_substrings": ["/blog/"],
+            "exclude_url_substrings": ["#", "?"],
+            "include_text_substrings": ["listing", "perpetual", "futures", "staking", "institutional", "usdc", "base", "launch"],
+            "exclude_text_substrings": ["blog"],
+            "min_text_length": 18,
+        },
+        {
+            "id": "ethereum_foundation_blog",
+            "type": "html_links",
+            "enabled": True,
+            "source_group": "protocol_foundations",
+            "region": "global",
+            "topic": "ethereum_foundation",
+            "market_relevance": "medium",
+            "url": "https://blog.ethereum.org/",
+            "include_url_substrings": ["/20"],
+            "exclude_url_substrings": ["#"],
+            "include_text_substrings": ["ethereum", "staking", "defi", "protocol", "security", "upgrade"],
+            "exclude_text_substrings": ["subscribe"],
+            "min_text_length": 18,
+        },
+        {
+            "id": "uniswap_blog",
+            "type": "html_links",
+            "enabled": True,
+            "source_group": "defi_protocols",
+            "region": "global",
+            "topic": "uniswap",
+            "market_relevance": "medium",
+            "url": "https://blog.uniswap.org/",
+            "include_url_substrings": ["/"],
+            "exclude_url_substrings": ["#", "/tag/", "/author/", "/cdn-cgi/"],
+            "include_text_substrings": ["uniswap", "governance", "v4", "api", "liquidity", "defi", "launch"],
+            "exclude_text_substrings": ["newsletter", "subscribe"],
+            "min_text_length": 18,
+        },
+        {
+            "id": "chainlink_blog",
+            "type": "html_links",
+            "enabled": True,
+            "source_group": "infrastructure",
+            "region": "global",
+            "topic": "chainlink",
+            "market_relevance": "medium",
+            "url": "https://blog.chain.link/",
+            "include_url_substrings": ["/"],
+            "exclude_url_substrings": ["#", "/tag/", "/author/", "/category/"],
+            "include_text_substrings": ["chainlink", "ccip", "oracle", "stablecoin", "runtime", "defi"],
+            "exclude_text_substrings": ["subscribe", "newsletter"],
+            "min_text_length": 18,
+        },
+        {
+            "id": "coindesk_markets_rss",
+            "type": "rss",
+            "enabled": True,
+            "source_group": "crypto_media",
+            "region": "global",
+            "topic": "markets",
+            "market_relevance": "high",
+            "url": "https://www.coindesk.com/arc/outboundfeeds/rss/",
+        },
+        {
+            "id": "cointelegraph_rss",
+            "type": "rss",
+            "enabled": True,
+            "source_group": "crypto_media",
+            "region": "global",
+            "topic": "news",
+            "market_relevance": "high",
+            "url": "https://cointelegraph.com/rss.xml",
+            "ssl_ca_bundle": "certifi",
+        },
+    ],
+}
 
 def ensure_runtime_dirs(data_dir: Path) -> dict[str, Path]:
     raw_root = data_dir / "raw"
     dirs = {
         "data": data_dir,
+        "html": raw_root / "html",
         "rss": raw_root / "rss",
-        "gdelt": raw_root / "gdelt",
         "api": raw_root / "api",
         "manual": raw_root / "manual",
         "logs": data_dir / "logs",
@@ -77,31 +224,28 @@ def ensure_config(config_path: Path) -> None:
         return
     if DEFAULT_CONFIG_PATH.exists():
         config_path.write_text(DEFAULT_CONFIG_PATH.read_text(encoding="utf-8"), encoding="utf-8")
-    else:
-        save_json(
-            config_path,
-            {
-                "version": 1,
-                "poll_interval_seconds": 900,
-                "request_timeout_seconds": 20,
-                "max_items_per_source": 100,
-                "store_raw_payloads": True,
-                "user_agent": "FreQ-NewsResearchCollector/1.0",
-                "sources": [],
-            },
-        )
+        return
+    save_json(config_path, STARTER_CONFIG)
 
 
-def open_url(url: str, timeout_seconds: int, user_agent: str) -> bytes:
-    request = urllib_request.Request(url, headers={"User-Agent": user_agent}, method="GET")
-    with urllib_request.urlopen(request, timeout=timeout_seconds) as response:
+def open_url(url: str, timeout_seconds: int, user_agent: str, ssl_ca_bundle: str = "") -> bytes:
+    request = urllib_request.Request(
+        url,
+        headers={
+            "User-Agent": user_agent,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.8",
+        },
+        method="GET",
+    )
+    parsed = urllib_parse.urlparse(url)
+    context = HTTPS_SSL_CONTEXT if parsed.scheme.lower() == "https" and str(ssl_ca_bundle).lower() == "certifi" else None
+    with urllib_request.urlopen(request, timeout=timeout_seconds, context=context) as response:
         return response.read()
 
 
 def raw_snapshot_path(raw_dir: Path, source: dict[str, Any], suffix: str) -> Path:
-    source_type = slugify(source.get("type") or "api")
-    source_id = slugify(source.get("id") or "source")
-    return raw_dir / source_type / source_id / f"{utc_stamp()}{suffix}"
+    return raw_dir / slugify(source.get("id") or "source") / f"{utc_stamp()}{suffix}"
 
 
 def read_config(config_path: Path) -> dict[str, Any]:
@@ -110,17 +254,46 @@ def read_config(config_path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         return {}
     payload.setdefault("version", 1)
-    payload.setdefault("poll_interval_seconds", 900)
+    payload.setdefault("poll_interval_seconds", 21600)
     payload.setdefault("request_timeout_seconds", 20)
-    payload.setdefault("max_items_per_source", 100)
+    payload.setdefault("max_items_per_source", 60)
     payload.setdefault("store_raw_payloads", True)
-    payload.setdefault("user_agent", "FreQ-NewsResearchCollector/1.0")
+    payload.setdefault("user_agent", "FreQ-WebResearchCollector/1.0")
     payload.setdefault("sources", [])
     return payload
 
 
-def save_status_with_defaults(status_path: Path, payload: dict[str, Any]) -> None:
-    update_status(status_path, payload)
+class AnchorCollector(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._current_href: str | None = None
+        self._current_text: list[str] = []
+        self.links: list[dict[str, str]] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() != "a":
+            return
+        href = ""
+        for key, value in attrs:
+            if key.lower() == "href":
+                href = value or ""
+                break
+        self._current_href = href
+        self._current_text = []
+
+    def handle_data(self, data: str) -> None:
+        if self._current_href is not None:
+            self._current_text.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() != "a" or self._current_href is None:
+            return
+        text = re.sub(r"\s+", " ", "".join(self._current_text)).strip()
+        href = self._current_href.strip()
+        if href:
+            self.links.append({"href": href, "text": html.unescape(text)})
+        self._current_href = None
+        self._current_text = []
 
 
 def normalize_base(source: dict[str, Any], source_type: str, collected_at: str, raw_file_path: str, raw_payload: Any) -> dict[str, Any]:
@@ -147,6 +320,7 @@ def normalize_rss_item(source: dict[str, Any], item: dict[str, Any], collected_a
     assets = detect_assets(text)
     article = normalize_base(source, "rss", collected_at, raw_file_path, item)
     title = str(item.get("title") or "Untitled")
+    categories = [str(tag) for tag in item.get("categories") or [] if str(tag).strip()]
     article.update(
         {
             "canonical_url": str(item.get("link") or ""),
@@ -155,11 +329,11 @@ def normalize_rss_item(source: dict[str, Any], item: dict[str, Any], collected_a
             "published_at": item.get("published_at"),
             "language": item.get("language"),
             "detected_assets_json": json.dumps(assets),
-            "detected_entities_json": json.dumps(item.get("categories") or []),
+            "detected_entities_json": json.dumps(categories),
             "event_type": detect_event_type(text),
             "impact_scope": ", ".join(assets) if assets else (source.get("source_group") or source.get("topic")),
             "detected_assets": assets,
-            "detected_categories": list(item.get("categories") or []),
+            "detected_categories": categories,
             "guid": item.get("guid"),
         }
     )
@@ -167,25 +341,26 @@ def normalize_rss_item(source: dict[str, Any], item: dict[str, Any], collected_a
     return article
 
 
-def normalize_gdelt_item(source: dict[str, Any], item: dict[str, Any], collected_at: str, raw_file_path: str) -> dict[str, Any]:
+def normalize_html_item(source: dict[str, Any], item: dict[str, Any], collected_at: str, raw_file_path: str) -> dict[str, Any]:
     title = str(item.get("title") or "Untitled")
-    summary = str(item.get("seendate") or item.get("snippet") or item.get("excerpt") or "")
-    text = normalize_text(title, summary, item.get("domain"), item.get("language"))
+    summary = str(item.get("summary") or "")
+    text = normalize_text(title, summary, source.get("topic"), source.get("source_group"))
     assets = detect_assets(text)
-    article = normalize_base(source, "gdelt_doc", collected_at, raw_file_path, item)
+    categories = [str(source.get("source_group") or ""), str(source.get("topic") or "")]
+    article = normalize_base(source, "html_links", collected_at, raw_file_path, item)
     article.update(
         {
             "canonical_url": str(item.get("url") or ""),
             "title": title,
             "summary": summary,
-            "published_at": item.get("seendate") or item.get("published_at"),
+            "published_at": item.get("published_at"),
             "language": item.get("language"),
             "detected_assets_json": json.dumps(assets),
-            "detected_entities_json": json.dumps([item.get("domain"), item.get("sourceCountry")]),
+            "detected_entities_json": json.dumps(categories),
             "event_type": detect_event_type(text),
             "impact_scope": ", ".join(assets) if assets else (source.get("source_group") or source.get("topic")),
             "detected_assets": assets,
-            "detected_categories": [str(item.get("domain") or ""), str(item.get("sourceCountry") or "")],
+            "detected_categories": [value for value in categories if value],
             "guid": item.get("guid") or item.get("url"),
         }
     )
@@ -193,40 +368,72 @@ def normalize_gdelt_item(source: dict[str, Any], item: dict[str, Any], collected
     return article
 
 
-def normalize_cryptopanic_item(source: dict[str, Any], item: dict[str, Any], collected_at: str, raw_file_path: str) -> dict[str, Any]:
-    title = str(item.get("title") or "Untitled")
-    summary = str(item.get("body") or item.get("metadata", {}).get("description") or "")
-    text = normalize_text(title, summary)
-    assets = detect_assets(text)
-    article = normalize_base(source, "cryptopanic", collected_at, raw_file_path, item)
-    article.update(
-        {
-            "canonical_url": str(item.get("url") or ""),
-            "title": title,
-            "summary": summary,
-            "published_at": item.get("published_at") or item.get("created_at"),
-            "language": item.get("language"),
-            "detected_assets_json": json.dumps(assets),
-            "detected_entities_json": json.dumps(item.get("currencies") or []),
-            "event_type": detect_event_type(text),
-            "impact_scope": ", ".join(assets) if assets else (source.get("source_group") or source.get("topic")),
-            "detected_assets": assets,
-            "detected_categories": [str(currency.get("code") or "") for currency in item.get("currencies") or [] if isinstance(currency, dict)],
-            "guid": item.get("id") or item.get("uuid") or item.get("url"),
-        }
-    )
-    article["id"] = article_id_from(article["source_id"], article.get("guid"), article["canonical_url"], title, article.get("published_at"))
-    return article
+def _matches_substrings(value: str, substrings: list[str]) -> bool:
+    if not substrings:
+        return True
+    lowered = value.lower()
+    return any(str(token).lower() in lowered for token in substrings if str(token).strip())
+
+
+def _matches_no_substrings(value: str, substrings: list[str]) -> bool:
+    lowered = value.lower()
+    return not any(str(token).lower() in lowered for token in substrings if str(token).strip())
+
+
+def extract_html_links(page_url: str, html_text: str, source: dict[str, Any], max_items: int) -> list[dict[str, Any]]:
+    parser = AnchorCollector()
+    parser.feed(html_text)
+
+    include_url = [str(value) for value in source.get("include_url_substrings") or []]
+    exclude_url = [str(value) for value in source.get("exclude_url_substrings") or []]
+    include_text = [str(value) for value in source.get("include_text_substrings") or []]
+    exclude_text = [str(value) for value in source.get("exclude_text_substrings") or []]
+    min_text_length = int(source.get("min_text_length") or 12)
+
+    items: list[dict[str, Any]] = []
+    seen_urls: set[str] = set()
+    for link in parser.links:
+        href = str(link.get("href") or "").strip()
+        title = re.sub(r"\s+", " ", str(link.get("text") or "")).strip()
+        if not href or href.startswith(("javascript:", "mailto:", "#")):
+            continue
+        resolved = urllib_parse.urljoin(page_url, href)
+        if resolved in seen_urls:
+            continue
+        if len(title) < min_text_length:
+            continue
+        if not _matches_substrings(resolved, include_url):
+            continue
+        if not _matches_no_substrings(resolved, exclude_url):
+            continue
+        if include_text and not _matches_substrings(title, include_text):
+            continue
+        if not _matches_no_substrings(title, exclude_text):
+            continue
+        seen_urls.add(resolved)
+        items.append(
+            {
+                "url": resolved,
+                "title": title,
+                "guid": resolved,
+                "summary": f"Scraped from {page_url}",
+                "published_at": None,
+                "language": None,
+            }
+        )
+        if len(items) >= max_items:
+            break
+    return items
 
 
 def fetch_rss_source(
     source: dict[str, Any], config: dict[str, Any], raw_dir: Path, max_items_override: int | None = None
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     timeout_seconds = int(config.get("request_timeout_seconds") or 20)
-    user_agent = str(config.get("user_agent") or "FreQ-NewsResearchCollector/1.0")
-    configured_max_items = int(config.get("max_items_per_source") or 100)
+    user_agent = str(config.get("user_agent") or "FreQ-WebResearchCollector/1.0")
+    configured_max_items = int(config.get("max_items_per_source") or 60)
     max_items = max(1, int(max_items_override)) if max_items_override is not None else configured_max_items
-    raw_payload = open_url(str(source.get("url") or ""), timeout_seconds, user_agent)
+    raw_payload = open_url(str(source.get("url") or ""), timeout_seconds, user_agent, str(source.get("ssl_ca_bundle") or config.get("ssl_ca_bundle") or ""))
     raw_path = raw_snapshot_path(raw_dir, source, ".xml")
     if config.get("store_raw_payloads", True):
         save_raw_snapshot(raw_path, raw_payload)
@@ -236,52 +443,19 @@ def fetch_rss_source(
     return articles, {"http_status": 200, "raw_file_path": str(raw_path if config.get("store_raw_payloads", True) else ""), "language": feed_lang}
 
 
-def fetch_gdelt_doc_source(source: dict[str, Any], config: dict[str, Any], raw_dir: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def fetch_html_links_source(source: dict[str, Any], config: dict[str, Any], raw_dir: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     timeout_seconds = int(config.get("request_timeout_seconds") or 20)
-    user_agent = str(config.get("user_agent") or "FreQ-NewsResearchCollector/1.0")
-    max_items = int(config.get("max_items_per_source") or 100)
-    params = {
-        "query": str(source.get("query") or ""),
-        "mode": "ArtList",
-        "format": "json",
-        "maxrecords": str(max_items),
-        "sort": "DateDesc",
-    }
-    url = "https://api.gdeltproject.org/api/v2/doc/doc?" + urllib_parse.urlencode(params)
-    raw_payload = open_url(url, timeout_seconds, user_agent)
-    raw_path = raw_snapshot_path(raw_dir, source, ".json")
+    user_agent = str(config.get("user_agent") or "FreQ-WebResearchCollector/1.0")
+    max_items = int(config.get("max_items_per_source") or 60)
+    page_url = str(source.get("url") or "").strip()
+    raw_payload = open_url(page_url, timeout_seconds, user_agent, str(source.get("ssl_ca_bundle") or config.get("ssl_ca_bundle") or ""))
+    raw_path = raw_snapshot_path(raw_dir, source, ".html")
     if config.get("store_raw_payloads", True):
         save_raw_snapshot(raw_path, raw_payload)
-    payload = json.loads(raw_payload.decode("utf-8", "replace"))
-    items = payload.get("articles") or payload.get("response", {}).get("articles") or []
+    html_text = raw_payload.decode("utf-8", "replace")
+    items = extract_html_links(page_url, html_text, source, max_items)
     collected_at = utc_now()
-    articles = [normalize_gdelt_item(source, item, collected_at, str(raw_path if config.get("store_raw_payloads", True) else "")) for item in items[:max_items] if isinstance(item, dict)]
-    http_status_raw = payload.get("status")
-    try:
-        http_status = int(http_status_raw) if http_status_raw is not None else 200
-    except Exception:
-        http_status = 200
-    return articles, {"http_status": http_status, "raw_file_path": str(raw_path if config.get("store_raw_payloads", True) else "")}
-
-
-def fetch_cryptopanic_source(source: dict[str, Any], config: dict[str, Any], raw_dir: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    token = str(source.get("auth_token") or os.environ.get("CRYPTOPANIC_AUTH_TOKEN") or "").strip()
-    if not token:
-        logging.warning("Skipping CryptoPanic source %s because no auth token was provided.", source.get("id") or "unknown")
-        return [], {"http_status": None, "warning": "missing auth token"}
-    timeout_seconds = int(config.get("request_timeout_seconds") or 20)
-    user_agent = str(config.get("user_agent") or "FreQ-NewsResearchCollector/1.0")
-    max_items = int(config.get("max_items_per_source") or 100)
-    params = {"auth_token": token, "public": "true", "kind": "news"}
-    url = "https://cryptopanic.com/api/v1/posts/?" + urllib_parse.urlencode(params)
-    raw_payload = open_url(url, timeout_seconds, user_agent)
-    raw_path = raw_snapshot_path(raw_dir, source, ".json")
-    if config.get("store_raw_payloads", True):
-        save_raw_snapshot(raw_path, raw_payload)
-    payload = json.loads(raw_payload.decode("utf-8", "replace"))
-    items = payload.get("results") or payload.get("posts") or []
-    collected_at = utc_now()
-    articles = [normalize_cryptopanic_item(source, item, collected_at, str(raw_path if config.get("store_raw_payloads", True) else "")) for item in items[:max_items] if isinstance(item, dict)]
+    articles = [normalize_html_item(source, item, collected_at, str(raw_path if config.get("store_raw_payloads", True) else "")) for item in items]
     return articles, {"http_status": 200, "raw_file_path": str(raw_path if config.get("store_raw_payloads", True) else "")}
 
 
@@ -291,31 +465,39 @@ def fetch_source(
     source_type = str(source.get("type") or "").strip().lower()
     if source_type == "rss":
         return fetch_rss_source(source, config, raw_dirs["rss"], max_items_override=max_items_override)
-    if source_type == "gdelt_doc":
-        return fetch_gdelt_doc_source(source, config, raw_dirs["gdelt"])
-    if source_type == "cryptopanic":
-        return fetch_cryptopanic_source(source, config, raw_dirs["api"])
+    if source_type == "html_links":
+        return fetch_html_links_source(source, config, raw_dirs["html"])
     raise ValueError(f"Unsupported source type: {source_type}")
 
 
 def update_status_payload(status_path: Path, payload: dict[str, Any]) -> None:
-    save_status_with_defaults(status_path, payload)
+    update_status(status_path, payload)
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Standalone News Lab collector")
+    parser = argparse.ArgumentParser(description="Standalone Web Lab collector")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
-    parser.add_argument("--db", type=Path, default=DEFAULT_DB_PATH)
-    parser.add_argument("--status-file", type=Path, default=DEFAULT_STATUS_PATH)
-    parser.add_argument("--pid-file", type=Path, default=DEFAULT_PID_PATH)
-    parser.add_argument("--log-file", type=Path, default=DEFAULT_LOG_PATH)
-    parser.add_argument("--stop-file", type=Path, default=DEFAULT_STOP_PATH)
+    parser.add_argument("--db", type=Path, default=None)
+    parser.add_argument("--status-file", type=Path, default=None)
+    parser.add_argument("--pid-file", type=Path, default=None)
+    parser.add_argument("--log-file", type=Path, default=None)
+    parser.add_argument("--stop-file", type=Path, default=None)
     parser.add_argument("--once", action="store_true")
-    parser.add_argument("--interval-seconds", type=int, default=900)
-    parser.add_argument("--max-items-per-source", type=int, default=100)
+    parser.add_argument("--interval-seconds", type=int, default=21600)
+    parser.add_argument("--max-items-per-source", type=int, default=60)
     args = parser.parse_args()
+    resolve_collector_paths(args, db_filename=DEFAULT_DB_PATH.name, log_filename=DEFAULT_LOG_PATH.name)
 
+    try:
+        with lock_resources([args.db, args.status_file]):
+            return _run(args)
+    except CollectorBusyError as exc:
+        print(str(exc))
+        return 2
+
+
+def _run(args: argparse.Namespace) -> int:
     raw_dirs = ensure_runtime_dirs(args.data_dir)
     configure_logging(args.log_file)
     ensure_config(args.config)
@@ -391,7 +573,7 @@ def main() -> int:
         logging.exception("Collector startup failed")
         return 1
 
-    run_id = hashlib.sha256(f"{os.getpid()}|{utc_now()}".encode("utf-8")).hexdigest()
+    run_id = hashlib.sha256(f"{os.getpid()}|{utc_now()}|web".encode("utf-8")).hexdigest()
     started_at = utc_now()
     conn = connect_db(args.db)
     try:
@@ -406,8 +588,9 @@ def main() -> int:
     status_payload: dict[str, Any] = {
         "run_id": run_id,
         "status": "running",
-        "status_reason": "normal_exit",
+        "status_reason": "running",
         "pid": os.getpid(),
+        "pid_create_time": pid_create_time(),
         "started_at": started_at,
         "heartbeat_at": started_at,
         "last_cycle_finished_at": None,
@@ -427,7 +610,7 @@ def main() -> int:
         "restart_catchup_notes": None,
     }
     update_status_payload(args.status_file, status_payload)
-    logging.info("News collector started pid=%s config=%s db=%s", os.getpid(), args.config, args.db)
+    logging.info("Web collector started pid=%s config=%s db=%s", os.getpid(), args.config, args.db)
 
     terminal_status = "stopped"
     status_reason = "normal_exit"
@@ -440,8 +623,8 @@ def main() -> int:
                 status_reason = "user_requested"
                 break
             config = read_config(args.config)
-            cycle_interval = int(config.get("poll_interval_seconds") or args.interval_seconds or 900)
-            max_items = int(config.get("max_items_per_source") or args.max_items_per_source or 100)
+            cycle_interval = int(config.get("poll_interval_seconds") or args.interval_seconds or 21600)
+            max_items = int(config.get("max_items_per_source") or args.max_items_per_source or 60)
             configured_sources = [source for source in config.get("sources") or [] if isinstance(source, dict)]
             sources = [source for source in configured_sources if source.get("enabled", True)]
             cycle_catchup = bool(first_cycle and (restart_gap_hours or 0.0) > 2.0)
@@ -466,6 +649,8 @@ def main() -> int:
                     try:
                         try:
                             apply_source_config_tags(conn, source)
+                        except sqlite3.Error:
+                            raise
                         except Exception:
                             logging.exception("Source tagging failed for %s", source_id)
                         source_max_items = max_items
@@ -490,11 +675,14 @@ def main() -> int:
                                     article_id = str(article.get("id") or "")
                                     apply_article_tags(conn, article_id, tags_from_article(article, source))
                                     upsert_article_score(conn, article_id, score_article(article, source))
+                                except sqlite3.Error:
+                                    raise
                                 except Exception:
                                     logging.exception("Scoring/tagging failed for article from %s", source_id)
-                            except sqlite3.OperationalError as exc:
-                                logging.exception("DB error while upserting article")
+                            except sqlite3.Error as exc:
+                                logging.exception("DB error while upserting article for %s", source_id)
                                 cycle_error = str(exc)
+                                raise
                         upsert_source_health(
                             conn,
                             source,
@@ -550,7 +738,7 @@ def main() -> int:
                                 "last_success_at": None,
                                 "last_failure_at": utc_now(),
                                 "last_error": err_text,
-                                "last_http_status": None,
+                                "last_http_status": exc.code if isinstance(exc, urllib_error.HTTPError) else None,
                                 "items_last_fetch": 0,
                                 "inserted_last_fetch": 0,
                                 "duplicates_last_fetch": 0,
@@ -615,7 +803,6 @@ def main() -> int:
                 status_reason = "user_requested"
                 break
             first_cycle = False
-
     except KeyboardInterrupt:
         status_reason = "keyboard_interrupt"
     except SystemExit as exc:
@@ -667,7 +854,7 @@ def main() -> int:
             conn.commit()
         finally:
             conn.close()
-        logging.info("News collector exited with status=%s", terminal_status)
+        logging.info("Web collector exited with status=%s", terminal_status)
     return 0
 
 

@@ -54,23 +54,23 @@ G17_EXTERNAL_COVERAGE = (
 LIVE_STATUS_PATHS = {
     "context_live_news": REPO_ROOT
     / "user_data"
-    / "research_news_data"
+    / "collector_data"
     / "news"
     / "collector_status.json",
     "context_live_web": REPO_ROOT
     / "user_data"
-    / "research_news_data"
+    / "collector_data"
     / "web"
     / "collector_status.json",
     "context_global_market_macro": REPO_ROOT
     / "user_data"
-    / "research_news_data"
+    / "collector_data"
     / "global_context"
     / "collector_status.json",
     "orderbook_live_multi_venue": REPO_ROOT
     / "user_data"
-    / "orderbook_data"
-    / "live"
+    / "collector_data"
+    / "orderbook"
     / "collector_status.json",
 }
 

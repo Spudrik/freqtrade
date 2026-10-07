@@ -19,7 +19,7 @@ from user_data.strategies.paper_trial_level import PaperTrialLevel
 
 
 LOG = logging.getLogger(__name__)
-BOOK_DB = Path(__file__).resolve().parents[1] / "orderbook_data/live/orderbook_events.sqlite"
+BOOK_DB = Path(__file__).resolve().parents[1] / "collector_data/orderbook/orderbook_events.sqlite"
 MARKET_KEY = "binance_usdm_futures"
 OBSERVATIONS = 3
 MAX_AGE = timedelta(minutes=2)

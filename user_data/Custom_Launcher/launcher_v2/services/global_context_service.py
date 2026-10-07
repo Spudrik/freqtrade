@@ -5,50 +5,54 @@ from pathlib import Path
 from typing import Any
 import csv
 import json
-import os
 import sqlite3
-import subprocess
-import sys
 
-from .collector_service import is_process_running, open_path, parse_minutes_to_seconds, utc_now, utf8_subprocess_env
-from research.collectors.global_context_collector import load_fred_api_key_from_file
-from research.collectors.global_context_store import init_db
+from .collector_service import (
+    _read_collector_status,
+    _request_collector_stop,
+    _start_collector_detached,
+    data_tools_python_for_state,
+    open_path,
+    parse_minutes_to_seconds,
+    preferred_data_tools_python,
+    resolve_app_path,
+    sqlite_readonly_connection,
+    validate_config_file,
+)
+from user_data.Custom_Launcher.collector_runtime import verified_worker
+from user_data.Custom_Launcher.collectors.context.global_context_collector import load_fred_api_key_from_file
 
 
 class GlobalContextService:
     def __init__(self, app_dir: Path, python_exe: str | None = None) -> None:
-        self.app_dir = Path(app_dir)
-        self.python_exe = python_exe or sys.executable
+        self.app_dir = Path(app_dir).resolve()
+        self.python_exe = preferred_data_tools_python(self.app_dir, python_exe)
 
     def app_path(self, value: str | Path) -> Path:
-        path = Path(value)
-        return path if path.is_absolute() else self.app_dir / path
+        return resolve_app_path(self.app_dir, value)
 
     def _resolve_data_dir(self, value: Any) -> Path:
         text = str(value or "").strip()
-        default_dir = self.app_path("../research_news_data/global_context")
-        return Path(text) if text else default_dir
+        default_dir = self.app_path("../collector_data/global_context")
+        return self.app_path(text) if text else default_dir
 
     def _resolve_config_path(self, value: Any) -> Path:
         text = str(value or "").strip()
-        default_config = self.app_path("research/config/global_context_sources.json")
+        default_config = self.app_path("collectors/context/config/global_context_sources.json")
         if not text:
             return default_config
-        path = Path(text)
-        if not path.exists() and path.name.lower() == default_config.name.lower():
-            return default_config
-        return path
+        return self.app_path(text)
 
     def _resolve_db_path(self, value: Any, data_dir: Path) -> Path:
         text = str(value or "").strip()
-        return Path(text) if text else data_dir / "global_context.sqlite"
+        return self.app_path(text) if text else data_dir / "global_context.sqlite"
 
     def paths(self, state: dict[str, Any]) -> dict[str, Path]:
         data_dir = self._resolve_data_dir(state.get("data_dir"))
         config_path = self._resolve_config_path(state.get("config_path"))
         db_path = self._resolve_db_path(state.get("db_path"), data_dir)
         return {
-            "collector": self.app_path("research/collectors/global_context_collector.py"),
+            "collector": self.app_path("collectors/context/global_context_collector.py"),
             "config": config_path,
             "data_dir": data_dir,
             "db": db_path,
@@ -60,13 +64,15 @@ class GlobalContextService:
 
     def build_command(self, state: dict[str, Any]) -> list[str]:
         paths = self.paths(state)
+        python_exe = data_tools_python_for_state(self.app_dir, state, self.python_exe)
         if not paths["collector"].exists():
             raise FileNotFoundError(paths["collector"])
+        validate_config_file(paths["config"])
         command = [
-            self.python_exe,
+            python_exe,
             "-u",
             "-m",
-            "research.collectors.global_context_collector",
+            "collectors.context.global_context_collector",
             "--config",
             str(paths["config"]),
             "--data-dir",
@@ -96,63 +102,62 @@ class GlobalContextService:
             command.append("--once")
         return command
 
-    def start_detached(self, state: dict[str, Any]) -> int:
+    def start_detached(
+        self,
+        state: dict[str, Any],
+        *,
+        automatic: bool = False,
+        preset_path: Path | None = None,
+    ) -> int | None:
         paths = self.paths(state)
-        paths["data_dir"].mkdir(parents=True, exist_ok=True)
-        paths["log"].parent.mkdir(parents=True, exist_ok=True)
-        try:
-            paths["stop"].unlink(missing_ok=True)
-        except Exception:
-            pass
-        command = self.build_command(state)
-        with open(paths["log"], "ab") as log_handle:
-            kwargs: dict[str, Any] = {
-                "stdin": subprocess.DEVNULL,
-                "stdout": log_handle,
-                "stderr": subprocess.STDOUT,
-                "cwd": str(self.app_dir),
-                "env": utf8_subprocess_env(),
-                "close_fds": True,
-            }
-            if os.name == "nt":
-                kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
-            else:
-                kwargs["start_new_session"] = True
-            process = subprocess.Popen(command, **kwargs)
-        return int(process.pid)
+        return _start_collector_detached(
+            app_dir=self.app_dir,
+            key="global_context",
+            module="collectors.context.global_context_collector",
+            db_path=paths["db"],
+            status_path=paths["status"],
+            stop_path=paths["stop"],
+            log_path=paths["log"],
+            command=lambda: self.build_command(state),
+            automatic=automatic,
+            preset_path=preset_path,
+        )
 
-    def request_stop(self, state: dict[str, Any]) -> Path:
+    def request_stop(self, state: dict[str, Any], *, preset_path: Path | None = None) -> Path:
         paths = self.paths(state)
-        paths["stop"].parent.mkdir(parents=True, exist_ok=True)
-        paths["stop"].write_text(utc_now() + "\n", encoding="utf-8")
-        return paths["stop"]
+        return _request_collector_stop(
+            app_dir=self.app_dir,
+            key="global_context",
+            preset_path=preset_path,
+            state=state,
+            paths_for_state=lambda candidate: self.paths(candidate),
+            module="collectors.context.global_context_collector",
+        )
 
     def read_status(self, state: dict[str, Any]) -> dict[str, Any]:
         paths = self.paths(state)
-        status: dict[str, Any] = {}
-        if paths["status"].exists():
-            try:
-                loaded = json.loads(paths["status"].read_text(encoding="utf-8"))
-                if isinstance(loaded, dict):
-                    status = loaded
-            except Exception:
-                status = {}
+        status = _read_collector_status(paths["status"])
         if paths["pid"].exists():
             try:
                 pid_text = paths["pid"].read_text(encoding="utf-8").strip()
                 status["pid_text"] = pid_text
-                if pid_text and not is_process_running(int(pid_text)) and str(status.get("status") or "").lower() == "running":
-                    status["status"] = "stale/unknown"
             except Exception:
                 pass
+        process = verified_worker(
+            status,
+            "collectors.context.global_context_collector",
+            paths["db"],
+            paths["status"],
+        )
+        status["verified_running"] = process is not None
+        status["verified_pid"] = int(process.pid) if process is not None else None
         return status
 
     def _latest_context_records(self, state: dict[str, Any], source_groups: set[str] | None = None) -> list[sqlite3.Row]:
         paths = self.paths(state)
         if not paths["db"].exists():
             return []
-        init_db(paths["db"])
-        with sqlite3.connect(str(paths["db"]), timeout=5.0) as conn:
+        with sqlite_readonly_connection(paths["db"]) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 """
@@ -233,8 +238,7 @@ class GlobalContextService:
         paths = self.paths(state)
         if not paths["db"].exists():
             return []
-        init_db(paths["db"])
-        with sqlite3.connect(str(paths["db"]), timeout=5.0) as conn:
+        with sqlite_readonly_connection(paths["db"]) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 """

@@ -17,8 +17,8 @@ from pandas import DataFrame, Series
 
 
 SCHEMA_VERSION = "2"
-DEFAULT_USER_DATA_DIR = Path(__file__).resolve().parents[2]
-DEFAULT_DB_PATH = DEFAULT_USER_DATA_DIR / "orderbook_data" / "live" / "orderbook_events.sqlite"
+DEFAULT_USER_DATA_DIR = Path(__file__).resolve().parents[3]
+DEFAULT_DB_PATH = DEFAULT_USER_DATA_DIR / "collector_data" / "orderbook" / "orderbook_events.sqlite"
 DEFAULT_EXPORT_DIR = DEFAULT_USER_DATA_DIR / "orderbook_data" / "live" / "exports"
 DEFAULT_OHLCV_PATH = DEFAULT_USER_DATA_DIR / "data" / "binance" / "BTC_USDT-1h.feather"
 DEFAULT_PAIRS = ("BTC/USDT",)
@@ -589,6 +589,9 @@ def _load_ticks(conn: sqlite3.Connection, pair_values: list[str], start: pd.Time
         "canonical_pair",
         "pair",
         "book_valid",
+        "best_bid",
+        "best_ask",
+        "mid_price",
         "message_count_interval",
         *RAW_NUMERIC_COLUMNS,
         "bid_wall_candidates_json",
@@ -689,10 +692,24 @@ def _build_pair_features(
 
 def _market_tick_features(group: DataFrame, market: str, *, min_coverage_ratio: float) -> dict[str, float]:
     prefix = f"ob1h_{market}"
-    ts = pd.to_datetime(group["ts"], utc=True, errors="coerce").dropna().sort_values()
     row_count = int(len(group))
-    valid_count = int(pd.to_numeric(group["book_valid"], errors="coerce").fillna(0).sum())
-    coverage = min(1.0, row_count / DEFAULT_EXPECTED_SAMPLES_PER_HOUR)
+    valid = pd.to_numeric(group["book_valid"], errors="coerce").eq(1)
+    # Older crossed books could carry book_valid=1 with absent metrics.
+    for column in ("best_bid", "best_ask", "mid_price", "spread_bps"):
+        values = _numeric(group, column)
+        valid &= np.isfinite(values) & values.gt(0.0)
+    valid &= _numeric(group, "best_ask").gt(_numeric(group, "best_bid"))
+    for column in RAW_NUMERIC_COLUMNS:
+        values = _numeric(group, column)
+        valid &= values.isna() | np.isfinite(values)
+    for depth in (1, 5, 10, 20):
+        for side in ("bid", "ask"):
+            values = _numeric(group, f"{side}_notional_top{depth}")
+            valid &= np.isfinite(values) & values.ge(0.0)
+    group = group.loc[valid]
+    valid_count = len(group)
+    ts = pd.to_datetime(group["ts"], utc=True, errors="coerce").dropna().sort_values()
+    coverage = min(1.0, valid_count / DEFAULT_EXPECTED_SAMPLES_PER_HOUR)
     valid_ratio = valid_count / row_count if row_count else 0.0
     gaps = ts.diff().dt.total_seconds().dropna()
     out: dict[str, float] = {
@@ -722,10 +739,10 @@ def _market_tick_features(group: DataFrame, market: str, *, min_coverage_ratio: 
     extreme_bid = pd.to_numeric(group["extreme_bid_pressure"], errors="coerce").fillna(0.0)
     extreme_ask = pd.to_numeric(group["extreme_ask_pressure"], errors="coerce").fillna(0.0)
     pressure_sign = np.sign(bid_pressure.to_numpy() - ask_pressure.to_numpy())
-    out[f"{prefix}_strong_bid_pressure_ratio"] = float(bid_pressure.mean()) if row_count else math.nan
-    out[f"{prefix}_strong_ask_pressure_ratio"] = float(ask_pressure.mean()) if row_count else math.nan
-    out[f"{prefix}_extreme_bid_pressure_ratio"] = float(extreme_bid.mean()) if row_count else math.nan
-    out[f"{prefix}_extreme_ask_pressure_ratio"] = float(extreme_ask.mean()) if row_count else math.nan
+    out[f"{prefix}_strong_bid_pressure_ratio"] = float(bid_pressure.mean()) if valid_count else math.nan
+    out[f"{prefix}_strong_ask_pressure_ratio"] = float(ask_pressure.mean()) if valid_count else math.nan
+    out[f"{prefix}_extreme_bid_pressure_ratio"] = float(extreme_bid.mean()) if valid_count else math.nan
+    out[f"{prefix}_extreme_ask_pressure_ratio"] = float(extreme_ask.mean()) if valid_count else math.nan
     out[f"{prefix}_pressure_delta"] = out[f"{prefix}_strong_bid_pressure_ratio"] - out[f"{prefix}_strong_ask_pressure_ratio"]
     out[f"{prefix}_extreme_pressure_delta"] = out[f"{prefix}_extreme_bid_pressure_ratio"] - out[f"{prefix}_extreme_ask_pressure_ratio"]
     out[f"{prefix}_pressure_flip_count"] = float(_sign_flip_count(pressure_sign))

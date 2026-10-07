@@ -352,14 +352,14 @@ def _validate_config(cfg: NewsWebSentimentFeatureConfig) -> None:
 
 
 def _user_data_root() -> Path:
-    return Path(__file__).resolve().parents[1]
+    return Path(__file__).resolve().parents[2]
 
 
 def _default_db_path(dataset: str) -> Path:
     if dataset == "news":
-        return _user_data_root() / "research_news_data" / "news" / "news_events.sqlite"
+        return _user_data_root() / "collector_data" / "news" / "news_events.sqlite"
     if dataset == "web":
-        return _user_data_root() / "research_news_data" / "web" / "web_events.sqlite"
+        return _user_data_root() / "collector_data" / "web" / "web_events.sqlite"
     raise ValueError(f"Unknown News/Web dataset: {dataset}")
 
 
@@ -436,7 +436,7 @@ def _read_events_from_db(db_path: Path, dataset: str, cfg: NewsWebSentimentFeatu
 
     conn: sqlite3.Connection | None = None
     try:
-        conn = sqlite3.connect(str(db_path), timeout=10.0)
+        conn = sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True, timeout=10.0)
         return pd.read_sql_query(query, conn, params=[dataset])
     except sqlite3.Error as exc:
         if cfg.allow_missing:

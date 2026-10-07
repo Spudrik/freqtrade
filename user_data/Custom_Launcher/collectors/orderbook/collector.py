@@ -10,25 +10,27 @@ import time
 from pathlib import Path
 from typing import Any
 
-from orderbook.market_context import fetch_market_context
-from orderbook.markets import (
+from user_data.Custom_Launcher.collector_runtime import CollectorBusyError, atomic_write_text, lock_resources, pid_create_time
+
+from .market_context import fetch_market_context
+from .markets import (
     MARKET_PROFILES,
     normalize_market_profile_keys,
     normalize_pairs_for_profiles,
 )
-from orderbook.metrics import (
+from .metrics import (
     aggregate_metric_ticks,
     calculate_orderbook_metrics,
     estimate_storage_usage,
 )
-from orderbook.streams import (
+from .streams import (
     apply_book_update,
     build_stream_url,
     build_subscribe_message,
     parse_stream_message,
     stream_records_by_profile,
 )
-from orderbook.store import (
+from .store import (
     connect_db,
     init_db,
     insert_capacity_alert,
@@ -51,7 +53,7 @@ else:
 
 THIS_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG_PATH = THIS_DIR / "config" / "sources.json"
-DEFAULT_DATA_DIR = THIS_DIR.parents[1] / "orderbook_data" / "live"
+DEFAULT_DATA_DIR = THIS_DIR.parents[2] / "collector_data" / "orderbook"
 DEFAULT_DB_PATH = DEFAULT_DATA_DIR / "orderbook_events.sqlite"
 DEFAULT_STATUS_PATH = DEFAULT_DATA_DIR / "collector_status.json"
 DEFAULT_PID_PATH = DEFAULT_DATA_DIR / "collector.pid"
@@ -60,6 +62,10 @@ DEFAULT_LOG_PATH = DEFAULT_DATA_DIR / "logs" / "orderbook_collector.log"
 
 VALID_DEPTH_LEVELS = {depth for profile in MARKET_PROFILES.values() for depth in profile.supported_depths}
 VALID_STREAM_UPDATE_MS = {interval for profile in MARKET_PROFILES.values() for interval in profile.supported_update_ms}
+WS_PING_INTERVAL_SECONDS = 20
+WS_PING_TIMEOUT_SECONDS = 10
+# A cached book cannot outlive one existing websocket ping window without a book update.
+BOOK_FRESHNESS_SECONDS = WS_PING_INTERVAL_SECONDS + WS_PING_TIMEOUT_SECONDS
 
 
 def utc_now() -> str:
@@ -69,8 +75,7 @@ def utc_now() -> str:
 
 
 def save_json(path: Path, payload: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    atomic_write_text(path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 
 def load_json(path: Path, default: Any) -> Any:
@@ -148,19 +153,38 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Standalone multi-market order book collector")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
-    parser.add_argument("--db", type=Path, default=DEFAULT_DB_PATH)
-    parser.add_argument("--status-file", type=Path, default=DEFAULT_STATUS_PATH)
-    parser.add_argument("--pid-file", type=Path, default=DEFAULT_PID_PATH)
-    parser.add_argument("--stop-file", type=Path, default=DEFAULT_STOP_PATH)
-    parser.add_argument("--log-file", type=Path, default=DEFAULT_LOG_PATH)
+    parser.add_argument("--db", type=Path)
+    parser.add_argument("--status-file", type=Path)
+    parser.add_argument("--pid-file", type=Path)
+    parser.add_argument("--stop-file", type=Path)
+    parser.add_argument("--log-file", type=Path)
     parser.add_argument("--pairs", type=str, default="")
     parser.add_argument("--once", action="store_true")
-    return parser.parse_args()
+    args = parser.parse_args()
+    args.data_dir = Path(args.data_dir).resolve()
+    args.db = Path(args.db).resolve() if args.db is not None else args.data_dir / DEFAULT_DB_PATH.name
+    args.status_file = Path(args.status_file).resolve() if args.status_file is not None else args.data_dir / DEFAULT_STATUS_PATH.name
+    args.pid_file = Path(args.pid_file).resolve() if args.pid_file is not None else args.data_dir / DEFAULT_PID_PATH.name
+    args.stop_file = Path(args.stop_file).resolve() if args.stop_file is not None else args.data_dir / DEFAULT_STOP_PATH.name
+    args.log_file = Path(args.log_file).resolve() if args.log_file is not None else args.data_dir / DEFAULT_LOG_PATH.relative_to(DEFAULT_DATA_DIR)
+    return args
 
 
 def parse_pair_tokens(raw_pairs: str) -> list[str]:
     tokens = [part.strip() for part in str(raw_pairs or "").replace("\n", ",").split(",") if part.strip()]
     return tokens
+
+
+def _invalidate_book_state(state: dict[str, Any]) -> None:
+    state["bids"] = []
+    state["asks"] = []
+    state["last_book_update_monotonic"] = None
+    state["awaiting_snapshot"] = str(state.get("market_key", "")).startswith("bybit_")
+
+
+def _book_is_fresh(state: dict[str, Any], monotonic_now: float) -> bool:
+    last_update = state.get("last_book_update_monotonic")
+    return last_update is not None and monotonic_now - float(last_update) <= BOOK_FRESHNESS_SECONDS
 
 
 def main() -> int:
@@ -171,6 +195,19 @@ def main() -> int:
         return 2
 
     args = parse_args()
+    try:
+        with lock_resources([args.db, args.status_file]):
+            return _run(args)
+    except CollectorBusyError as exc:
+        print(str(exc))
+        return 2
+
+
+def _run(args: argparse.Namespace) -> int:
+    if args.stop_file.exists():
+        save_json(args.status_file, {"status": "stopped", "last_error": "Stop request present at startup."})
+        return 0
+
     ensure_runtime_dirs(args.data_dir)
     configure_logging(args.log_file)
     init_db(args.db)
@@ -219,6 +256,8 @@ def main() -> int:
             "retained_depth": retained_depth,
             "bids": [],
             "asks": [],
+            "last_book_update_monotonic": None,
+            "awaiting_snapshot": record["market_key"].startswith("bybit_"),
             "last_message_at": None,
             "last_metric_at": None,
             "message_count": 0,
@@ -236,10 +275,6 @@ def main() -> int:
     run_id = hashlib.sha256(f"{os.getpid()}|{utc_now()}|orderbook".encode("utf-8")).hexdigest()
     args.pid_file.parent.mkdir(parents=True, exist_ok=True)
     args.pid_file.write_text(str(os.getpid()), encoding="utf-8")
-    try:
-        args.stop_file.unlink(missing_ok=True)
-    except Exception:
-        pass
 
     conn = connect_db(args.db)
     try:
@@ -265,6 +300,7 @@ def main() -> int:
         "run_id": run_id,
         "status": "running",
         "pid": os.getpid(),
+        "pid_create_time": pid_create_time(),
         "started_at": utc_now(),
         "heartbeat_at": utc_now(),
         "last_message_at": None,
@@ -285,7 +321,8 @@ def main() -> int:
         "pairs": pairs,
         "canonical_pairs": canonical_pairs,
         "symbols": symbols,
-        "active_streams": len(pair_records),
+        "active_streams": 0,
+        "configured_streams": len(pair_records),
         "message_count_total": 0,
         "metric_count_total": 0,
         "snapshot_count_total": 0,
@@ -351,6 +388,7 @@ def main() -> int:
     stop_event = threading.Event()
     books_lock = threading.Lock()
     ws_holders: dict[str, Any] = {}
+    last_error_origin: dict[str, str | None] = {"value": None}
     grouped_records = stream_records_by_profile(pair_records)
 
     def ws_runner(profile_key: str, records: list[dict[str, Any]]) -> None:
@@ -361,10 +399,9 @@ def main() -> int:
 
         def on_message(_ws: Any, message: str) -> None:
             nonlocal reconnect_delay
-            reconnect_delay = 5
             try:
                 symbol, bids, asks, update_type = parse_stream_message(profile, message)
-                if not symbol:
+                if not symbol or not update_type:
                     return
                 stream_id = stream_by_symbol.get(symbol.upper())
                 if not stream_id:
@@ -372,33 +409,50 @@ def main() -> int:
                 now = utc_now()
                 with books_lock:
                     state = stream_state[stream_id]
-                    apply_book_update(state, profile_key, bids, asks, update_type, int(state["retained_depth"]))
+                    applied = apply_book_update(state, profile_key, bids, asks, update_type, int(state["stream_depth"]))
+                    if not applied:
+                        return
                     state["last_message_at"] = now
+                    state["last_book_update_monotonic"] = time.monotonic()
                     state["message_count"] += 1
                     state["message_count_interval"] += 1
                     state["status"] = "running"
                     status_payload["last_message_at"] = now
                     status_payload["message_count_total"] = int(status_payload.get("message_count_total", 0)) + 1
+                reconnect_delay = 5
             except Exception as exc:
                 logging.exception("Could not parse %s websocket message", profile_key)
-                status_payload["last_error"] = str(exc)
+                on_error(_ws, exc)
+                if profile.ws_protocol == "bybit_public":
+                    # A rejected delta can hide a book change; reconnect for a fresh snapshot.
+                    _ws.close()
 
         def on_error(_ws: Any, error: Any) -> None:
             text = str(error)
             logging.error("%s websocket error: %s", profile_key, text)
             status_payload["last_error"] = text
+            last_error_origin["value"] = "stream"
             with books_lock:
                 for record in records:
                     state = stream_state[str(record["stream_id"])]
+                    _invalidate_book_state(state)
                     state["error_count"] += 1
                     state["last_error"] = text
                     state["status"] = "error"
 
         def on_close(_ws: Any, _status_code: Any, _msg: Any) -> None:
             logging.warning("%s websocket closed", profile_key)
+            with books_lock:
+                for record in records:
+                    state = stream_state[str(record["stream_id"])]
+                    _invalidate_book_state(state)
+                    state["status"] = "disconnected"
 
         def on_open(ws: Any) -> None:
             logging.info("%s websocket connected", profile_key)
+            with books_lock:
+                for record in records:
+                    _invalidate_book_state(stream_state[str(record["stream_id"])])
             subscribe = build_subscribe_message(profile, records)
             if subscribe:
                 ws.send(subscribe)
@@ -407,15 +461,17 @@ def main() -> int:
             try:
                 ws_app = websocket.WebSocketApp(stream_url, on_message=on_message, on_error=on_error, on_close=on_close, on_open=on_open)
                 ws_holders[profile_key] = ws_app
-                ws_app.run_forever(ping_interval=20, ping_timeout=10)
+                ws_app.run_forever(ping_interval=WS_PING_INTERVAL_SECONDS, ping_timeout=WS_PING_TIMEOUT_SECONDS)
             except Exception as exc:
                 logging.exception("%s websocket runner failure", profile_key)
                 status_payload["last_error"] = str(exc)
+                last_error_origin["value"] = "stream"
             if stop_event.is_set():
                 break
             with books_lock:
                 for record in records:
                     state = stream_state[str(record["stream_id"])]
+                    _invalidate_book_state(state)
                     state["reconnect_count"] += 1
             status_payload["reconnect_count_total"] = int(status_payload.get("reconnect_count_total", 0)) + 1
             time.sleep(reconnect_delay)
@@ -442,22 +498,30 @@ def main() -> int:
                 break
             now_ts = time.time()
             now_iso = utc_now()
+            monotonic_now = time.monotonic()
+            with books_lock:
+                for state in stream_state.values():
+                    last_update = state.get("last_book_update_monotonic")
+                    if last_update is not None and monotonic_now - float(last_update) > BOOK_FRESHNESS_SECONDS:
+                        state["status"] = "stale"
 
             if now_ts - last_metric_ts >= metric_interval:
                 conn = connect_db(args.db)
                 try:
                     inserted_any_metric = False
+                    active_streams = 0
                     with books_lock:
                         for stream_id, state in stream_state.items():
-                            if not state["bids"] or not state["asks"]:
-                                continue
                             metric_config = dict(config)
                             metric_config["depth_levels"] = state["retained_depth"]
+                            fresh = _book_is_fresh(state, time.monotonic())
+                            if not fresh and state.get("last_book_update_monotonic") is not None:
+                                state["status"] = "stale"
                             metrics = calculate_orderbook_metrics(
                                 state["pair"],
                                 state["symbol"],
-                                state["bids"],
-                                state["asks"],
+                                state["bids"][: int(state["retained_depth"])] if fresh else [],
+                                state["asks"][: int(state["retained_depth"])] if fresh else [],
                                 metric_config,
                                 state["message_count_interval"],
                             )
@@ -470,7 +534,17 @@ def main() -> int:
                             metrics["margin_type"] = state["margin_type"]
                             metrics["quote_asset"] = state["quote_asset"]
                             metrics["canonical_pair"] = state["canonical_pair"]
-                            inserted_any_metric = True
+                            inserted_any_metric = inserted_any_metric or bool(metrics.get("book_valid"))
+                            if metrics.get("book_valid"):
+                                active_streams += 1
+                                recovered_error = state.get("last_error")
+                                state["last_error"] = None
+                                state["status"] = "running"
+                                if recovered_error and last_error_origin["value"] == "stream":
+                                    current_stream_errors = any(candidate.get("last_error") for candidate in stream_state.values())
+                                    if not current_stream_errors:
+                                        status_payload["last_error"] = None
+                                        last_error_origin["value"] = None
                             if store_metric_ticks:
                                 insert_metric_tick(conn, metrics)
                             state["last_metric_at"] = now_iso
@@ -531,7 +605,7 @@ def main() -> int:
                                     "symbol": state["symbol"],
                                     "depth_levels": state["retained_depth"],
                                     "stream_mode": "partial_depth",
-                                    "status": state["status"],
+                                    "status": state["status"] if metrics.get("book_valid") else (state["status"] if state["status"] in {"error", "disconnected", "stale"} else "awaiting_snapshot"),
                                     "started_at": state["started_at"],
                                     "last_message_at": state["last_message_at"],
                                     "last_metric_at": state["last_metric_at"],
@@ -553,6 +627,7 @@ def main() -> int:
                                     "updated_at": now_iso,
                                 },
                             )
+                        status_payload["active_streams"] = active_streams
                         conn.commit()
                     status_payload["last_metric_at"] = now_iso
                     status_payload["heartbeat_at"] = now_iso
@@ -563,18 +638,26 @@ def main() -> int:
                 if args.once and inserted_any_metric:
                     terminal_status = "stopped"
                     break
-                if args.once and once_deadline is not None and now_ts >= once_deadline:
-                    if int(status_payload.get("message_count_total", 0)) <= 0:
-                        raise RuntimeError("No websocket messages received within once timeout.")
-                    if int(status_payload.get("metric_count_total", 0)) <= 0:
-                        raise RuntimeError("No valid orderbook data received within once timeout.")
+
+            if args.once and once_deadline is not None and now_ts >= once_deadline:
+                if int(status_payload.get("message_count_total", 0)) <= 0:
+                    raise RuntimeError("No websocket messages received within once timeout.")
+                raise RuntimeError("No valid orderbook data received within once timeout.")
 
             if store_snapshots and now_ts - last_snapshot_ts >= snapshot_interval:
                 conn = connect_db(args.db)
                 try:
                     with books_lock:
                         for stream_id, state in stream_state.items():
-                            if not state["bids"] or not state["asks"]:
+                            if not state["bids"] or not state["asks"] or not _book_is_fresh(state, time.monotonic()):
+                                continue
+                            snapshot_metrics = calculate_orderbook_metrics(
+                                state["pair"], state["symbol"],
+                                state["bids"][: int(state["retained_depth"])],
+                                state["asks"][: int(state["retained_depth"])],
+                                {**config, "depth_levels": state["retained_depth"]}, 0,
+                            )
+                            if not snapshot_metrics.get("book_valid"):
                                 continue
                             best_bid = state["bids"][0][0]
                             best_ask = state["asks"][0][0]
@@ -651,6 +734,7 @@ def main() -> int:
                     except Exception as exc:
                         logging.warning("Market context fetch failed for %s: %s", record.get("stream_id"), exc)
                         status_payload["last_error"] = str(exc)
+                        last_error_origin["value"] = "context"
                         continue
                     if row:
                         row["ts"] = now_iso
@@ -718,7 +802,9 @@ def main() -> int:
         logging.exception("Orderbook collector crashed")
         terminal_status = "error"
         status_payload["status"] = "error"
+        status_payload["active_streams"] = 0
         status_payload["last_error"] = str(exc)
+        last_error_origin["value"] = "collector"
         save_json(args.status_file, status_payload)
         return 1
     finally:
@@ -730,11 +816,16 @@ def main() -> int:
                 except Exception:
                     pass
         status_payload["status"] = terminal_status
+        status_payload["active_streams"] = 0
         status_payload["pid"] = None
         status_payload["heartbeat_at"] = utc_now()
         save_json(args.status_file, status_payload)
         conn = connect_db(args.db)
         try:
+            conn.executemany(
+                "UPDATE stream_status SET status = ?, updated_at = ? WHERE stream_id = ?",
+                [("stopped", utc_now(), stream_id) for stream_id in stream_state],
+            )
             conn.execute(
                 "UPDATE collector_runs SET status = ?, stopped_at = ?, notes = ? WHERE run_id = ?",
                 (terminal_status, utc_now(), status_payload.get("last_error"), run_id),

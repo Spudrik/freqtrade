@@ -15,7 +15,7 @@ from pandas import DataFrame, Series
 
 USER_DATA_DIR = Path(__file__).resolve().parents[3]
 REPO_ROOT = USER_DATA_DIR.parent
-DEFAULT_DB = USER_DATA_DIR / "orderbook_data" / "live" / "orderbook_events.sqlite"
+DEFAULT_DB = USER_DATA_DIR / "collector_data" / "orderbook" / "orderbook_events.sqlite"
 DEFAULT_OHLCV = USER_DATA_DIR / "data" / "binance" / "futures" / "BTC_USDT_USDT-1h-futures.feather"
 DEFAULT_OUTPUT_DIR = USER_DATA_DIR / "research_news_data" / "context_features" / "orderbook_timeframe_value"
 DEFAULT_PAIR = "BTC/USDT"

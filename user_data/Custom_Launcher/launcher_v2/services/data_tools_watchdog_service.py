@@ -4,16 +4,27 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+import csv
+import io
 import json
 import os
+import re
 import subprocess
-import sys
 import tempfile
+import xml.etree.ElementTree as ET
 from xml.sax.saxutils import escape
 
-from .collector_service import NEWS_PROFILE, WEB_PROFILE, ResearchCollectorService, is_process_running, open_path, utc_now
+from .collector_service import (
+    NEWS_PROFILE,
+    WEB_PROFILE,
+    ResearchCollectorService,
+    open_path,
+    preferred_data_tools_python,
+    utc_now,
+)
 from .global_context_service import GlobalContextService
 from .orderbook_service import OrderBookService
+from ..preset_manager import read_presets
 
 
 DEFAULT_TASK_NAME = "FreqtradeDataToolsWatchdog"
@@ -50,7 +61,7 @@ class DataToolsWatchdogService:
 
     def __init__(self, app_dir: Path, python_exe: str | None = None) -> None:
         self.app_dir = Path(app_dir)
-        self.python_exe = python_exe or sys.executable
+        self.python_exe = python_exe
         self.runtime_dir = self.app_dir / "launcher_v2" / "runtime"
         self.status_path = self.runtime_dir / "data_tools_watchdog_status.json"
         self.events_path = self.runtime_dir / "data_tools_watchdog_events.jsonl"
@@ -73,11 +84,7 @@ class DataToolsWatchdogService:
 
     def load_auto_preset(self, preset_path: str | Path | None = None) -> dict[str, Any]:
         path = Path(preset_path) if preset_path else self.preset_path()
-        if not path.exists():
-            return {}
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(payload, dict):
-            return {}
+        payload = read_presets(path)
         preset = payload.get("LauncherV2-auto")
         if isinstance(preset, dict):
             return preset
@@ -105,18 +112,30 @@ class DataToolsWatchdogService:
         return merged
 
     def run_once(self, state: dict[str, Any] | None = None, *, preset_path: str | Path | None = None) -> dict[str, Any]:
-        state = self.normalize_state(state)
         preset = self.load_auto_preset(preset_path)
+        preset_state = self._watchdog_state_from_preset(preset)
+        overrides = {key: value for key, value in (state or {}).items() if value is not None}
+        state = self.normalize_state({**preset_state, **overrides})
         heartbeat_stale_minutes = _positive_int(state.get("heartbeat_stale_minutes"), DEFAULT_HEARTBEAT_STALE_MINUTES)
         restart_dead = bool(state.get("restart_dead", True))
-        selected = set(state.get("services") or SERVICE_KEYS)
+        selected = set(state["services"])
+        desired = preset.get("collector_desired", {})
+        if not isinstance(desired, dict):
+            raise ValueError("LauncherV2-auto collector_desired must be an object.")
         rows: list[dict[str, Any]] = []
         events: list[dict[str, Any]] = []
 
         for key in SERVICE_KEYS:
             if key not in selected:
                 continue
-            row = self._check_tool(key, preset, heartbeat_stale_minutes, restart_dead)
+            row = self._check_tool(
+                key,
+                preset,
+                heartbeat_stale_minutes,
+                restart_dead,
+                desired.get(key, True) is not False,
+                preset_path or self.preset_path(),
+            )
             rows.append(row)
             if row.get("event"):
                 events.append(row["event"])
@@ -125,6 +144,7 @@ class DataToolsWatchdogService:
             "checked_at": utc_now(),
             "heartbeat_stale_minutes": heartbeat_stale_minutes,
             "restart_dead": restart_dead,
+            "services": [key for key in SERVICE_KEYS if key in selected],
             "operator_note": state.get("operator_note") or DEFAULT_OPERATOR_NOTE,
             "rows": rows,
             "events": events,
@@ -135,13 +155,38 @@ class DataToolsWatchdogService:
             self._append_event(event)
         return payload
 
-    def _check_tool(self, key: str, preset: dict[str, Any], heartbeat_stale_minutes: int, restart_dead: bool) -> dict[str, Any]:
+    def _check_tool(
+        self,
+        key: str,
+        preset: dict[str, Any],
+        heartbeat_stale_minutes: int,
+        restart_dead: bool,
+        desired: bool = True,
+        preset_path: str | Path | None = None,
+    ) -> dict[str, Any]:
         spec = TOOL_SPECS[key]
         try:
             state = self._collector_state(key, preset)
             status = self._read_status(key, state)
+            if not desired:
+                return {
+                    "key": key,
+                    "label": spec.label,
+                    "pid": _status_pid(status),
+                    "running": status.get("verified_running") is True,
+                    "desired": False,
+                    "status": status.get("status") or "stopped_by_user",
+                    "heartbeat_at": _status_heartbeat(status),
+                    "heartbeat_stale_minutes": _effective_stale_minutes(key, state, heartbeat_stale_minutes),
+                    "last_fetch_at": status.get("last_fetch_at") or status.get("last_message_at") or status.get("last_metric_at") or "",
+                    "last_error": str(status.get("last_error") or ""),
+                    "action": "stopped_by_user",
+                    "event": None,
+                }
+            if not isinstance(status.get("verified_running"), bool):
+                raise RuntimeError("Collector status is missing verified_running; refusing to infer ownership from PID liveness.")
             pid = _status_pid(status)
-            running = bool(pid and is_process_running(pid))
+            running = status["verified_running"]
             heartbeat = _status_heartbeat(status)
             effective_stale_minutes = _effective_stale_minutes(key, state, heartbeat_stale_minutes)
             stale = _is_stale(heartbeat, effective_stale_minutes)
@@ -150,12 +195,31 @@ class DataToolsWatchdogService:
             event: dict[str, Any] | None = None
 
             if not running and restart_dead:
-                new_pid = self._start_tool(key, state, preset)
+                new_pid = self._start_tool(key, state, preset, preset_path)
+                if new_pid is None:
+                    status = self._read_status(key, state)
+                    return {
+                        "key": key,
+                        "label": spec.label,
+                        "pid": _status_pid(status),
+                        "running": status.get("verified_running") is True,
+                        "desired": False,
+                        "status": status.get("status") or "stopped_by_user",
+                        "heartbeat_at": _status_heartbeat(status),
+                        "heartbeat_stale_minutes": effective_stale_minutes,
+                        "last_fetch_at": status.get("last_fetch_at") or status.get("last_message_at") or status.get("last_metric_at") or "",
+                        "last_error": str(status.get("last_error") or ""),
+                        "action": "stopped_by_user",
+                        "event": None,
+                    }
                 action = f"restarted pid {new_pid}"
                 event = _event(spec.label, "restart", f"{spec.label} was stopped or stale; restarted PID {new_pid}.", pid, new_pid)
                 pid = new_pid
-                running = is_process_running(pid)
                 status = self._read_status(key, state)
+                if not isinstance(status.get("verified_running"), bool):
+                    raise RuntimeError("Collector status is missing verified_running after restart; refusing to infer ownership from PID liveness.")
+                pid = _status_pid(status) or new_pid
+                running = status["verified_running"]
                 heartbeat = _status_heartbeat(status) or heartbeat
             elif not running:
                 action = "dead"
@@ -171,6 +235,7 @@ class DataToolsWatchdogService:
                 "label": spec.label,
                 "pid": pid,
                 "running": running,
+                "desired": desired,
                 "status": status.get("status") or "-",
                 "heartbeat_at": heartbeat or "",
                 "heartbeat_stale_minutes": effective_stale_minutes,
@@ -186,6 +251,7 @@ class DataToolsWatchdogService:
                 "label": spec.label,
                 "pid": None,
                 "running": False,
+                "desired": desired,
                 "status": "watchdog_error",
                 "heartbeat_at": "",
                 "last_fetch_at": "",
@@ -197,6 +263,7 @@ class DataToolsWatchdogService:
     def _collector_state(self, key: str, preset: dict[str, Any]) -> dict[str, Any]:
         if key == "news":
             return {
+                "python_exe": self._service_python(preset),
                 "config_path": preset.get("news_config_path"),
                 "data_dir": preset.get("news_data_dir"),
                 "db_path": preset.get("news_db_path"),
@@ -205,6 +272,7 @@ class DataToolsWatchdogService:
             }
         if key == "web":
             return {
+                "python_exe": self._service_python(preset),
                 "config_path": preset.get("web_config_path"),
                 "data_dir": preset.get("web_data_dir"),
                 "db_path": preset.get("web_db_path"),
@@ -213,6 +281,7 @@ class DataToolsWatchdogService:
             }
         if key == "global_context":
             return {
+                "python_exe": self._service_python(preset),
                 "config_path": preset.get("global_context_config_path"),
                 "data_dir": preset.get("global_context_data_dir"),
                 "db_path": preset.get("global_context_db_path"),
@@ -224,6 +293,7 @@ class DataToolsWatchdogService:
             }
         if key == "orderbook":
             return {
+                "python_exe": self._service_python(preset),
                 "config_path": preset.get("orderbook_config_path"),
                 "data_dir": preset.get("orderbook_data_dir"),
                 "market_profiles": preset.get("orderbook_market_profiles"),
@@ -253,16 +323,26 @@ class DataToolsWatchdogService:
             return self.orderbook_service.read_status(state)
         raise KeyError(key)
 
-    def _start_tool(self, key: str, state: dict[str, Any], preset: dict[str, Any]) -> int:
+    def _start_tool(
+        self,
+        key: str,
+        state: dict[str, Any],
+        preset: dict[str, Any],
+        preset_path: str | Path | None = None,
+    ) -> int | None:
         if key == "news":
-            return int(self.research_service.start_detached(NEWS_PROFILE, state))
+            return self.research_service.start_detached(NEWS_PROFILE, state, automatic=True, preset_path=preset_path)
         if key == "web":
-            return int(self.research_service.start_detached(WEB_PROFILE, state))
+            return self.research_service.start_detached(WEB_PROFILE, state, automatic=True, preset_path=preset_path)
         if key == "global_context":
-            return int(self.global_service.start_detached(state))
+            return self.global_service.start_detached(state, automatic=True, preset_path=preset_path)
         if key == "orderbook":
-            return int(self.orderbook_service.start_detached(state, _pairs_from_preset(preset)))
+            return self.orderbook_service.start_detached(state, _pairs_from_preset(preset), automatic=True, preset_path=preset_path)
         raise KeyError(key)
+
+    def _service_python(self, preset: dict[str, Any]) -> str:
+        configured = self.python_exe if self.python_exe is not None else preset.get("python_exe")
+        return preferred_data_tools_python(self.app_dir, configured)
 
     def read_latest_status(self) -> dict[str, Any]:
         if not self.status_path.exists():
@@ -296,23 +376,31 @@ class DataToolsWatchdogService:
         with self.events_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(event, sort_keys=False) + "\n")
 
-    def build_runner_command(self, state: dict[str, Any] | None = None) -> str:
-        state = self.normalize_state(state)
+    def build_runner_command(self, state: dict[str, Any] | None = None, *, preset_path: str | Path | None = None) -> str:
         runner = self.app_dir / "data_tools_watchdog.py"
+        preset = self.load_auto_preset(preset_path)
+        python_override = self.python_exe if self.python_exe is not None else (state or {}).get("python_exe")
+        if python_override is None:
+            python_override = preset.get("python_exe")
         parts = [
-            _quote(str(self.python_exe)),
+            _quote(preferred_data_tools_python(self.app_dir, python_override)),
             _quote(str(runner)),
             "--once",
             "--preset",
-            _quote(str(self.preset_path())),
-            "--heartbeat-stale-minutes",
-            str(_positive_int(state.get("heartbeat_stale_minutes"), DEFAULT_HEARTBEAT_STALE_MINUTES)),
-            "--services",
-            ",".join(state.get("services") or SERVICE_KEYS),
+            _quote(str(preset_path or self.preset_path())),
         ]
-        if not state.get("restart_dead", True):
-            parts.append("--no-restart-dead")
         return " ".join(parts)
+
+    def _watchdog_state_from_preset(self, preset: dict[str, Any]) -> dict[str, Any]:
+        state = {
+            "task_name": preset.get("data_watchdog_task_name"),
+            "check_interval_minutes": preset.get("data_watchdog_check_interval_minutes"),
+            "heartbeat_stale_minutes": preset.get("data_watchdog_heartbeat_stale_minutes"),
+            "restart_dead": preset.get("data_watchdog_restart_dead"),
+            "operator_note": preset.get("data_watchdog_operator_note"),
+            "services": preset.get("data_watchdog_services"),
+        }
+        return {key: value for key, value in state.items() if value is not None}
 
     def task_wrapper_path(self, task_name: str | None = None) -> Path:
         safe_name = "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in str(task_name or DEFAULT_TASK_NAME))
@@ -355,8 +443,9 @@ class DataToolsWatchdogService:
         state = self.normalize_state(state)
         task_name = str(state["task_name"])
         interval_minutes = _positive_int(state.get("check_interval_minutes"), DEFAULT_CHECK_INTERVAL_MINUTES)
+        user_account, user_sid = _current_user_identity()
         hidden_wrapper = self.write_hidden_task_wrapper(state)
-        task_xml = _scheduled_task_xml(hidden_wrapper, interval_minutes)
+        task_xml = _scheduled_task_xml(hidden_wrapper, interval_minutes, user_sid)
         temp_path: Path | None = None
         try:
             with tempfile.NamedTemporaryFile(mode="w", suffix=".xml", encoding="utf-16", delete=False) as handle:
@@ -372,15 +461,38 @@ class DataToolsWatchdogService:
             if temp_path is not None:
                 temp_path.unlink(missing_ok=True)
 
-        # The scheduled task now owns boot startup; the per-user entry required login.
         startup_entry = self.startup_entry_path(task_name)
-        if installed.returncode == 0 and startup_entry.exists():
-            startup_entry.unlink()
-        stdout = f"[{task_name}]\n{installed.stdout or ''}\n[startup_entry]\nRemoved {startup_entry}\n"
-        stderr = f"[{task_name}]\n{installed.stderr or ''}\n[startup_entry]\n"
+        verified = None
+        if installed.returncode == 0:
+            queried = subprocess.run(
+                ["schtasks", "/Query", "/TN", task_name, "/XML"],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            verified = queried.returncode == 0 and _scheduled_task_xml_matches(
+                queried.stdout,
+                hidden_wrapper,
+                interval_minutes,
+                user_sid,
+                user_account,
+            )
+        else:
+            queried = None
+
+        stdout = f"[{task_name}]\n{installed.stdout or ''}\n"
+        stderr = f"[{task_name}]\n{installed.stderr or ''}\n"
+        if installed.returncode == 0:
+            if verified:
+                stdout += f"[scheduler_verification]\nVerified current-user InteractiveToken task XML.\n"
+            else:
+                stdout += "[scheduler_verification]\nTask XML did not match the requested user, triggers, action, or instance policy.\n"
+                if queried is not None:
+                    stderr += f"{queried.stderr or queried.stdout or ''}\n"
+        stdout += f"[startup_entry]\nRetained {startup_entry} | exists={startup_entry.exists()}\n"
         return subprocess.CompletedProcess(
             args=["schtasks", task_name, str(startup_entry)],
-            returncode=0 if installed.returncode == 0 else 1,
+            returncode=0 if installed.returncode == 0 and verified else 1,
             stdout=stdout,
             stderr=stderr,
         )
@@ -391,13 +503,15 @@ class DataToolsWatchdogService:
         name = str(task_name or DEFAULT_TASK_NAME).strip() or DEFAULT_TASK_NAME
         hourly = subprocess.run(["schtasks", "/Delete", "/TN", name, "/F"], text=True, capture_output=True, check=False)
         startup_entry = self.startup_entry_path(name)
+        startup_entry_removed = startup_entry.exists()
         if startup_entry.exists():
             startup_entry.unlink()
         returncode = 0 if hourly.returncode == 0 else 1
+        startup_entry_status = f"Removed {startup_entry}" if startup_entry_removed else f"Not present {startup_entry}"
         return subprocess.CompletedProcess(
             args=["schtasks", name, str(startup_entry)],
             returncode=returncode,
-            stdout=f"[{name}]\n{hourly.stdout or ''}\n[startup_entry]\nRemoved {startup_entry}\n",
+            stdout=f"[{name}]\n{hourly.stdout or ''}\n[startup_entry]\n{startup_entry_status}\n",
             stderr=f"[{name}]\n{hourly.stderr or ''}\n[startup_entry]\n",
         )
 
@@ -440,21 +554,46 @@ def _positive_int(value: Any, default: int) -> int:
     return max(1, parsed)
 
 
-def _scheduled_task_xml(hidden_wrapper: Path, interval_minutes: int) -> str:
+def _current_user_identity() -> tuple[str, str]:
+    try:
+        result = subprocess.run(
+            ["whoami", "/user", "/fo", "csv", "/nh"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+    except OSError as exc:
+        raise RuntimeError(f"Could not determine the current Windows user identity with whoami: {exc}") from exc
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "no command output").strip()
+        raise RuntimeError(f"Could not determine the current Windows user identity with whoami: {detail}")
+    try:
+        rows = list(csv.reader(io.StringIO(result.stdout), strict=True))
+        user_account, user_sid = (value.strip() for value in rows[0]) if len(rows) == 1 and len(rows[0]) == 2 else ("", "")
+    except (csv.Error, IndexError):
+        user_account, user_sid = "", ""
+    if not re.fullmatch(r"[^\\]+\\[^\\]+", user_account) or not re.fullmatch(r"S-[0-9]+(?:-[0-9]+)+", user_sid):
+        raise RuntimeError("Could not determine the current Windows user identity: whoami returned unexpected CSV output.")
+    return user_account, user_sid
+
+
+def _scheduled_task_xml(hidden_wrapper: Path, interval_minutes: int, user_sid: str) -> str:
+    if not user_sid.strip():
+        raise ValueError("user_sid must be provided when building the scheduled task XML.")
     start_boundary = datetime.now().astimezone().replace(microsecond=0).isoformat()
     arguments = escape(f'//B //NoLogo "{hidden_wrapper}"')
     return f'''<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <RegistrationInfo><Description>Keep LauncherV2 data collectors running without requiring user login.</Description></RegistrationInfo>
+  <RegistrationInfo><Description>Run LauncherV2 data collectors for the signed-in user on logon and hourly.</Description></RegistrationInfo>
   <Triggers>
-    <BootTrigger><Enabled>true</Enabled><Delay>PT1M</Delay></BootTrigger>
+    <LogonTrigger><Enabled>true</Enabled><UserId>{escape(user_sid.strip())}</UserId></LogonTrigger>
     <TimeTrigger>
       <Repetition><Interval>PT{interval_minutes}M</Interval><StopAtDurationEnd>false</StopAtDurationEnd></Repetition>
       <StartBoundary>{start_boundary}</StartBoundary><Enabled>true</Enabled>
     </TimeTrigger>
   </Triggers>
   <Principals>
-    <Principal id="System"><UserId>S-1-5-18</UserId><RunLevel>HighestAvailable</RunLevel></Principal>
+    <Principal id="Author"><UserId>{escape(user_sid.strip())}</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal>
   </Principals>
   <Settings>
     <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
@@ -465,11 +604,80 @@ def _scheduled_task_xml(hidden_wrapper: Path, interval_minutes: int) -> str:
     <AllowStartOnDemand>true</AllowStartOnDemand><Enabled>true</Enabled><Hidden>false</Hidden>
     <ExecutionTimeLimit>PT10M</ExecutionTimeLimit><Priority>7</Priority>
   </Settings>
-  <Actions Context="System">
+  <Actions Context="Author">
     <Exec><Command>C:\\Windows\\System32\\wscript.exe</Command><Arguments>{arguments}</Arguments></Exec>
   </Actions>
 </Task>
 '''
+
+
+def _task_duration_seconds(duration: str) -> int | None:
+    match = re.fullmatch(r"P(?:([0-9]+)D)?(?:T(?:([0-9]+)H)?(?:([0-9]+)M)?(?:([0-9]+)S)?)?", duration.strip())
+    if match is None or not any(match.groups()) or duration.strip().endswith("T"):
+        return None
+    return sum(int(value or 0) * seconds for value, seconds in zip(match.groups(), (86400, 3600, 60, 1)))
+
+
+def _scheduled_task_xml_matches(
+    xml_text: str,
+    hidden_wrapper: Path,
+    interval_minutes: int,
+    user_sid: str,
+    user_account: str | None = None,
+) -> bool:
+    # The optional account must come from the same whoami /user row as the SID.
+    if not re.fullmatch(r"S-[0-9]+(?:-[0-9]+)+", user_sid.strip()):
+        return False
+    user_ids = {user_sid.strip().casefold()}
+    if user_account is not None:
+        if not re.fullmatch(r"[^\\]+\\[^\\]+", user_account.strip()):
+            return False
+        user_ids.add(user_account.strip().casefold())
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return False
+    namespace = {"task": "http://schemas.microsoft.com/windows/2004/02/mit/task"}
+    principal = root.find(".//task:Principals/task:Principal", namespace)
+    user_id = principal.findtext("task:UserId", default="", namespaces=namespace) if principal is not None else ""
+    logon_type = principal.findtext("task:LogonType", default="", namespaces=namespace) if principal is not None else ""
+    run_level = principal.findtext("task:RunLevel", default="LeastPrivilege", namespaces=namespace) if principal is not None else ""
+    multiple_instances = root.findtext(".//task:Settings/task:MultipleInstancesPolicy", default="", namespaces=namespace)
+    enabled = root.findtext(".//task:Settings/task:Enabled", default="true", namespaces=namespace)
+    actions = root.find(".//task:Actions/task:Exec", namespace)
+    command = actions.findtext("task:Command", default="", namespaces=namespace) if actions is not None else ""
+    arguments = actions.findtext("task:Arguments", default="", namespaces=namespace) if actions is not None else ""
+    triggers = root.find("task:Triggers", namespace)
+    has_logon = triggers is not None and any(
+        trigger.tag == f"{{{namespace['task']}}}LogonTrigger"
+        and trigger.findtext("task:Enabled", default="true", namespaces=namespace).strip().casefold() == "true"
+        and trigger.findtext("task:UserId", default="", namespaces=namespace).strip().casefold()
+        in user_ids
+        for trigger in triggers
+    )
+    time_triggers = (
+        [trigger for trigger in triggers if trigger.tag == f"{{{namespace['task']}}}TimeTrigger"]
+        if triggers is not None
+        else []
+    )
+    has_hourly = any(
+        trigger.findtext("task:Enabled", default="true", namespaces=namespace).strip().casefold() == "true"
+        and _task_duration_seconds(trigger.findtext("task:Repetition/task:Interval", default="", namespaces=namespace))
+        == interval_minutes * 60
+        for trigger in time_triggers
+    )
+    expected_arguments = f'//B //NoLogo "{hidden_wrapper}"'
+    return (
+        user_id.strip().casefold() in user_ids
+        and logon_type == "InteractiveToken"
+        and run_level == "LeastPrivilege"
+        and enabled.strip().casefold() == "true"
+        and multiple_instances == "IgnoreNew"
+        and command.rstrip("\\/").casefold() == r"C:\Windows\System32\wscript.exe".rstrip("\\/").casefold()
+        and arguments == expected_arguments
+        and has_logon
+        and has_hourly
+    )
 
 
 def _pairs_from_preset(preset: dict[str, Any]) -> list[str]:

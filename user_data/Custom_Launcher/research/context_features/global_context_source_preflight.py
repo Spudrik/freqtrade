@@ -6,6 +6,7 @@ import json
 import math
 import sqlite3
 import statistics
+import sys
 from collections import Counter, defaultdict
 from collections.abc import Iterable
 from datetime import UTC, datetime
@@ -13,12 +14,16 @@ from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
+
 import pandas as pd
+from user_data.Custom_Launcher.collector_runtime import atomic_write_text as write_text_atomic
 
 
 USER_DATA_DIR = Path(__file__).resolve().parents[3]
-DEFAULT_DB = USER_DATA_DIR / "research_news_data" / "global_context" / "global_context.sqlite"
-DEFAULT_CONFIG = Path(__file__).resolve().parents[1] / "config" / "global_context_sources.json"
+DEFAULT_DB = USER_DATA_DIR / "collector_data" / "global_context" / "global_context.sqlite"
+DEFAULT_CONFIG = Path(__file__).resolve().parents[2] / "collectors" / "context" / "config" / "global_context_sources.json"
 DEFAULT_OUTPUT_DIR = USER_DATA_DIR / "research_news_data" / "context_features" / "source_preflight"
 CAUSAL_CLOCK_TOLERANCE_SECONDS = 1.0
 
@@ -577,12 +582,6 @@ def write_csv_atomic(path: Path, rows: list[dict[str, Any]]) -> None:
 def write_parquet_atomic(path: Path, frame: pd.DataFrame) -> None:
     temporary = path.with_suffix(path.suffix + ".tmp")
     frame.to_parquet(temporary, index=False)
-    temporary.replace(path)
-
-
-def write_text_atomic(path: Path, text: str) -> None:
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(text, encoding="utf-8")
     temporary.replace(path)
 
 

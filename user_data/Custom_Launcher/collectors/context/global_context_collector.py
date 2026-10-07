@@ -7,8 +7,10 @@ import logging
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.request import Request, urlopen
+
+from user_data.Custom_Launcher.collector_runtime import CollectorBusyError, lock_resources, pid_create_time
 
 from .global_context_sources import (
     fetch_source_payload as fetch_global_source_payload,
@@ -16,6 +18,7 @@ from .global_context_sources import (
 )
 from .global_context_store import (
     connect_db,
+    fetch_source_health,
     fetch_storage_summary,
     init_db,
     insert_context_tick,
@@ -23,12 +26,20 @@ from .global_context_store import (
     upsert_collector_run,
     upsert_source_status,
 )
-from .research_collector_common import configure_logging, evaluate_startup_stop_file, load_json, save_json, sleep_with_stop, utc_now
+from .research_collector_common import (
+    configure_logging,
+    evaluate_startup_stop_file,
+    load_json,
+    resolve_collector_paths,
+    save_json,
+    sleep_with_stop,
+    utc_now,
+)
 
 
 THIS_DIR = Path(__file__).resolve().parent
-DEFAULT_CONFIG_PATH = THIS_DIR.parents[0] / "config" / "global_context_sources.json"
-DEFAULT_DATA_DIR = THIS_DIR.parents[2] / "research_news_data" / "global_context"
+DEFAULT_CONFIG_PATH = THIS_DIR / "config" / "global_context_sources.json"
+DEFAULT_DATA_DIR = THIS_DIR.parents[2] / "collector_data" / "global_context"
 DEFAULT_DB_PATH = DEFAULT_DATA_DIR / "global_context.sqlite"
 DEFAULT_STATUS_PATH = DEFAULT_DATA_DIR / "collector_status.json"
 DEFAULT_PID_PATH = DEFAULT_DATA_DIR / "collector.pid"
@@ -40,17 +51,19 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Standalone global market context API collector")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
-    parser.add_argument("--db", type=Path, default=DEFAULT_DB_PATH)
-    parser.add_argument("--status-file", type=Path, default=DEFAULT_STATUS_PATH)
-    parser.add_argument("--pid-file", type=Path, default=DEFAULT_PID_PATH)
-    parser.add_argument("--stop-file", type=Path, default=DEFAULT_STOP_PATH)
-    parser.add_argument("--log-file", type=Path, default=DEFAULT_LOG_PATH)
+    parser.add_argument("--db", type=Path, default=None)
+    parser.add_argument("--status-file", type=Path, default=None)
+    parser.add_argument("--pid-file", type=Path, default=None)
+    parser.add_argument("--stop-file", type=Path, default=None)
+    parser.add_argument("--log-file", type=Path, default=None)
     parser.add_argument("--key-file", type=Path, default=None)
     parser.add_argument("--fred-key-json-path", default="")
     parser.add_argument("--enable-fred", action="store_true")
     parser.add_argument("--interval-seconds", type=int, default=1800)
     parser.add_argument("--once", action="store_true")
-    return parser.parse_args()
+    args = parser.parse_args()
+    resolve_collector_paths(args, db_filename=DEFAULT_DB_PATH.name, log_filename=DEFAULT_LOG_PATH.name)
+    return args
 
 
 def ensure_dirs(data_dir: Path) -> None:
@@ -124,13 +137,20 @@ def fetch_source(source: dict[str, Any], config: dict[str, Any]) -> list[dict[st
         rows = [normalized]
     else:
         rows = []
-    if not rows:
-        raise ValueError(f"Source returned no normalized rows: {source.get('id')}")
     return rows
 
 
 def main() -> int:
     args = parse_args()
+    try:
+        with lock_resources([args.db, args.status_file]):
+            return _run(args)
+    except CollectorBusyError as exc:
+        print(str(exc))
+        return 2
+
+
+def _run(args: argparse.Namespace) -> int:
     ensure_dirs(args.data_dir)
     configure_logging(args.log_file)
     init_db(args.db)
@@ -154,6 +174,7 @@ def main() -> int:
     status_payload: dict[str, Any] = {
         "run_id": run_id,
         "status": "running",
+        "pid_create_time": pid_create_time(),
         "pid": os.getpid(),
         "started_at": utc_now(),
         "heartbeat_at": utc_now(),
@@ -184,8 +205,13 @@ def main() -> int:
             config_path=str(args.config),
             db_path=str(args.db),
         )
+        existing_health = {row["source_id"]: row for row in fetch_source_health(conn)}
         for source in sources:
-            upsert_source_status(conn, _source_status_payload(source, enabled=bool(source.get("enabled", True))))
+            payload = _source_status_payload(source, enabled=bool(source.get("enabled", True)))
+            existing = existing_health.get(str(source.get("id") or ""))
+            if existing:
+                payload["last_error"] = existing.get("last_error")
+            upsert_source_status(conn, payload)
         conn.commit()
     finally:
         conn.close()
@@ -196,8 +222,12 @@ def main() -> int:
             if args.stop_file.exists():
                 terminal_status = "stopped"
                 break
-            new_ticks, failures = run_collection_cycle(args.db, enabled_sources, config)
-            status_payload["last_fetch_at"] = utc_now()
+            new_ticks, failures = run_collection_cycle(
+                args.db,
+                enabled_sources,
+                config,
+                on_attempt=lambda: status_payload.__setitem__("last_fetch_at", utc_now()),
+            )
             status_payload["heartbeat_at"] = utc_now()
             status_payload["ticks_total"] = int(status_payload.get("ticks_total", 0)) + new_ticks
             status_payload["success_count_total"] = int(status_payload.get("success_count_total", 0)) + new_ticks
@@ -206,10 +236,12 @@ def main() -> int:
             conn = connect_db(args.db)
             try:
                 summary = fetch_storage_summary(conn)
+                source_health = fetch_source_health(conn)
             finally:
                 conn.close()
             status_payload["stored_ticks"] = summary["tick_rows"]
             status_payload["stored_sources"] = summary["source_rows"]
+            status_payload["last_error"] = _current_degradation(enabled_sources, source_health)
             save_json(args.status_file, status_payload)
             if args.once:
                 break
@@ -246,7 +278,13 @@ def main() -> int:
     return 0
 
 
-def run_collection_cycle(db_path: Path, enabled_sources: list[dict[str, Any]], config: dict[str, Any]) -> tuple[int, int]:
+def run_collection_cycle(
+    db_path: Path,
+    enabled_sources: list[dict[str, Any]],
+    config: dict[str, Any],
+    *,
+    on_attempt: Callable[[], None] | None = None,
+) -> tuple[int, int]:
     inserted = 0
     failures = 0
     conn = connect_db(db_path)
@@ -254,12 +292,22 @@ def run_collection_cycle(db_path: Path, enabled_sources: list[dict[str, Any]], c
         for source in enabled_sources:
             try:
                 if _should_skip_source(conn, source):
-                    upsert_source_status(conn, _source_status_payload(source, enabled=True))
                     continue
+                if on_attempt is not None:
+                    on_attempt()
                 rows = fetch_source(source, config)
                 for row in rows:
                     insert_context_tick(conn, row)
-                upsert_source_status(conn, _source_status_payload(source, enabled=True, row=_primary_status_row(rows)))
+                primary_row = _primary_status_row(rows)
+                upsert_source_status(
+                    conn,
+                    _source_status_payload(
+                        source,
+                        enabled=True,
+                        row=primary_row,
+                        success_at=utc_now() if primary_row is None or not primary_row.get("ts") else None,
+                    ),
+                )
                 inserted += len(rows)
             except Exception as exc:
                 failures += 1
@@ -271,6 +319,19 @@ def run_collection_cycle(db_path: Path, enabled_sources: list[dict[str, Any]], c
     return inserted, failures
 
 
+def _current_degradation(
+    enabled_sources: list[dict[str, Any]], source_health: list[dict[str, Any]]
+) -> str | None:
+    health_by_id = {str(row.get("source_id") or ""): row for row in source_health}
+    errors = []
+    for source in enabled_sources:
+        source_id = str(source.get("id") or "")
+        error = health_by_id.get(source_id, {}).get("last_error")
+        if error:
+            errors.append(f"{source_id}: {error}")
+    return "; ".join(errors) or None
+
+
 def _should_skip_source(conn, source: dict[str, Any]) -> bool:
     interval = int(source.get("min_interval_seconds") or 0)
     if interval <= 0:
@@ -279,14 +340,20 @@ def _should_skip_source(conn, source: dict[str, Any]) -> bool:
     row = conn.execute("SELECT last_success_at, last_failure_at FROM context_sources WHERE source_id = ?", (source_id,)).fetchone()
     if not row:
         return False
-    last_seen_text = row["last_success_at"] or row["last_failure_at"]
-    if not last_seen_text:
-        return False
-    try:
-        last_seen = datetime.fromisoformat(str(last_seen_text).replace("Z", "+00:00"))
-        if last_seen.tzinfo is None:
-            last_seen = last_seen.replace(tzinfo=timezone.utc)
-    except Exception:
+    last_seen_values = [row["last_success_at"], row["last_failure_at"]]
+    last_seen = None
+    for last_seen_text in last_seen_values:
+        if not last_seen_text:
+            continue
+        try:
+            candidate = datetime.fromisoformat(str(last_seen_text).replace("Z", "+00:00"))
+            if candidate.tzinfo is None:
+                candidate = candidate.replace(tzinfo=timezone.utc)
+        except Exception:
+            continue
+        if last_seen is None or candidate > last_seen:
+            last_seen = candidate
+    if last_seen is None:
         return False
     elapsed = (datetime.now(timezone.utc) - last_seen.astimezone(timezone.utc)).total_seconds()
     return elapsed < interval
@@ -298,6 +365,7 @@ def _source_status_payload(
     enabled: bool,
     row: dict[str, Any] | None = None,
     error: str | None = None,
+    success_at: str | None = None,
 ) -> dict[str, Any]:
     payload = {
         "source_id": source.get("id"),
@@ -333,6 +401,8 @@ def _source_status_payload(
                 "last_notes": row.get("notes"),
             }
         )
+    elif success_at:
+        payload.update({"last_success_at": success_at, "last_failure_at": None, "last_error": None})
     return payload
 
 

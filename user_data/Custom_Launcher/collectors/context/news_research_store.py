@@ -576,8 +576,8 @@ def upsert_source_health(conn: sqlite3.Connection, source: dict[str, Any], healt
             region=excluded.region,
             topic=excluded.topic,
             market_relevance=excluded.market_relevance,
-            last_success_at=excluded.last_success_at,
-            last_failure_at=excluded.last_failure_at,
+            last_success_at=COALESCE(excluded.last_success_at, sources.last_success_at),
+            last_failure_at=COALESCE(excluded.last_failure_at, sources.last_failure_at),
             last_error=excluded.last_error,
             last_http_status=excluded.last_http_status,
             items_last_fetch=excluded.items_last_fetch,
@@ -615,21 +615,25 @@ def sync_disabled_sources(conn: sqlite3.Connection, sources: list[dict[str, Any]
         if not source_id:
             continue
         existing = conn.execute(
-            "SELECT last_success_at, avg_items_per_day FROM sources WHERE source_id = ?",
+            """
+            SELECT last_success_at, last_failure_at, last_error, last_http_status,
+                   items_last_fetch, inserted_last_fetch, duplicates_last_fetch, avg_items_per_day
+            FROM sources WHERE source_id = ?
+            """,
             (source_id,),
         ).fetchone()
         upsert_source_health(
             conn,
             source,
             {
-                "last_success_at": existing[0] if existing else None,
-                "last_failure_at": None,
-                "last_error": None,
-                "last_http_status": None,
-                "items_last_fetch": 0,
-                "inserted_last_fetch": 0,
-                "duplicates_last_fetch": 0,
-                "avg_items_per_day": existing[1] if existing else None,
+                "last_success_at": existing["last_success_at"] if existing else None,
+                "last_failure_at": existing["last_failure_at"] if existing else None,
+                "last_error": existing["last_error"] if existing else None,
+                "last_http_status": existing["last_http_status"] if existing else None,
+                "items_last_fetch": existing["items_last_fetch"] if existing else 0,
+                "inserted_last_fetch": existing["inserted_last_fetch"] if existing else 0,
+                "duplicates_last_fetch": existing["duplicates_last_fetch"] if existing else 0,
+                "avg_items_per_day": existing["avg_items_per_day"] if existing else None,
             },
         )
 
