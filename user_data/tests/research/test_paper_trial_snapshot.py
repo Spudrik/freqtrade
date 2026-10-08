@@ -413,51 +413,76 @@ def test_markdown_table_pools_raw_closed_totals_and_keeps_runtime_rate_unknown()
            "runtime_span":{"status":"unknown"},"profit_factor":{"value":0.0,"status":"ok"},
            "closed_profit_positive_usdt":0.0,"closed_profit_negative_usdt":-1.0}]
     table=snapshot.format_account_table(rows,"2026-10-05T12:00:00+00:00")
-    assert "| TOTAL | — | — | 3.000 | 1/1 | 1/1 | 1/1 | 2.00 | — | — |" in table
-    assert "Runtime is elapsed span" in table and "Trades/day" in table
+    assert "| TOTAL | — | — | no losses | 1/0 | 1/0 | 1/0 | 3.00 | 1.00 | — |" in table
+    assert "| a | 1d 0h | 2.00 | no losses |" in table
+    assert "| b |" not in table and "Draining" not in table
+    assert "Trades/day" in table and "Runtime is elapsed span" not in table
 
 
-def test_markdown_account_report_groups_and_sorts_without_mutating_rows():
+def test_markdown_account_report_shows_only_active_rows_and_totals_without_mutation():
     rows = [
-        {"account":"active_short","lifecycle":"ACTIVE","open_longs":0,"open_shorts":0,"closed_longs":0,"closed_shorts":0,
-         "wins":0,"losses":0,"banked_pnl_usdt":0.0,"estimated_open_pnl_usdt":0.0,"trades_per_day":None,
-         "runtime_span":{"status":"known","elapsed_seconds":0},"profit_factor":{"status":"no_closed_trades"},
-         "closed_profit_positive_usdt":0.0,"closed_profit_negative_usdt":0.0},
-        {"account":"drain_long","lifecycle":"DRAINING","open_longs":0,"open_shorts":0,"closed_longs":1,"closed_shorts":0,
-         "wins":1,"losses":0,"banked_pnl_usdt":3.0,"estimated_open_pnl_usdt":0.0,"trades_per_day":None,
-         "runtime_span":{"status":"known","elapsed_seconds":30},"profit_factor":{"status":"no_loss_trades"},
-         "closed_profit_positive_usdt":3.0,"closed_profit_negative_usdt":0.0},
-        {"account":"active_tie_b","lifecycle":"ACTIVE","open_longs":0,"open_shorts":0,"closed_longs":0,"closed_shorts":1,
+        {"account":"active_long","lifecycle":"ACTIVE","open_longs":1,"open_shorts":0,"closed_longs":1,"closed_shorts":0,
+         "wins":1,"losses":0,"banked_pnl_usdt":3.0,"estimated_open_pnl_usdt":1.0,"trades_per_day":2.0,
+         "runtime_span":{"status":"known","elapsed_seconds":86400,"start_source":"account_started_at_utc"},
+         "profit_factor":{"status":"no_loss_trades"},"closed_profit_positive_usdt":3.0,"closed_profit_negative_usdt":0.0},
+        {"account":"active_tie_b","lifecycle":"ACTIVE","open_longs":0,"open_shorts":1,"closed_longs":0,"closed_shorts":1,
          "wins":0,"losses":1,"banked_pnl_usdt":-1.0,"estimated_open_pnl_usdt":0.0,"trades_per_day":None,
          "runtime_span":{"status":"known","elapsed_seconds":10},"profit_factor":{"value":0.0,"status":"ok"},
          "closed_profit_positive_usdt":0.0,"closed_profit_negative_usdt":-1.0},
-        {"account":"parked_unknown","lifecycle":"PARKED","open_longs":0,"open_shorts":0,"closed_longs":0,"closed_shorts":0,
-         "wins":0,"losses":0,"banked_pnl_usdt":0.0,"estimated_open_pnl_usdt":0.0,"trades_per_day":None,
-         "runtime_span":{"status":"unknown"},"profit_factor":{"status":"no_closed_trades"},
-         "closed_profit_positive_usdt":0.0,"closed_profit_negative_usdt":0.0},
         {"account":"active_tie_a","lifecycle":"ACTIVE","open_longs":0,"open_shorts":0,"closed_longs":0,"closed_shorts":0,
          "wins":0,"losses":0,"banked_pnl_usdt":0.0,"estimated_open_pnl_usdt":0.0,"trades_per_day":None,
          "runtime_span":{"status":"known","elapsed_seconds":10},"profit_factor":{"status":"no_closed_trades"},
          "closed_profit_positive_usdt":0.0,"closed_profit_negative_usdt":0.0},
-        {"account":"odd","lifecycle":"NEW_STATE","open_longs":0,"open_shorts":0,"closed_longs":0,"closed_shorts":0,
+        {"account":"active_event","lifecycle":"ACTIVE","open_longs":0,"open_shorts":0,"closed_longs":0,"closed_shorts":0,
          "wins":0,"losses":0,"banked_pnl_usdt":0.0,"estimated_open_pnl_usdt":0.0,"trades_per_day":None,
-         "runtime_span":{"status":"unknown"},"profit_factor":{"status":"no_closed_trades"},
-         "closed_profit_positive_usdt":0.0,"closed_profit_negative_usdt":0.0},
+         "runtime_span":{"status":"known","elapsed_seconds":5,
+                         "start_source":"first_recorded_running_event_not_guaranteed_original_start"},
+         "profit_factor":{"status":"no_closed_trades"},"closed_profit_positive_usdt":0.0,"closed_profit_negative_usdt":0.0},
         {"account":"active_unknown","lifecycle":"ACTIVE","open_longs":0,"open_shorts":0,"closed_longs":0,"closed_shorts":0,
-         "wins":0,"losses":0,"banked_pnl_usdt":0.0,"estimated_open_pnl_usdt":0.0,"trades_per_day":None,
+         "wins":0,"losses":0,"banked_pnl_usdt":0.0,"estimated_open_pnl_usdt":None,"trades_per_day":None,
          "runtime_span":{"status":"unknown"},"profit_factor":{"status":"no_closed_trades"},
          "closed_profit_positive_usdt":0.0,"closed_profit_negative_usdt":0.0},
+        {"account":"drain_long","lifecycle":"DRAINING","open_longs":0,"open_shorts":8,"closed_longs":1,"closed_shorts":0,
+         "wins":1,"losses":0,"banked_pnl_usdt":1000000.0,"estimated_open_pnl_usdt":1000000.0,"trades_per_day":None,
+         "runtime_span":{"status":"known","elapsed_seconds":30},"profit_factor":{"status":"ok","value":1000000.0},
+         "closed_profit_positive_usdt":1000000.0,"closed_profit_negative_usdt":0.0},
+        {"account":"parked_loss","lifecycle":"PARKED","open_longs":0,"open_shorts":0,"closed_longs":0,"closed_shorts":1,
+         "wins":0,"losses":1,"banked_pnl_usdt":-1000000000000.0,"estimated_open_pnl_usdt":-1000000000000.0,"trades_per_day":None,
+         "runtime_span":{"status":"unknown"},"profit_factor":{"status":"ok","value":0.0},
+         "closed_profit_positive_usdt":0.0,"closed_profit_negative_usdt":-1000000000000.0},
+        {"account":"odd","lifecycle":"NEW_STATE","open_longs":99,"open_shorts":99,"closed_longs":99,"closed_shorts":99,
+         "wins":99,"losses":99,"banked_pnl_usdt":-999999999.0,"estimated_open_pnl_usdt":-999999999.0,"trades_per_day":None,
+         "runtime_span":{"status":"unknown"},"profit_factor":{"status":"ok","value":0.0},
+         "closed_profit_positive_usdt":0.0,"closed_profit_negative_usdt":-999999999.0},
     ]
     original = [dict(row) for row in rows]
     table = snapshot.format_account_table(rows, "2026-10-05T12:00:00+00:00")
     assert rows == original
-    assert table.index("## Active") < table.index("## Draining — new entries paused") < table.index("## Parked — stopped")
-    assert table.index("## Parked — stopped") < table.index("## Unknown lifecycle") < table.index("## Overall totals")
-    active = table.split("## Active", 1)[1].split("## Draining", 1)[0]
-    assert active.index("active_tie_a") < active.index("active_tie_b") < active.index("active_short") < active.index("active_unknown")
-    assert table.count("| odd |") == table.count("| drain_long |") == table.count("| parked_unknown |") == 1
+    assert "ACTIVE paper account snapshot — 2026-10-05T12:00:00+00:00" in table
+    assert table.index("active_long") < table.index("active_tie_a") < table.index("active_tie_b")
+    assert table.index("active_tie_b") < table.index("active_event") < table.index("active_unknown")
+    assert "Runtime†" in table and "| active_event | 0d 0h† |" in table
+    assert all(f"| {name} |" not in table for name in ("drain_long", "parked_loss", "odd"))
+    assert "Draining" not in table and "Parked" not in table and "Unknown lifecycle" not in table
+    assert table.count("| TOTAL |") == 1 and table.count("| Account |") == 1
     total_row = next(line for line in table.splitlines() if line.startswith("| TOTAL |"))
-    assert "3.000" in total_row and "1/1" in total_row and "2.00" in total_row
+    assert "3.000" in total_row and "1/1" in total_row and "2.00" in total_row and "| — |" in total_row
+    assert "Runtime is elapsed span" not in table and "First-recorded-running spans" not in table
+
+
+def test_account_table_empty_active_set_zeroes_totals_without_history():
+    rows=[{"account":"draining","lifecycle":"DRAINING","open_longs":9,"open_shorts":9,
+           "closed_longs":9,"closed_shorts":9,"wins":9,"losses":9,"banked_pnl_usdt":-100.0,
+           "estimated_open_pnl_usdt":-50.0,"profit_factor":{"status":"ok","value":0.0},
+           "closed_profit_positive_usdt":0.0,"closed_profit_negative_usdt":-100.0},
+          {"account":"parked","lifecycle":"PARKED","open_longs":8,"open_shorts":8,
+           "closed_longs":8,"closed_shorts":8,"wins":8,"losses":8,"banked_pnl_usdt":-200.0,
+           "estimated_open_pnl_usdt":-80.0,"profit_factor":{"status":"ok","value":0.0},
+           "closed_profit_positive_usdt":0.0,"closed_profit_negative_usdt":-200.0}]
+    table=snapshot.format_account_table(rows,"2026-10-05T12:00:00+00:00")
+    assert "No ACTIVE paper accounts; PF undefined." in table
+    assert "| TOTAL | — | — | — | 0/0 | 0/0 | 0/0 | 0.00 | 0.00 | — |" in table
+    assert "| draining |" not in table and "| parked |" not in table
 
 
 def test_profit_factor_and_pool_never_publish_overflow_or_assume_missing_is_zero():
@@ -475,9 +500,10 @@ def test_profit_factor_and_pool_never_publish_overflow_or_assume_missing_is_zero
 
 def test_account_table_separates_timestamp_and_labels_uninitialized_database():
     table=snapshot.format_account_table([{"account":"new_one","database_state":"not_initialized",
+        "lifecycle":"ACTIVE",
         "runtime_span":{"status":"unknown"},"profit_factor":{"status":"database_not_initialized"}}],
         "2026-10-05T12:00:00+00:00")
-    assert "2026-10-05T12:00:00+00:00\n\n## Unknown lifecycle\n\n| Account |" in table
+    assert "ACTIVE paper account snapshot — 2026-10-05T12:00:00+00:00\n\n| Account |" in table
     assert "new_one (DB not initialized)" in table
 
 

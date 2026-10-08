@@ -682,7 +682,7 @@ def format_account_table(accounts, observed_at_utc):
     """Pure formatter: no disk, network, process, or database reads."""
     count_fields = ("open_longs", "open_shorts", "closed_longs", "closed_shorts", "wins", "losses")
     pnl_fields = ("banked_pnl_usdt", "estimated_open_pnl_usdt")
-    header = ("| Account | Runtime | Trades/day | PF (closed) | Open L/S | Closed L/S | W/L | "
+    header = ("| Account | Runtime† | Trades/day | PF (closed) | Open L/S | Closed L/S | W/L | "
               "Banked USDT | Open P/L USDT | Lifecycle |")
     separator = "|---|---:|---:|---:|---:|---:|---:|---:|---:|---|"
 
@@ -690,11 +690,15 @@ def format_account_table(accounts, observed_at_utc):
         pf = row.get("profit_factor", {})
         factor = _table_number(pf.get("value"), 3) if pf.get("status") == "ok" else "—"
         if pf.get("status") == "no_loss_trades": factor = "no losses"
+        span = row.get("runtime_span", {})
+        runtime = _runtime_label(span)
+        if span.get("status") == "known" and span.get("start_source") == "first_recorded_running_event_not_guaranteed_original_start":
+            runtime += "†"
         account = row.get("account", "?")
         if row.get("database_state") == "not_initialized":
             account += " (DB not initialized)"
         return "| {account} | {runtime} | {rate} | {factor} | {ol}/{os} | {cl}/{cs} | {wins}/{losses} | {banked} | {open_pnl} | {lifecycle} |".format(
-            account=account, runtime=_runtime_label(row.get("runtime_span", {})),
+            account=account, runtime=runtime,
             rate=_table_number(row.get("trades_per_day")), factor=factor,
             ol=row.get("open_longs") if row.get("open_longs") is not None else "—",
             os=row.get("open_shorts") if row.get("open_shorts") is not None else "—",
@@ -705,41 +709,32 @@ def format_account_table(accounts, observed_at_utc):
             banked=_table_number(row.get("banked_pnl_usdt")),
             open_pnl=_table_number(row.get("estimated_open_pnl_usdt")), lifecycle=row.get("lifecycle", "unknown"))
 
-    groups = (("ACTIVE", "Active"), ("DRAINING", "Draining — new entries paused"),
-              ("PARKED", "Parked — stopped"))
-    categorized = {key: [] for key, _ in groups}
-    unknown = []
-    for row in accounts:
-        lifecycle = row.get("lifecycle")
-        (categorized[lifecycle] if lifecycle in categorized else unknown).append(row)
-
     def runtime_sort_key(row):
         span = row.get("runtime_span", {})
         seconds = span.get("elapsed_seconds") if span.get("status") == "known" else None
         known = isinstance(seconds, (int, float)) and isfinite(seconds)
         return (not known, -seconds if known else 0, str(row.get("account", "?")).casefold())
 
-    lines = [f"Paper account snapshot — {observed_at_utc}", ""]
-    for key, title in groups:
-        if not categorized[key]:
-            continue
-        lines.extend([f"## {title}", "", header, separator])
-        lines.extend(render_row(row) for row in sorted(categorized[key], key=runtime_sort_key))
-        lines.append("")
-    if unknown:
-        lines.extend(["## Unknown lifecycle", "", header, separator])
-        lines.extend(render_row(row) for row in sorted(unknown, key=runtime_sort_key))
-        lines.append("")
+    active = [row for row in accounts if row.get("lifecycle") == "ACTIVE"]
+    lines = [f"ACTIVE paper account snapshot — {observed_at_utc}", ""]
+    if not active:
+        lines.extend(["No ACTIVE paper accounts; PF undefined.", ""])
+    lines.extend([header, separator])
+    for row in sorted(active, key=runtime_sort_key):
+        lines.append(render_row(row))
+
     total = {}
     for field in count_fields + pnl_fields:
-        values = [row.get(field) for row in accounts]
-        total[field] = sum(values) if values and all(value is not None for value in values) else None
+        values = [row.get(field) for row in active]
+        if not active:
+            total[field] = 0.0 if field in pnl_fields else 0
+        else:
+            total[field] = sum(values) if all(value is not None for value in values) else None
     total.update({"account": "TOTAL", "lifecycle": "—", "runtime_span": {"status": "unknown"},
-                  "trades_per_day": None, "profit_factor": _pooled_factor(accounts)})
+                  "trades_per_day": None, "profit_factor": _pooled_factor(active)})
     pf = total["profit_factor"]
     factor = _table_number(pf.get("value"), 3) if pf.get("status") == "ok" else "—"
     if pf.get("status") == "no_loss_trades": factor = "no losses"
-    lines.extend(["## Overall totals", "", header, separator])
     lines.append("| TOTAL | — | — | {factor} | {ol}/{os} | {cl}/{cs} | {wins}/{losses} | {banked} | {open_pnl} | — |".format(
         factor=factor, ol=total["open_longs"] if total["open_longs"] is not None else "—",
         os=total["open_shorts"] if total["open_shorts"] is not None else "—",
@@ -748,12 +743,6 @@ def format_account_table(accounts, observed_at_utc):
         wins=total["wins"] if total["wins"] is not None else "—",
         losses=total["losses"] if total["losses"] is not None else "—",
         banked=_table_number(total["banked_pnl_usdt"]), open_pnl=_table_number(total["estimated_open_pnl_usdt"])))
-    lines.append("")
-    lines.append("Runtime is elapsed span (downtime included), not continuous uptime; draining ends at observed PAUSED confirmation, not exact pause onset. DRAINING blocks new entries, but existing positions remain protected and may close after entry pause. PF uses recorded closed-trade close_profit_abs only (not open/partial realized P/L or a cost-completeness claim); ‘no losses’ is undefined, not infinite. Trades/day counts database trades opened, including open trades.")
-    lines.append("A dash means unavailable/unknown (including missing or non-finite closed profit); PF with no closed trades is shown as a dash, while all-loss PF is zero. Banked P/L may include recorded open-trade realized P/L and must not be read as closed-only PF.")
-    sources = sorted({span.get("start_source") for row in accounts if (span := row.get("runtime_span", {})).get("start_source") == "first_recorded_running_event_not_guaranteed_original_start"})
-    if sources:
-        lines.append("First-recorded-running spans are not guaranteed original starts: " + ", ".join(row["account"] for row in accounts if row.get("runtime_span", {}).get("start_source") in sources) + ".")
     return "\n".join(lines)
 
 

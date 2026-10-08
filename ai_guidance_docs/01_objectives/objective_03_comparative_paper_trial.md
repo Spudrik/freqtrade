@@ -399,37 +399,41 @@ and a stored valid stop are not proof that every trading operation works.
 
 At each four-hour Luna check, post exactly one compact factual report in Luna's
 own scheduled chat, using the generated `account_table` from this already-routine
-snapshot (or `--account-table` when making a table-only snapshot). Group its tables
-as Active, Draining (new entries paused), and Parked (stopped), followed by an
-explicit Unknown lifecycle section when needed; sort each group by longest known
-elapsed runtime first, with unknown runtimes last. Include one row per identity
-currently registered in the existing `run_record.json` and a total: open/closed longs and shorts,
-completed-trade wins/losses, banked P/L,
-estimated open P/L, lifecycle, UTC snapshot time, elapsed trial span, database
-trades opened per day, and closed-trade profit/loss ratio. The runtime is elapsed
-span including downtime, not measured uptime; use a valid recorded account start,
-or, only when `started_at_utc` is absent, the earliest valid recorded successful
-`running` event for that exact account, labelled as a first-recorded observation
-not guaranteed to be the original start. An explicitly invalid or future account
-start remains unknown and is not masked by an event. Never substitute restart,
-first trade, database mtime or global trial start. Every future account's first
-successful initialization must persist its original `started_at_utc` once, after
-successful RUNNING startup and database initialization are established. Root/Luna
-maintain this reporting contract when adding accounts. Paste the mechanically
-generated account table unchanged; do not rewrite it or drop columns. For DRAINING
-accounts the endpoint is the first recorded `draining_paused`
-confirmation at/after the lifecycle boundary (observed confirmation, not exact
-pause onset); for PARKED accounts use the verified `parked_flat` stop. Unknown or
-invalid clocks/rates remain unknown. The ratio is profit factor computed from
-recorded positive and negative `close_profit_abs` for closed trades only; it is
-not win probability, does not include open/partial realized P/L, and is not a
-claim of complete costs. No-loss cases are undefined rather than infinite; pooled
-totals recompute from underlying closed-profit sums, never average account ratios.
-Keep total runtime and trades/day blank across different trial spans. Mark
-uninitialized DBs and unknown prices/P&L explicitly; do not infer them. This is
-factual reporting, not a bot-quality review. Do not run `--learning-review`, add a
-market scan, or create a file for the table. The main-agent chat does not repeat
-it automatically; provide it there only if the user explicitly requests it.
+snapshot (or `--account-table` for a table-only snapshot) as the only routine
+account report. It contains `ACTIVE` accounts only, sorted by longest
+known elapsed runtime first with unknown runtimes last, and one TOTAL row computed
+only from those displayed accounts. If no accounts are `ACTIVE`, it says so and
+shows zero count/P&L totals with PF undefined. Do not include DRAINING, PARKED,
+unknown-lifecycle, retired, or historical accounts in a routine table; provide
+their account facts only on explicit user request. The UTC snapshot line is
+sufficient: do not append unchanged health/market narration or generic table
+footers. Add at most a concise factual alert for genuinely new material
+information. The main-agent chat provides the table only when the user explicitly
+asks.
+
+The table is factual reporting, not a bot-quality review. Do not run
+`--learning-review`, add a market scan, or create a file for it. For any explicit
+account detail request, use one row per requested registered identity and label
+its lifecycle. Runtime is elapsed span including downtime, not measured uptime;
+use a valid recorded account start, or only when `started_at_utc` is absent, the
+earliest valid recorded successful `running` event for that exact account. A `†`
+on the runtime marks that first-recorded observation, which is not guaranteed to
+be the original start. An explicitly invalid or future account start remains
+unknown and is not masked by an event. Never substitute restart, first trade,
+database mtime, or global trial start. Every future account's first successful
+initialization must persist its original `started_at_utc` once, after successful
+RUNNING startup and database initialization are established. Root/Luna maintain
+this reporting contract when adding accounts. For DRAINING accounts, the runtime
+endpoint is the first recorded `draining_paused` confirmation at/after the
+lifecycle boundary (observed confirmation, not exact pause onset); for PARKED
+accounts use the verified `parked_flat` stop. Unknown or invalid clocks/rates
+remain unknown. The ratio is profit factor computed from recorded positive and
+negative `close_profit_abs` for closed trades only; it is not win probability,
+does not include open/partial realized P/L, and is not a claim of complete costs.
+No-loss cases are undefined rather than infinite; pooled totals recompute from
+underlying closed-profit sums, never average account ratios. Keep total runtime
+and trades/day blank across different trial spans. Mark uninitialized DBs and
+unknown prices/P&L explicitly; do not infer them.
 
 `--review-context` extracts the exact identities currently recorded and their
 ACTIVE/DRAINING/PARKED lifecycle, effective schema-1 fast controls and approved
