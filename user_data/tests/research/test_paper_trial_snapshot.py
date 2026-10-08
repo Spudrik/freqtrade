@@ -84,6 +84,9 @@ def test_source_snapshot_requires_web_cadence_config(monkeypatch,tmp_path):
 
 def test_compact_review_projection_includes_new23_registry_and_control_renewal(tmp_path,monkeypatch):
     now=datetime(2026,10,8,12,tzinfo=timezone.utc)
+    monkeypatch.setattr(snapshot,"REPORT",tmp_path)
+    monkeypatch.setattr(snapshot,"_journal",lambda key:tmp_path/f"{key}_decisions.jsonl")
+    monkeypatch.setattr(snapshot,"load_luna_context",lambda _:SimpleNamespace(status="observed",observed_at=now))
     lifecycle={spec.key:("DRAINING" if spec.key in runtime.DRAINING_ACCOUNT_KEYS else "ACTIVE")
                for spec in runtime.REVIEWED_23_ACCOUNTS}
     record={"trial":"integrated_paper_20260926","status":"paper_trial_active",
@@ -560,6 +563,166 @@ def test_news_fast_review_projection_includes_its_own_journal_and_protected_plan
     result=snapshot._news_fast_review_snapshot(record,now)
     assert result["open_positions"][0]["protection_state"]=="missing_or_invalid"
     assert result["open_positions"][0]["stored_plan"] is None
+
+
+def test_news_reviews_cover_all_active_manual_and_context_accounts_per_handoff(monkeypatch):
+    now=datetime(2026,10,8,20,tzinfo=timezone.utc)
+    clock=now-timedelta(minutes=20)
+    monkeypatch.setattr(snapshot,"load_luna_context",lambda _:SimpleNamespace(status="observed",observed_at=clock))
+    monkeypatch.setattr(snapshot,"account_specs_for_record",lambda _:[SimpleNamespace(key="manual")])
+    monkeypatch.setattr(snapshot,"lifecycle_for",lambda *_:"PARKED")
+    manual=[{"account":key,"lifecycle":"ACTIVE","latest_decision":None}
+            for key in ("news_manual","news_lab","news_fast")]
+    controls=[{"account":key,"lifecycle":"ACTIVE","status":"observed",
+               "renewal_required":False,"luna_observed_at_utc":None}
+              for key in aggressive_context.AGGRESSIVE_ACCOUNT_KEYS]
+    fast={"lifecycle":"PARKED"}
+    result=snapshot._news_input_reviews({},now,controls,fast,manual)
+    assert len(result["accounts"])==7 and result["required"]
+    assert all(row["required"] for row in result["accounts"])
+    for review in manual:
+        review["latest_decision"]={"status":"recorded_no_action","luna_observed_at_utc":clock.isoformat()}
+    for review in controls:
+        review["luna_observed_at_utc"]=clock.isoformat()
+    assert not snapshot._news_input_reviews({},now,controls,fast,manual)["required"]
+    manual[0]["latest_decision"]["status"]="uncertain_manual_check_required"
+    assert snapshot._news_input_reviews({},now,controls,fast,manual)["accounts"][0]["required"]
+    manual[0]["latest_decision"]["status"]="submitted"
+    controls[0]["renewal_required"]=True
+    assert snapshot._news_input_reviews({},now,controls,fast,manual)["required"]
+    controls[0]["renewal_required"]=False
+    clock=now-timedelta(minutes=5)
+    assert all(row["required"] for row in snapshot._news_input_reviews({},now,controls,fast,manual)["accounts"])
+
+
+def test_news_review_uses_last_journal_transition_when_timestamps_match(monkeypatch,tmp_path):
+    now=datetime(2026,10,8,20,tzinfo=timezone.utc)
+    spec=SimpleNamespace(key="news_lab",bot_name="paper_news_lab")
+    monkeypatch.setattr(snapshot,"account_specs_for_record",lambda _:[spec])
+    monkeypatch.setattr(snapshot,"account_record",lambda *_:{"db":"news_lab_trades.sqlite"})
+    monkeypatch.setattr(snapshot,"lifecycle_for",lambda *_:"ACTIVE")
+    monkeypatch.setattr(snapshot,"REPORT",tmp_path)
+    journal=tmp_path/"news_lab_decisions.jsonl"
+    monkeypatch.setattr(snapshot,"_journal",lambda _:journal)
+    row={"account":spec.bot_name,"at_utc":now.isoformat(),"decision_id":"same-clock","action":"enter"}
+    journal.write_text("\n".join(json.dumps({**row,"status":status}) for status in ("proposed","submitted")),encoding="utf-8")
+    result=snapshot._manual_news_review_snapshot({},now,"news_lab")
+    assert result["latest_decision"]["status"]=="submitted"
+    assert result["review_policy"]=="consider_each_fresh_luna_handoff"
+
+
+def test_malformed_manual_journal_cannot_count_as_considered(monkeypatch,tmp_path):
+    now=datetime(2026,10,8,20,tzinfo=timezone.utc)
+    journal=tmp_path/"news_lab_decisions.jsonl"
+    journal.write_text(json.dumps({"account":"paper_news_lab","at_utc":now.isoformat(),
+        "status":"recorded_no_action","luna_observed_at_utc":now.isoformat()})+"\n{broken\n",encoding="utf-8")
+    spec=SimpleNamespace(key="news_lab",bot_name="paper_news_lab")
+    original=SimpleNamespace(key="manual",bot_name="integrated_paper_manual")
+    monkeypatch.setattr(snapshot,"account_specs_for_record",lambda _:[spec,original])
+    monkeypatch.setattr(snapshot,"account_record",lambda *_:{"db":"news_lab_trades.sqlite"})
+    monkeypatch.setattr(snapshot,"lifecycle_for",lambda *_:"ACTIVE")
+    monkeypatch.setattr(snapshot,"REPORT",tmp_path)
+    monkeypatch.setattr(snapshot,"_journal",lambda _:journal)
+    result=snapshot._manual_news_review_snapshot({},now,"news_lab")
+    assert result["journal_state"]=="malformed"
+    assert result["latest_decision"] is None
+    coverage=snapshot._news_input_reviews({},now,[],{"lifecycle":"PARKED"},[result])
+    assert coverage["required"]
+    assert coverage["accounts"][0]=={
+        "account":"news_lab","kind":"manual_news","considered_for_current_luna":False,"required":True}
+
+
+@pytest.mark.parametrize(("status","raises"),[("stale",False),("missing",False),("malformed",True)])
+def test_stale_missing_or_malformed_luna_never_marks_accounts_considered(monkeypatch,status,raises):
+    now=datetime(2026,10,8,20,tzinfo=timezone.utc)
+    clock=now-timedelta(minutes=5)
+    def load_luna(_):
+        if raises:
+            raise ValueError("malformed input")
+        return SimpleNamespace(status=status,observed_at=clock)
+    monkeypatch.setattr(snapshot,"load_luna_context",load_luna)
+    spec=SimpleNamespace(key="manual",bot_name="integrated_paper_manual")
+    monkeypatch.setattr(snapshot,"account_specs_for_record",lambda _:[spec])
+    monkeypatch.setattr(snapshot,"lifecycle_for",lambda *_:"ACTIVE")
+    manual=[{"account":key,"lifecycle":"ACTIVE","latest_decision":{
+        "status":"recorded_no_action","luna_observed_at_utc":clock.isoformat()}}
+        for key in ("news_manual","news_lab","news_fast")]
+    controls=[{"account":key,"lifecycle":"ACTIVE","status":"observed",
+        "renewal_required":False,"luna_observed_at_utc":clock.isoformat()}
+        for key in aggressive_context.AGGRESSIVE_ACCOUNT_KEYS]
+    result=snapshot._news_input_reviews({},now,controls,{"lifecycle":"PARKED"},manual)
+    assert result["luna_observed_at_utc"] is None
+    assert result["luna_status"]==("malformed" if raises else status)
+    assert result["required"] and all(row["required"] and not row["considered_for_current_luna"]
+                                       for row in result["accounts"])
+
+
+def test_no_action_journals_exact_fresh_luna_clock_without_api_write(monkeypatch):
+    from user_data.Custom_Launcher.research import paper_trial_control as controller
+    clock=datetime(2026,10,8,20,tzinfo=timezone.utc)
+    rows=[]
+    monkeypatch.setattr(controller,"_assert_manual_lifecycle_allows",lambda *args:None)
+    monkeypatch.setattr(controller,"_configs",lambda account:({}, {"bot_name":f"paper_{account}"}))
+    monkeypatch.setattr(controller,"_verify_running_account",lambda _:None)
+    monkeypatch.setattr(controller,"_seen_decision",lambda *args:False)
+    monkeypatch.setattr(controller,"_record",lambda row,account:rows.append((row,account)))
+    monkeypatch.setattr(controller,"load_luna_context",lambda _:SimpleNamespace(
+        status="observed",observed_at=clock,sources=("https://example.org/news",)))
+    monkeypatch.setattr(controller,"_api",lambda *args:pytest.fail("no-action must not call the local API"))
+    assert controller.main(["no-action","--account","news_lab","--decision-id","handoff-1",
+        "--reason","considered current Luna handoff","--source","https://example.org/news"])==0
+    assert len(rows)==1
+    row,account=rows[0]
+    assert account=="news_lab" and row["status"]=="recorded_no_action"
+    assert row["luna_observed_at_utc"]==clock.isoformat()
+
+
+@pytest.mark.parametrize("account",["aggressive_reclaim",None])
+def test_fast_control_publish_stamps_the_supporting_luna_observation(monkeypatch,tmp_path,account):
+    from user_data.Custom_Launcher.research import paper_fast_control as publisher
+    clock=datetime(2026,10,8,20,tzinfo=timezone.utc)
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls,tz=None):
+            return clock
+    context_file=tmp_path/"luna_context.json"
+    context_file.write_text(json.dumps({"valid_until_utc":(clock+timedelta(hours=3)).isoformat()}),encoding="utf-8")
+    captured=[]
+    monkeypatch.setattr(publisher,"datetime",FixedDateTime)
+    monkeypatch.setattr(publisher,"CONTEXT_FILE",context_file)
+    monkeypatch.setattr(publisher,"load_luna_context",lambda _:SimpleNamespace(status="observed",observed_at=clock))
+    publish="publish_aggressive_control" if account else "publish_fast_control"
+    monkeypatch.setattr(publisher,publish,lambda row,*args,**kwargs:captured.append(row))
+    args=["publish","--decision-id","control-1","--bias","0","--reason","fresh review",
+          "--source","https://example.org/news"]
+    if account:
+        args.extend(["--account",account,"--side-permission","both",
+                     "--long-leverage-cap","3","--short-leverage-cap","3"])
+    else:
+        args.extend(["--exposure","normal","--entry-permission","normal"])
+    assert publisher.main(args)==0
+    assert captured[0]["luna_observed_at_utc"]==clock.isoformat()
+    if account:
+        assert captured[0]["account"]=="paper_aggressive_reclaim"
+
+
+def test_market_reader_uses_active_registry_identity_and_only_its_pairs(monkeypatch):
+    specs=[SimpleNamespace(key="manual",pairs={"BTC/USDT:USDT"}),
+           SimpleNamespace(key="news_manual",pairs={"BTC/USDT:USDT","ETH/USDT:USDT"})]
+    monkeypatch.setattr(snapshot,"read_json",lambda _:{})
+    monkeypatch.setattr(snapshot,"account_specs_for_record",lambda _:specs)
+    monkeypatch.setattr(snapshot,"lifecycle_for",lambda _,spec:"PARKED" if spec.key=="manual" else "ACTIVE")
+    accounts=[]; routes=[]
+    monkeypatch.setattr(snapshot,"_configs",lambda key:(accounts.append(key) or {},{}))
+    monkeypatch.setattr(snapshot,"_verify_running_account",lambda _:None)
+    monkeypatch.setattr(snapshot,"_api",lambda overlay,route:(routes.append(route) or {"columns":["date","close"],"data":[[0,100.]]}))
+    result=snapshot.market_snapshot()
+    assert accounts==["news_manual"]
+    assert result["account"]=="news_manual" and len(result["pairs"])==2
+    assert all(route.startswith("pair_candles?") for route in routes)
+    monkeypatch.setattr(snapshot,"lifecycle_for",lambda *_:"PARKED")
+    with pytest.raises(RuntimeError,match="No ACTIVE"):
+        snapshot.market_snapshot()
 
 
 @pytest.mark.parametrize(("account","actual_leverage"),[

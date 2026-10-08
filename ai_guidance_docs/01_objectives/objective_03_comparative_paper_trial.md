@@ -157,37 +157,25 @@ live orders or changes to Freqtrade core are authorized.
 
 ### Active manual learning and family triage
 
-Candidate plans are normal, optional market input to routine paper decisions.
-The five families below organize a quality assessment only when the user asks
-for one; they are not a scheduled bot scorecard or a reason to retune/research.
+Luna's recurring role is current market, news and source reporting: preserve the
+bounded supporting and contrary facts, unknowns and their observation/publication
+clocks. It may run existing mechanical health, table and recovery checks and
+report actual faults confirmed by current evidence. A prior or parked fault is
+historical unless fresh evidence confirms it. Luna does not select bots/accounts,
+write per-account plans or holds, or choose trades. `brief.manual_candidates`
+remains an optional schema-1 field and may stay empty; no schema migration is
+needed. Root owns the manual decisions and any controller actions.
 
-`news_manual` is the best combined current market view: sourced news/global
-expectations, observed BTC/ETH or other leader response, then local levels.
-`news_lab` is a plausible alternative in timing/risk or a genuinely distinct
-range-fade/failed-move response; do not manufacture opposition. A major news
-surprise is not required for every trade. In quiet news, fresh current candles
-and local levels can justify a technical idea. Missing optional order-book or
-index coverage may lower confidence/size or rule out that specific thesis, but
-does not veto every thesis. Do not wait for every input to align.
-
-For each four-hour Luna brief, offer zero to two concrete manual plans when
-defensible; this is never a trade quota and zero is valid. Put them in the existing `luna_context.json` `brief.manual_candidates`
-field; Luna advises only, and the main agent alone chooses and submits through
-the existing controller/journal. Each candidate identifies account role,
-pair/side, premise, trigger now versus wait, known reference price with source
-and time, side-correct invalidation stop and optional target, expected path and
-horizon to the next four-hour review, contrary facts, and which inputs changed
-direction, timing, size or exit judgment. Keep plans within paper mode and the
-existing risk envelope, with a fresh validated Luna source, recent decision-time
-market/price/level evidence, costs, a clear invalidation, and existing order-stop
-uncertainty safeguards. Low conviction can justify a small exploratory paper
-position within those limits, never an unsafe setup. Treat any candidate as
-ordinary advisory input for the main agent's decision. A missing candidate does
-not require a rejected-setup essay or trigger an inactivity/quality escalation.
-Missing optional source feeds affect that specific thesis or size, but do not
-automatically veto all setups. Do not
-NLP-infer hold reasons: retain a concise current reason/status when present,
-referencing its decision ID rather than repeating essays.
+The corrected aggressive-family premises are intentionally distinct: Vacuum
+allows weak directional anticipation before a thin-profile breakout is observed;
+Auction separates a weak value-return guess, an observed edge rejection and an
+established value escape; Rotation follows the sign of the coin's return excess
+versus its cohort, using its own return only to break an exact neutral tie and
+daily position only to adjust conviction. Reclaim's
+separate sweep-and-recovery premise remains unchanged. These descriptions do not
+create scheduled bot-quality grading; assess family quality only when the user
+asks. Missing optional feeds can affect the relevant thesis or size, but do not
+veto every thesis.
 
 Organize the identities in the reviewed registry by their actual learning role—
 not as independent entries:
@@ -380,7 +368,7 @@ proof of identical candidates or historical uptime.
 
 ## Four-hour news brief and main-agent review
 
-The Luna ingestion check is read-only except publishing its observation and the narrowly approved paper-process recovery below; it may use the existing collectors and official/web sources. Inspect collector health/freshness for news, web, global market and order-book inputs; market indices and cross-market risk (US, European, UK, Japan/Asia equity, volatility, bonds/yields, dollar, gold, oil); major crypto exchange incidents and Binance/Coinbase/Kraken status; BTC/ETH direction, broad-coin and meme response, spread/liquidity/funding where available; and major financial/economic/geopolitical stories. Parse each relevant story as a dated underlying event with source, first publication time, what was expected versus what happened when genuinely available, severity, possible transmission channel, and whether other stories overlap or counteract it. Do not equate article count or sentiment words with market causation. Flag missing sources explicitly. For optional manual candidate plans, use “Active manual learning and family triage” above; routine wakes do not assess bot quality or strategy performance.
+The Luna ingestion check is read-only except publishing its observation and the narrowly approved paper-process recovery below; it may use existing collectors and official/web sources. Report current bounded news, market and source facts, including collector freshness, US/EU/UK/Asia market context, major exchange incidents, BTC/ETH and broad-coin response, and relevant financial/economic/geopolitical stories. Preserve supporting and contrary evidence, unknowns and each available observation, publication or fetch clock. Do not equate article count or sentiment words with market causation. A prior or parked fault is not a current fault without fresh confirming evidence. Optional source gaps qualify only the affected evidence or thesis; they do not veto every setup. Luna may report faults from the existing mechanical health/table/recovery checks, but never selects bots/accounts or recommends per-account plans, holds or trades. Routine wakes do not assess bot quality or strategy performance.
 
 ### Local-first coverage and token budget
 
@@ -391,28 +379,32 @@ C:\FreqTradeStuff\.venv\Scripts\python.exe -B -m user_data.Custom_Launcher.resea
 ```
 
 It prints one compact, read-only packet, without new files, orders, collector
-changes or historical scans. Headlines are deduplicated only by exact normalized
-title; additional source URLs and publication clocks remain visible. Account
+changes or historical scans. Retain its current bounded market/source observations
+and their clocks in the brief; do not replace missing current evidence with a prior
+fault. Headlines are deduplicated only by exact normalized title; additional
+source URLs and publication clocks remain visible. Account
 counts/costs include bounded worker-log heartbeat/error facts, open orders and
 stored-plan validation through existing strategy validators. Log/process presence
 and a stored valid stop are not proof that every trading operation works.
 
 At each four-hour Luna check, post exactly one compact factual report in Luna's
-own scheduled chat, using the generated `account_table` from this already-routine
-snapshot (or `--account-table` for a table-only snapshot) as the only routine
-account report. It contains `ACTIVE` accounts only, sorted by longest
+own scheduled chat. Include the current bounded market/source facts and clocks
+from this packet, plus its generated `account_table` (or `--account-table` for a
+table-only snapshot) as the only routine account report. The table contains
+`ACTIVE` accounts only, sorted by longest
 known elapsed runtime first with unknown runtimes last, and one TOTAL row computed
 only from those displayed accounts. If no accounts are `ACTIVE`, it says so and
 shows zero count/P&L totals with PF undefined. Do not include DRAINING, PARKED,
 unknown-lifecycle, retired, or historical accounts in a routine table; provide
-their account facts only on explicit user request. The UTC snapshot line is
-sufficient: do not append unchanged health/market narration or generic table
-footers. Add at most a concise factual alert for genuinely new material
-information. The main-agent chat provides the table only when the user explicitly
+their account facts only on explicit user request, except a genuine current
+mechanical fault. Keep the UTC snapshot line and current bounded facts; do not
+carry forward an old fault as current without fresh evidence or add generic table
+footers. The main-agent chat provides the table only when the user explicitly
 asks.
 
 The table is factual reporting, not a bot-quality review. Do not run
-`--learning-review`, add a market scan, or create a file for it. For any explicit
+`--learning-review` or create a file for it; the separate current bounded market
+brief remains required. For any explicit
 account detail request, use one row per requested registered identity and label
 its lifecycle. Runtime is elapsed span including downtime, not measured uptime;
 use a valid recorded account start, or only when `started_at_utc` is absent, the
@@ -480,20 +472,22 @@ If a gap remains, state it; do not buy data or invent market consensus. Keep the
 human-readable brief around 500 words or fewer, plus compact coverage/watch
 fields. Deduplicate underlying stories and distinguish expected announcements,
 observed surprises, price confirmation and interacting background conditions.
-The opinion may suggest direction preference, exposure and entry permission for
-the fast contextual account, explaining contrary evidence and uncertainty. That
-suggestion is advisory only: the main agent alone approves/publishes controls.
+Describe the market view and uncertainty without selecting an account or
+recommending a per-account trade, hold or control. Root separately decides any
+news-input account action using the current review projection and source clocks.
 
-For news ingestion, Luna publishes only `luna_context.json`, using `publish_luna_context` to validate the
-whole observation **before atomic replacement**. Preserve the existing schema-1
-fields used by automatic accounts, and use the existing `brief`,
-`brief.manual_candidates`, and `watch_proposals` fields for the manual accounts.
+For news ingestion, Luna publishes only `luna_context.json`, using
+`publish_luna_context` to validate the whole observation **before atomic
+replacement**. Preserve existing schema-1 fields used by automatic accounts and
+the existing `brief`, optional `brief.manual_candidates`, and `watch_proposals`
+fields. `manual_candidates` may remain empty; do not migrate the schema or use it
+to issue per-account advice.
 The routine brief validity may be up to five hours so the existing staggered
 four-hour observer/main schedule can overlap; choose a shorter expiry for a
-time-sensitive thesis. The existing validator permits at most six hours. This
-brief-validity envelope does not extend the freshness of any individual input:
-keep each metric's actual observation time and its own freshness assessment, and
-recheck current price/levels at the decision before a new manual entry. Main
+time-sensitive observation. The existing validator permits at most six hours.
+This brief-validity envelope does not extend the freshness of any individual
+input: keep each metric's actual observation time and its own freshness
+assessment. Main
 controls retain their existing four-hour maximum; do not alter their schema or
 let an expired control become normal permission. The brief should explain the market background, main drivers,
 conditional positive/negative cases, contrary evidence, missing sources and an
@@ -526,47 +520,57 @@ conditional leads parked rather than accumulating permanent schedules.
 
 ### Unattended Luna-to-main handoff
 
-Luna owns the routine four-hour recovery, account-health, source-freshness and
-market/news checks described above and below. Its existing `luna_context.json`
-is the handoff; do not create a second report. In `brief.main_review`, publish a
-compact object with `required` (boolean), `reasons` (short list of strings),
-`health` (healthy/issue/unknown), `changed_since_previous` (short list), and
-`decision_options` (short list, advisory only). Mark `required` for a material
-new event or narrative change, a position/protection concern, an account/source
-failure, an approved event watch due, a useful new watch proposal, or a
-`fast_context` control that needs an explicit main-agent renewal or decision;
-when a defensible manual candidate is available. A `fast_context` control renewal
-is a routine decision only while that account is ACTIVE; DRAINING/PARKED needs no
-new-entry renewal. Optional feed gaps
-affect the thesis, blocker or size, not whether a required-source review counts.
-Mark missing or unverified evidence as unknown, not healthy. Include the exact
-account/event, UTC observation time, direct source or local evidence path and
-what decision is needed. If there is genuinely no new actionable information,
-publish `required: false` with the routine health result; do not send a long
-unchanged narrative. Luna must never place trades, publish fast controls,
-change schedules, edit trading code/configs, or turn its opinion into an order.
+Luna owns the routine four-hour mechanical recovery, account-health,
+source-freshness and market/news checks described above and below. Its existing `luna_context.json`
+is the handoff; do not create a second report. In `brief.main_review`, retain the
+compact schema (`required`, `reasons`, `health`, `changed_since_previous` and
+`decision_options`), but use it only to flag current market, source or operational
+exceptions for root review. Mark `required` for a material current market/news
+change, a position/protection concern, a freshly verified account/source/collector
+fault, an approved event watch due, a useful watch proposal, or a contextual
+control that needs a root decision. Report missing or unverified evidence as
+unknown, not healthy; a prior/parked fault is not current without fresh evidence.
+Optional source gaps qualify only the affected thesis, not every setup. Luna never
+selects accounts, supplies per-account plans or holds, chooses trades, or
+publishes controls.
+Root owns every ACTIVE news-input account on each fresh handoff, using
+`paper_trial_snapshot --review-context`'s `news_input_reviews` and the existing
+manual review projection. Those projections determine the account list; Luna's
+`main_review` does not. Root records the considered hold/no-trade/action and any
+control renewal through the existing journal/controller with the exact source
+clocks. Routine Luna account tables remain ACTIVE-only; DRAINING/PARKED accounts
+stay excluded except for a genuine current mechanical fault. A `fast_context`
+control renewal is relevant only while that account is ACTIVE.
 
 The main-agent four-hour heartbeat is decision-only. Read this handoff contract,
 the current `luna_context.json` and `paper_trial_snapshot --review-context` for
 current approved watches/account identities/effective fast controls, not the
 whole run record. This lightweight record projection performs no health/network
 scan. Read the record only for an exact exceptional decision or authorized write.
-If Luna's brief is fresh, validated and says no
-review is required, and there is no already-approved timed watch due, perform no
-duplicate process, log, account, market or web inspection and stay quiet. A
+On every fresh handoff, root considers every currently ACTIVE account in
+`news_input_reviews`, not only accounts Luna flags. Journal each hold/no-trade/
+action and publish or explicitly renew any contextual judgement through its
+existing controller. Those controllers record the exact `luna_observed_at_utc`
+used, so each handoff needs a new consideration; an uncertain submission does
+not count as completed. Consideration does not force a trade or direction change.
+Preserve the account-specific authority, risk limits, stored protection and
+source rules. When `main_review.required` is false, only after the brief is fresh
+and validated, **all ACTIVE news-input accounts have been considered for that
+handoff**, and there is no already-approved timed watch due may root take the
+quiet/no-change shortcut, perform no duplicate process, log, account, market or
+web inspection, and stay quiet. A
 missing/stale/malformed brief, missing `main_review`, or unverified health is an
 exception to flag for attention, not permission to assume that all is well or
 to place a trade. For a flagged decision, inspect only the relevant evidence;
 accept sensible sourced Luna analysis unless consequentially contradicted.
-The main agent alone chooses holds, trades and controls, journals decisions,
-and verifies any write read-only before another action. It may manage the two
-news-only accounts through their isolated controller/journals and retains the
-original account's narrower fresh-consequential-news override procedure. The
-other accounts remain observational except for approved `fast_context` controls.
+The main agent alone chooses any holds, trades and controls within the existing
+account-specific authority, journals decisions, and verifies any write read-only
+before another action. It retains the original account's narrower
+fresh-consequential-news override procedure. No new account authority is implied.
 No code/config/core edit, new research or invented recovery is authorized by a
 routine wake. Stay quiet unless a material decision, failure or user attention
-is warranted; a user-requested status uses the full table for all currently
-registered identities.
+is warranted; a user-requested routine status uses the ACTIVE-only table and
+ACTIVE-only totals. Other lifecycles appear only on explicit request.
 
 For the matched fast pair, the main review may publish/renew the three approved
 context controls through `paper_fast_control` only while `fast_context` is ACTIVE;
@@ -582,6 +586,15 @@ normal risk. Once DRAINING/PARKED, the account needs no control renewal and its
 persisted position protection remains the operative safety state.
 
 ## Windows restart and bounded paper-process recovery
+
+Reclaim's boundary repair and attended reset were completed earlier; preserve its
+results and account state unchanged. The user-approved 8 October correction also
+authorizes attended repair, root review and reset for Vacuum, Auction and Rotation
+only. Their resets remain pending until exact closeout is verified. Retain one
+offline recovery copy per reset, exclude each copy from current totals, and restart
+each runtime clock only after verified RUNNING initialization. This does not
+authorize scheduled/general resets or affect any other account. Other bots'
+results remain intact; weak results alone are not an implementation fault.
 
 On 28 September the user approved Codex startup at Windows sign-in and allowing
 scheduled agents, including Luna, to restore the recorded paper bots when they

@@ -273,8 +273,6 @@ class _PaperAggressiveAlt(PaperTrialBase):
             score_l = score_l.where(~above | pressure.le(0), score_l + .05)
             score_s = score_s.where(~below | pressure.ge(0), score_s + .05)
             reason[:] = "best-guess from local profile pressure, thinness and value location"
-            reason[primary_l | primary_s] = "thin-profile edge acceptance with signed pressure"
-            route[primary_l | primary_s] = "profile_acceptance"
         elif family == "reclaim":
             prior_high, prior_low = frame["ag_prior_high_15m"], frame["ag_prior_low_15m"]
             valid &= prior_high.notna() & prior_low.notna()
@@ -287,6 +285,11 @@ class _PaperAggressiveAlt(PaperTrialBase):
             change = frame["ag_pressure_change_15m"].fillna(0.0).clip(-1, 1)
             primary_l = swept_low & reclaimed & change.ge(.22) & sweep_l.ge(.18)
             primary_s = swept_high & rejected & change.le(-.22) & sweep_s.ge(.18)
+            # A weaker exploratory setup still has to be on the surviving side
+            # of the boundary that its own exit later treats as invalidation.
+            # Do not call an unrecovered break a failed recovery after entry.
+            eligible_l = close.gt(prior_low)
+            eligible_s = close.lt(prior_high)
             loc = ((close - prior_low) / (prior_high - prior_low).replace(0, np.nan)).clip(0, 1).fillna(.5)
             score_l = (.34 + .30 * (1 - loc) + .26 * change.clip(lower=0)).clip(0, 1)
             score_s = (.34 + .30 * loc + .26 * (-change).clip(lower=0)).clip(0, 1)
@@ -325,11 +328,7 @@ class _PaperAggressiveAlt(PaperTrialBase):
             primary_s = escape_s & relative_volume.ge(1.1) & expansion.ge(1.0)
             primary_l |= reject_l & edge_l.ge(.62) & value_width.ge(.6) & ~escape_l
             primary_s |= reject_s & edge_s.ge(.62) & value_width.ge(.6) & ~escape_s
-            route[escape_l | escape_s] = "accepted_value_escape"
-            route[(reject_l | reject_s) & ~(escape_l | escape_s)] = "value_edge_rotation"
             reason[:] = "best-guess from value-area location and POC migration"
-            reason[reject_l | reject_s] = "value-edge rejection rotates toward prior point of control"
-            reason[escape_l | escape_s] = "accepted value-area escape; rotation thesis invalidated"
         elif family == "rotation":
             valid &= (frame["ag_cohort_excess"].notna() & frame["ag_cohort_rank"].notna()
                       & frame["ag_cohort_dispersion"].notna() & frame["ag_cohort_return"].notna())
@@ -350,8 +349,6 @@ class _PaperAggressiveAlt(PaperTrialBase):
             score_l += (.01 * long_preferred).astype(float)
             score_s += (.01 * ~long_preferred).astype(float)
             reason[:] = "best-guess from same-close cohort excess/rank and own 45m return"
-            reason[primary_l | primary_s] = "causal 45m return excess versus the eight-coin cohort"
-            route[primary_l | primary_s] = "cohort_leader_laggard"
         else:
             raise ValueError(f"Unknown aggressive family: {family}")
 
@@ -362,10 +359,52 @@ class _PaperAggressiveAlt(PaperTrialBase):
         score_s -= daily_tilt
         score_l = pd.Series(score_l, index=frame.index).astype(float).clip(0, 1)
         score_s = pd.Series(score_s, index=frame.index).astype(float).clip(0, 1)
+        if family == "reclaim":
+            score_l = score_l.where(eligible_l, -np.inf)
+            score_s = score_s.where(eligible_s, -np.inf)
         primary_l = pd.Series(primary_l, index=frame.index).fillna(False).astype(bool)
         primary_s = pd.Series(primary_s, index=frame.index).fillna(False).astype(bool)
-        long_route = valid & cadence & (score_l >= score_s)
-        short_route = valid & cadence & (score_s > score_l)
+        long_route = valid & cadence & np.isfinite(score_l) & (score_l >= score_s)
+        short_route = valid & cadence & np.isfinite(score_s) & (score_s > score_l)
+        if family == "rotation":
+            excess = frame["ag_cohort_excess"].fillna(0.0)
+            own_return = frame["ag_cohort_return"].fillna(0.0)
+            long_preferred = excess.gt(0) | (excess.eq(0) & own_return.ge(0))
+            long_route = valid & cadence & long_preferred
+            short_route = valid & cadence & ~long_preferred
+        if family == "vacuum":
+            observed_long = long_route & primary_l
+            observed_short = short_route & primary_s
+            route.loc[observed_long | observed_short] = "profile_acceptance"
+            reason.loc[long_route & ~primary_l] = (
+                "weak exploratory long anticipation from profile location and pressure; breakout not observed")
+            reason.loc[short_route & ~primary_s] = (
+                "weak exploratory short anticipation from profile location and pressure; breakout not observed")
+            reason.loc[observed_long] = "observed upside thin-profile breakout acceptance with signed pressure"
+            reason.loc[observed_short] = "observed downside thin-profile breakout acceptance with signed pressure"
+        elif family == "auction":
+            observed_escape_long = long_route & escape_l
+            observed_escape_short = short_route & escape_s
+            observed_reject_long = long_route & reject_l & ~escape_l
+            observed_reject_short = short_route & reject_s & ~escape_s
+            route.loc[observed_escape_long | observed_escape_short] = "accepted_value_escape"
+            route.loc[observed_reject_long | observed_reject_short] = "value_edge_rotation"
+            reason.loc[long_route & ~escape_l & ~reject_l] = (
+                "weak anticipated long value return toward the point of control; rejection/escape not established")
+            reason.loc[short_route & ~escape_s & ~reject_s] = (
+                "weak anticipated short value return toward the point of control; rejection/escape not established")
+            reason.loc[observed_reject_long] = "observed lower value-edge rejection supports rotation toward the point of control"
+            reason.loc[observed_reject_short] = "observed upper value-edge rejection supports rotation toward the point of control"
+            reason.loc[observed_escape_long] = "established upside value-area escape; rotation thesis invalidated"
+            reason.loc[observed_escape_short] = "established downside value-area escape; rotation thesis invalidated"
+        elif family == "rotation":
+            observed_long = long_route & primary_l
+            observed_short = short_route & primary_s
+            route.loc[observed_long | observed_short] = "cohort_leader_laggard"
+            reason.loc[long_route & ~primary_l] = "exploratory long follows positive same-close cohort excess"
+            reason.loc[short_route & ~primary_s] = "exploratory short follows negative same-close cohort excess"
+            reason.loc[observed_long] = "meaningful positive 45m return excess versus the eight-coin cohort"
+            reason.loc[observed_short] = "meaningful negative 45m return excess versus the eight-coin cohort"
         long_mode = pd.Series(np.where(primary_l, "primary", "exploratory"), index=frame.index)
         short_mode = pd.Series(np.where(primary_s, "primary", "exploratory"), index=frame.index)
         return long_route, short_route, score_l.where(long_route, score_s.where(short_route)), \
@@ -540,6 +579,12 @@ class _PaperAggressiveAlt(PaperTrialBase):
         """Share the automatic callback's geometry, risk, and sizing rules with ranking."""
         rate = _finite(rate, "automatic candidate rate", positive=True)
         score = _finite(row["ag_score"], "automatic candidate score")
+        if self.family == "reclaim":
+            boundary = self._row_value(row, "ag_prior_low_15m" if side == "long"
+                                       else "ag_prior_high_15m", positive=True)
+            if ((side == "long" and rate <= boundary)
+                    or (side == "short" and rate >= boundary)):
+                return None
         stop, target, anchor, target_kind = self._geometry(row, side, rate)
         direction = 1.0 if side == "long" else -1.0
         if ((side == "long" and not stop < rate < target)
@@ -591,8 +636,12 @@ class _PaperAggressiveAlt(PaperTrialBase):
         pressure = float(row["ag_pressure_15m"])
         route = str(plan["route"])
         family = plan["family"]
+        features = plan["features"]
         if family == "vacuum":
-            edge = float(row["ag_vah_1h"] if side == "long" else row["ag_val_1h"])
+            if route != "profile_acceptance":
+                return None
+            feature = "vah_1h" if side == "long" else "val_1h"
+            edge = float(features[feature])
             failed = close <= edge and pressure < -.20 if side == "long" else close >= edge and pressure > .20
             return "vacuum_profile_acceptance_failed" if failed else None
         if family == "reclaim":
@@ -601,12 +650,16 @@ class _PaperAggressiveAlt(PaperTrialBase):
             return "reclaim_entry_boundary_lost" if failed else None
         if family == "auction":
             if route == "accepted_value_escape":
-                edge = float(row["ag_vah_4h"] if side == "long" else row["ag_val_4h"])
+                feature = "vah_4h" if side == "long" else "val_4h"
+                edge = float(features[feature])
                 failed = close <= edge if side == "long" else close >= edge
                 return "auction_accepted_escape_failed" if failed else None
-            edge = float(row["ag_val_4h"] if side == "long" else row["ag_vah_4h"])
-            failed = close <= edge if side == "long" else close >= edge
-            return "auction_value_edge_rotation_failed" if failed else None
+            if route == "value_edge_rotation":
+                feature = "val_4h" if side == "long" else "vah_4h"
+                edge = float(features[feature])
+                failed = close <= edge if side == "long" else close >= edge
+                return "auction_value_edge_rotation_failed" if failed else None
+            return None
         excess, rank = float(row["ag_cohort_excess"]), float(row["ag_cohort_rank"])
         failed = excess < 0 and rank < .40 if side == "long" else excess > 0 and rank > .60
         return "rotation_relative_advantage_lost" if failed else None
@@ -872,6 +925,11 @@ class _PaperAggressiveAlt(PaperTrialBase):
             amount = _finite(amount, "entry confirmation amount", positive=True)
             if abs(rate - pending["reference_rate"]) > maximum_deviation:
                 return False
+            if self.family == "reclaim" and not manual:
+                boundary = pending["entry_reclaim_boundary"]
+                if ((side == "long" and rate <= boundary)
+                        or (side == "short" and rate >= boundary)):
+                    return False
             upper_margin = amount * upper_fill_rate / pending["requested_leverage"]
             if upper_margin > pending["entry_equity_usdt"] * AGGRESSIVE_LIMITS["max_margin_pct"] + 1e-5:
                 return False
@@ -901,6 +959,11 @@ class _PaperAggressiveAlt(PaperTrialBase):
         try:
             if pending is None or not pending.get("confirmed"):
                 raise RuntimeError("Aggressive fill lacks a confirmed durable risk reservation")
+            if self.family == "reclaim" and pending["provenance"] == "automatic_signal":
+                boundary = pending["entry_reclaim_boundary"]
+                if ((side == "long" and trade.open_rate <= boundary)
+                        or (side == "short" and trade.open_rate >= boundary)):
+                    raise ValueError("Reclaim market fill crossed its frozen entry boundary")
             contract_size = _finite(trade.contract_size, "actual contract size", positive=True)
             plan = build_aggressive_filled_plan(pending, pair=pair, side=side,
                 open_rate=float(trade.open_rate), quantity=float(trade.amount),

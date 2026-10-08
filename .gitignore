@@ -233,6 +233,7 @@ user_data/configs/paper_trial_20260926_E.json
 # Custom research source and its nested tests; generated outputs and data remain ignored below.
 !user_data/Custom_Launcher/research/**/
 !user_data/Custom_Launcher/research/**/*.py
+!user_data/Custom_Launcher/research/context_features/*.ps1
 !user_data/Custom_Launcher/research/**/AGENTS.md
 !user_data/Custom_Launcher/research/**/README*.md
 !user_data/Custom_Launcher/research/**/requirements*.txt

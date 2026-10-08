@@ -60,6 +60,7 @@ def main(argv=None) -> int:
         row = {"schema_version": 1, "author": "main_agent",
                "decision_id": args.decision_id or "", "account": AGGRESSIVE_ACCOUNTS[args.account]["bot_name"],
                "observed_at_utc": now.isoformat(), "valid_until_utc": expires.isoformat(),
+               "luna_observed_at_utc": luna.observed_at.isoformat(),
                "bias": args.bias, "side_permission": args.side_permission,
                "long_leverage_cap": args.long_leverage_cap,
                "short_leverage_cap": args.short_leverage_cap,
@@ -72,6 +73,7 @@ def main(argv=None) -> int:
         return 0
     row = {"schema_version": 1, "author": "main_agent", "decision_id": args.decision_id,
            "observed_at_utc": now.isoformat(), "valid_until_utc": expires.isoformat(),
+           "luna_observed_at_utc": luna.observed_at.isoformat(),
            "bias": 0 if args.bias is None else args.bias, "exposure": args.exposure, "entry_permission": args.entry_permission,
            "reason": args.reason, "sources": args.source, "unavailable_inputs": args.missing,
            "blackouts": [{"start_utc": start, "end_utc": end} for start, end in args.blackout]}

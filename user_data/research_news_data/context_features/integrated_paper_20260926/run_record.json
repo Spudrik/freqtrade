@@ -2144,6 +2144,102 @@
         "log_offset": 0,
         "parent_pid": 40260,
         "worker_pid": 73228
+      },
+      {
+        "account": "aggressive_reclaim",
+        "status": "database_reset_offline",
+        "at_utc": "2026-10-08T20:44:12.952475+00:00",
+        "backup_path": "user_data\\research_news_data\\context_features\\integrated_paper_20260926\\offline_recovery\\aggressive_reclaim_reset_20261008_204314Z",
+        "backup_files": [
+          "aggressive_reclaim_trades.sqlite",
+          "aggressive_reclaim_trades.sqlite-wal",
+          "aggressive_reclaim_trades.sqlite-shm",
+          "aggressive_reclaim_decisions.jsonl"
+        ],
+        "prior_trade_rows": 42,
+        "pre_reset_open_trades": 0,
+        "pre_reset_open_orders": 0,
+        "reason": "User-approved Reclaim reset after automatic boundary consistency correction; old history retained offline and excluded from current database totals."
+      },
+      {
+        "account": "aggressive_reclaim",
+        "status": "running",
+        "at_utc": "2026-10-08T20:44:14.190950+00:00",
+        "log_offset": 3495536,
+        "parent_pid": 11012,
+        "worker_pid": 21244
+      },
+      {
+        "account": "aggressive_vacuum",
+        "status": "database_reset_offline",
+        "at_utc": "2026-10-08T22:40:32.840615+00:00",
+        "backup_path": "user_data\\research_news_data\\context_features\\integrated_paper_20260926\\offline_recovery\\aggressive_vacuum_auction_rotation_reset_20261008_224032Z",
+        "backup_files": [
+          "aggressive_vacuum_trades.sqlite",
+          "aggressive_vacuum_trades.sqlite-wal",
+          "aggressive_vacuum_trades.sqlite-shm",
+          "aggressive_vacuum_decisions.jsonl"
+        ],
+        "prior_trade_rows": 13,
+        "pre_reset_open_trades": 0,
+        "pre_reset_open_orders": 0,
+        "reason": "User-approved Vacuum/Auction/Rotation repair reset; old history retained offline and excluded from fresh database totals."
+      },
+      {
+        "account": "aggressive_auction",
+        "status": "database_reset_offline",
+        "at_utc": "2026-10-08T22:40:32.840615+00:00",
+        "backup_path": "user_data\\research_news_data\\context_features\\integrated_paper_20260926\\offline_recovery\\aggressive_vacuum_auction_rotation_reset_20261008_224032Z",
+        "backup_files": [
+          "aggressive_auction_trades.sqlite",
+          "aggressive_auction_trades.sqlite-wal",
+          "aggressive_auction_trades.sqlite-shm",
+          "aggressive_auction_decisions.jsonl"
+        ],
+        "prior_trade_rows": 7,
+        "pre_reset_open_trades": 0,
+        "pre_reset_open_orders": 0,
+        "reason": "User-approved Vacuum/Auction/Rotation repair reset; old history retained offline and excluded from fresh database totals."
+      },
+      {
+        "account": "aggressive_rotation",
+        "status": "database_reset_offline",
+        "at_utc": "2026-10-08T22:40:32.840615+00:00",
+        "backup_path": "user_data\\research_news_data\\context_features\\integrated_paper_20260926\\offline_recovery\\aggressive_vacuum_auction_rotation_reset_20261008_224032Z",
+        "backup_files": [
+          "aggressive_rotation_trades.sqlite",
+          "aggressive_rotation_trades.sqlite-wal",
+          "aggressive_rotation_trades.sqlite-shm",
+          "aggressive_rotation_decisions.jsonl"
+        ],
+        "prior_trade_rows": 51,
+        "pre_reset_open_trades": 0,
+        "pre_reset_open_orders": 0,
+        "reason": "User-approved Vacuum/Auction/Rotation repair reset; old history retained offline and excluded from fresh database totals."
+      },
+      {
+        "account": "aggressive_vacuum",
+        "status": "running",
+        "at_utc": "2026-10-08T22:40:58.858077+00:00",
+        "log_offset": 747376,
+        "parent_pid": 53864,
+        "worker_pid": 30440
+      },
+      {
+        "account": "aggressive_auction",
+        "status": "running",
+        "at_utc": "2026-10-08T22:41:31.752005+00:00",
+        "log_offset": 195212,
+        "parent_pid": 48168,
+        "worker_pid": 65856
+      },
+      {
+        "account": "aggressive_rotation",
+        "status": "running",
+        "at_utc": "2026-10-08T22:42:04.501981+00:00",
+        "log_offset": 5547801,
+        "parent_pid": 12348,
+        "worker_pid": 76896
       }
     ],
     "codex_startup": {
@@ -2156,7 +2252,7 @@
       "validation": "Task registration/target/principal/trigger verified. No reboot or forced application relaunch performed."
     },
     "recovery_delay": "At next existing four-hour scheduled agent wake after Windows sign-in/app availability; not immediate reboot recovery.",
-    "last_check_at_utc": "2026-10-08T05:36:05.973577+00:00",
+    "last_check_at_utc": "2026-10-08T21:37:54.676761+00:00",
     "last_results": [
       {
         "account": "auto",
@@ -2255,6 +2351,30 @@
         "status": "already_running",
         "parent_pid": 27492,
         "worker_pid": 32068
+      },
+      {
+        "account": "aggressive_vacuum",
+        "status": "already_running",
+        "parent_pid": 7192,
+        "worker_pid": 7112
+      },
+      {
+        "account": "aggressive_reclaim",
+        "status": "already_running",
+        "parent_pid": 11012,
+        "worker_pid": 21244
+      },
+      {
+        "account": "aggressive_auction",
+        "status": "already_running",
+        "parent_pid": 53244,
+        "worker_pid": 83092
+      },
+      {
+        "account": "aggressive_rotation",
+        "status": "already_running",
+        "parent_pid": 40260,
+        "worker_pid": 73228
       }
     ],
     "account_lifecycle": {
@@ -2797,17 +2917,18 @@
       "risk_envelope_ref": "aggressive_accounts.operating_contract.risk_envelope",
       "control_policy_ref": "aggressive_accounts.operating_contract.control_policy",
       "manual_authority_ref": "aggressive_accounts.operating_contract.main_agent_manual_authority",
-      "database_create_attempted_at_utc": "2026-10-08T07:50:09.711908+00:00",
+      "database_create_attempted_at_utc": "2026-10-08T22:40:58.858077+00:00",
       "last_recovery": {
         "status": "running",
-        "at_utc": "2026-10-08T07:50:09.711908+00:00",
-        "log_offset": 0
+        "at_utc": "2026-10-08T22:40:58.858077+00:00",
+        "log_offset": 747376
       },
-      "parent_pid": 7192,
-      "worker_pid": 7112,
-      "restarted_at_utc": "2026-10-08T07:50:09.711908+00:00",
-      "parent_created_at_utc": "2026-10-08T07:50:09.731882+00:00",
-      "database_initialized_at_utc": "2026-10-08T07:50:16.640236+00:00"
+      "parent_pid": 53864,
+      "worker_pid": 30440,
+      "restarted_at_utc": "2026-10-08T22:40:58.858077+00:00",
+      "parent_created_at_utc": "2026-10-08T22:40:58.876436+00:00",
+      "database_initialized_at_utc": "2026-10-08T22:41:08.101918+00:00",
+      "started_at_utc": "2026-10-08T22:41:08.101918+00:00"
     },
     "reclaim": {
       "account": "aggressive_reclaim",
@@ -2851,17 +2972,18 @@
       "risk_envelope_ref": "aggressive_accounts.operating_contract.risk_envelope",
       "control_policy_ref": "aggressive_accounts.operating_contract.control_policy",
       "manual_authority_ref": "aggressive_accounts.operating_contract.main_agent_manual_authority",
-      "database_create_attempted_at_utc": "2026-10-08T07:50:17.961509+00:00",
       "last_recovery": {
         "status": "running",
-        "at_utc": "2026-10-08T07:50:17.961509+00:00",
-        "log_offset": 0
+        "at_utc": "2026-10-08T20:44:14.190950+00:00",
+        "log_offset": 3495536
       },
-      "parent_pid": 32048,
-      "worker_pid": 18292,
-      "restarted_at_utc": "2026-10-08T07:50:17.961509+00:00",
-      "parent_created_at_utc": "2026-10-08T07:50:17.983441+00:00",
-      "database_initialized_at_utc": "2026-10-08T07:50:24.925540+00:00"
+      "database_create_attempted_at_utc": "2026-10-08T20:44:14.190950+00:00",
+      "parent_pid": 11012,
+      "worker_pid": 21244,
+      "restarted_at_utc": "2026-10-08T20:44:14.190950+00:00",
+      "parent_created_at_utc": "2026-10-08T20:44:14.206316+00:00",
+      "database_initialized_at_utc": "2026-10-08T20:44:21.238370+00:00",
+      "started_at_utc": "2026-10-08T20:44:21.238370+00:00"
     },
     "auction": {
       "account": "aggressive_auction",
@@ -2905,17 +3027,18 @@
       "risk_envelope_ref": "aggressive_accounts.operating_contract.risk_envelope",
       "control_policy_ref": "aggressive_accounts.operating_contract.control_policy",
       "manual_authority_ref": "aggressive_accounts.operating_contract.main_agent_manual_authority",
-      "database_create_attempted_at_utc": "2026-10-08T07:50:26.151391+00:00",
+      "database_create_attempted_at_utc": "2026-10-08T22:41:31.752005+00:00",
       "last_recovery": {
         "status": "running",
-        "at_utc": "2026-10-08T07:50:26.151391+00:00",
-        "log_offset": 0
+        "at_utc": "2026-10-08T22:41:31.752005+00:00",
+        "log_offset": 195212
       },
-      "parent_pid": 53244,
-      "worker_pid": 83092,
-      "restarted_at_utc": "2026-10-08T07:50:26.151391+00:00",
-      "parent_created_at_utc": "2026-10-08T07:50:26.167619+00:00",
-      "database_initialized_at_utc": "2026-10-08T07:50:33.114003+00:00"
+      "parent_pid": 48168,
+      "worker_pid": 65856,
+      "restarted_at_utc": "2026-10-08T22:41:31.752005+00:00",
+      "parent_created_at_utc": "2026-10-08T22:41:31.771689+00:00",
+      "database_initialized_at_utc": "2026-10-08T22:41:40.964445+00:00",
+      "started_at_utc": "2026-10-08T22:41:40.964445+00:00"
     },
     "rotation": {
       "account": "aggressive_rotation",
@@ -2959,17 +3082,18 @@
       "risk_envelope_ref": "aggressive_accounts.operating_contract.risk_envelope",
       "control_policy_ref": "aggressive_accounts.operating_contract.control_policy",
       "manual_authority_ref": "aggressive_accounts.operating_contract.main_agent_manual_authority",
-      "database_create_attempted_at_utc": "2026-10-08T07:50:34.340196+00:00",
+      "database_create_attempted_at_utc": "2026-10-08T22:42:04.501981+00:00",
       "last_recovery": {
         "status": "running",
-        "at_utc": "2026-10-08T07:50:34.340196+00:00",
-        "log_offset": 0
+        "at_utc": "2026-10-08T22:42:04.501981+00:00",
+        "log_offset": 5547801
       },
-      "parent_pid": 40260,
-      "worker_pid": 73228,
-      "restarted_at_utc": "2026-10-08T07:50:34.340196+00:00",
-      "parent_created_at_utc": "2026-10-08T07:50:34.368229+00:00",
-      "database_initialized_at_utc": "2026-10-08T07:50:41.259742+00:00"
+      "parent_pid": 12348,
+      "worker_pid": 76896,
+      "restarted_at_utc": "2026-10-08T22:42:04.501981+00:00",
+      "parent_created_at_utc": "2026-10-08T22:42:04.521695+00:00",
+      "database_initialized_at_utc": "2026-10-08T22:42:13.735854+00:00",
+      "started_at_utc": "2026-10-08T22:42:13.735854+00:00"
     }
   }
 }

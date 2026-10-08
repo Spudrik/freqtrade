@@ -218,8 +218,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if not args.reason or not args.source:
         raise ValueError("Every paper decision needs --reason and --source")
+    luna = load_luna_context(datetime.now(timezone.utc))
     if args.action in {"enter", "reduce", "exit", "protect"}:
-        luna = load_luna_context(datetime.now(timezone.utc))
         if luna.status != "observed" or args.source not in luna.sources:
             raise ValueError("Manual trade override requires a fresh Luna snapshot and one of its source URLs")
     decision_id = args.decision_id or uuid4().hex
@@ -230,6 +230,8 @@ def main(argv: list[str] | None = None) -> int:
         "account": overlay["bot_name"], "action": args.action,
         "reason": args.reason, "source": args.source, "status": "proposed",
     }
+    row["luna_observed_at_utc"] = (luna.observed_at.isoformat()
+                                   if luna.status == "observed" else None)
     if args.action == "no-action":
         row["status"] = "recorded_no_action"
         _record(row, args.account)

@@ -23,7 +23,7 @@ from freqtrade.persistence import Order, Trade
 from user_data.Custom_Launcher.research.paper_trial_runtime import ROOT, REPORT, RECORD, ACCOUNTS, account_record, account_specs_for_record, lifecycle_for, process_inventory, matching_processes, worker_heartbeat_state
 from user_data.Custom_Launcher.research.paper_trial_control import _configs, _api, _journal, _verify_running_account
 from user_data.Custom_Launcher.research.crypto_derivatives_snapshot import collect_crypto_derivatives_snapshot
-from user_data.strategies.integrated_paper_context import _utc
+from user_data.strategies.integrated_paper_context import _utc, load_luna_context
 from user_data.strategies.paper_fast_context import CONTROL_FILE, load_fast_control
 from user_data.strategies.paper_fast_context import CONTROL_JOURNAL, parse_fast_control
 from user_data.strategies.paper_news_manual import decision_rows
@@ -179,15 +179,24 @@ def source_snapshot(now):
 
 
 def market_snapshot():
-    _,overlay=_configs("manual")
+    record = read_json(RECORD)
+    readers = {spec.key: spec for spec in account_specs_for_record(record)
+               if spec.key in {"news_manual", "news_lab", "news_fast", "manual"}
+               and lifecycle_for(record, spec) == "ACTIVE"}
+    account = next((key for key in ("news_manual", "news_lab", "news_fast", "manual")
+                    if key in readers), None)
+    if account is None:
+        raise RuntimeError("No ACTIVE approved paper candle reader is registered")
+    _,overlay=_configs(account)
     _verify_running_account(overlay)
     output={}
-    for pair in ("BTC/USDT:USDT","ETH/USDT:USDT","SOL/USDT:USDT","BNB/USDT:USDT","DOGE/USDT:USDT","1000PEPE/USDT:USDT"):
+    for pair in sorted(readers[account].pairs):
         data=_api(overlay,"pair_candles?"+urlencode({"pair":pair,"timeframe":"1h","limit":4}))
         selected={name:index for index,name in enumerate(data["columns"]) if name in
             {"date","open","high","low","close","volume","paper_atr","vp_poc_4h","vp_hvn_above_4h","vp_hvn_below_4h","vp_lvn_above_4h","vp_lvn_below_4h","rolling_20_high_4h","rolling_20_low_4h","prior_24h_high","prior_24h_low"}}
         output[pair]=[{name:row[index] for name,index in selected.items()} for row in data["data"][-4:]]
-    return {"source":"Existing verified local IntegratedPaper manual read-only analyzed-candle API",
+    return {"source":f"Existing verified local {account} read-only analyzed-candle API",
+            "account": account,
             "timeframe":"1h; embedded completed 4h levels where available",
             "daily_candle_coverage":"not supplied by this local API; do not invent a daily trend", "pairs":output}
 
@@ -209,20 +218,38 @@ def _watch_times(watch):
     return sorted(times), errors
 
 
-def _news_fast_review_snapshot(record, now):
-    """Bounded local handoff of news_fast's own journal and persisted open plans."""
-    spec = next((item for item in account_specs_for_record(record) if item.key == "news_fast"), None)
+def _latest_manual_news_decision(account, bot_name):
+    """Read one journal's latest exact-account transition; malformed data fails closed."""
+    journal = _journal(account)
+    journal_state = "observed" if journal.is_file() else "missing"
+    try:
+        rows = decision_rows(journal)
+    except (OSError, ValueError, TypeError):
+        return "malformed", 0, None
+    try:
+        indexed = []
+        for index, row in enumerate(rows):
+            if not isinstance(row, dict):
+                raise ValueError("Decision journal row must be an object")
+            if row.get("account") == bot_name:
+                indexed.append((_utc(row["at_utc"]), index, row))
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return "malformed", len(rows), None
+    if not indexed:
+        return journal_state, len(rows), None
+    _, _, row = max(indexed, key=lambda item: (item[0], item[1]))
+    latest = {key: row.get(key) for key in
+              ("decision_id", "action", "status", "at_utc", "luna_observed_at_utc")}
+    return journal_state, len(rows), latest
+
+
+def _manual_news_review_snapshot(record, now, account):
+    """Bounded handoff for one exact manual-news account; no network scan."""
+    spec = next((item for item in account_specs_for_record(record) if item.key == account), None)
     if spec is None:
         return None
-    journal = _journal("news_fast")
-    journal_state = "observed" if journal.is_file() else "missing"
-    journal_rows = decision_rows(journal)
-    latest = None
-    if journal_rows:
-        valid_rows = [row for row in journal_rows if isinstance(row, dict) and row.get("account") == spec.bot_name]
-        if valid_rows:
-            row = max(valid_rows, key=lambda value: _utc(value["at_utc"]))
-            latest = {key: row.get(key) for key in ("decision_id", "action", "status", "at_utc")}
+    journal = _journal(account)
+    journal_state, journal_row_count, latest = _latest_manual_news_decision(account, spec.bot_name)
     info = account_record(record, spec)
     database = REPORT / info["db"]
     if not database.is_file():
@@ -254,10 +281,68 @@ def _news_fast_review_snapshot(record, now):
                 "leverage": leverage, "stop_price": stop_price, "protection_state": state, "stored_plan": plan})
     lifecycle = lifecycle_for(record, spec)
     return {"account": spec.key, "lifecycle": lifecycle,
-        "required": lifecycle == "ACTIVE", "review_policy": "best_guess_each_four_hour_wake",
+        "required": lifecycle == "ACTIVE",
+        "review_policy": ("best_guess_each_four_hour_wake" if account == "news_fast"
+                          else "consider_each_fresh_luna_handoff"),
         "database_state": database_state, "journal": str(journal), "journal_state": journal_state,
-        "journal_row_count": len(journal_rows), "latest_decision": latest, "open_positions": positions,
+        "journal_row_count": journal_row_count, "latest_decision": latest, "open_positions": positions,
         "observed_at_utc": now.isoformat()}
+
+
+def _news_fast_review_snapshot(record, now):
+    return _manual_news_review_snapshot(record, now, "news_fast")
+
+
+def _news_input_reviews(record, now, aggressive_controls, fast_context, manual_reviews):
+    """Explicit per-handoff decision coverage, independent of narrative change."""
+    issues = []
+    try:
+        luna = load_luna_context(now)
+    except (OSError, KeyError, TypeError, ValueError, OverflowError):
+        luna_status, clock = "malformed", None
+        issues.append("malformed_luna_context")
+    else:
+        luna_status = luna.status
+        clock = luna.observed_at.isoformat() if luna.status == "observed" else None
+    reviews = []
+    for review in manual_reviews:
+        if review and review["lifecycle"] == "ACTIVE":
+            latest = review.get("latest_decision")
+            latest = latest if isinstance(latest, dict) else {}
+            reviewed = (clock is not None and latest.get("luna_observed_at_utc") == clock
+                        and latest.get("status") in {"submitted", "recorded_no_action", "recorded_protection"})
+            reviews.append({"account": review["account"], "kind": "manual_news",
+                            "considered_for_current_luna": reviewed, "required": not reviewed})
+    for review in aggressive_controls:
+        if review["lifecycle"] == "ACTIVE":
+            reviewed = (clock is not None
+                        and review.get("luna_observed_at_utc") == clock
+                        and review["status"] == "observed")
+            reviews.append({"account": review["account"], "kind": "context_control",
+                            "considered_for_current_luna": reviewed,
+                            "required": not reviewed or review.get("renewal_required", True)})
+    if fast_context["lifecycle"] == "ACTIVE":
+        reviewed = (clock is not None and fast_context.get("luna_observed_at_utc") == clock
+                    and fast_context["status"] == "observed")
+        expires = fast_context.get("valid_until_utc")
+        try:
+            nearing_expiry = expires is None or _utc(expires) <= now + timedelta(minutes=30)
+        except (TypeError, ValueError, OverflowError):
+            nearing_expiry = True
+        reviews.append({"account": "fast_context", "kind": "context_control",
+                        "considered_for_current_luna": reviewed, "required": not reviewed or nearing_expiry})
+    # The original auto-with-overrides account keeps its narrower authority.
+    original = next(spec for spec in account_specs_for_record(record) if spec.key == "manual")
+    if lifecycle_for(record, original) == "ACTIVE":
+        _, _, latest = _latest_manual_news_decision("manual", original.bot_name)
+        latest = latest or {}
+        reviewed = (clock is not None and latest.get("luna_observed_at_utc") == clock
+                    and latest.get("status") in {"submitted", "recorded_no_action", "recorded_protection"})
+        reviews.append({"account": "manual", "kind": "narrow_news_override",
+                        "considered_for_current_luna": reviewed, "required": not reviewed})
+    return {"luna_status": luna_status, "luna_observed_at_utc": clock,
+            "required": any(row["required"] for row in reviews), "accounts": reviews,
+            "issues": issues}
 
 
 def review_context_snapshot(now, record=None):
@@ -289,7 +374,8 @@ def review_context_snapshot(now, record=None):
         try:
             encoded = read_json(CONTROL_FILE)
             if isinstance(encoded, dict):
-                control_times = {key:encoded.get(key) for key in ("observed_at_utc","valid_until_utc")}
+                control_times = {key:encoded.get(key) for key in
+                                 ("observed_at_utc","valid_until_utc","luna_observed_at_utc")}
             else:
                 issues.append("Fast control is not an object; preserve malformed-control entry block")
         except (ValueError, TypeError):
@@ -314,33 +400,44 @@ def review_context_snapshot(now, record=None):
             continue
         control = load_aggressive_control(key, now)
         expires = None
+        luna_clock = None
         path = CONTROL_FILES[key]
         if path.is_file():
             try:
                 encoded = read_json(path)
                 if isinstance(encoded, dict) and encoded.get("account") == AGGRESSIVE_ACCOUNTS[key]["bot_name"]:
                     expires = encoded.get("valid_until_utc")
+                    luna_clock = encoded.get("luna_observed_at_utc")
             except (ValueError, TypeError, OSError):
                 issues.append(f"{key}: control clock unavailable; technical-only 3x mode remains active")
         renewal = control.status != "observed"
         if expires:
             try:
                 renewal = renewal or _utc(expires) <= now + timedelta(minutes=30)
-            except ValueError:
+            except (TypeError, ValueError, OverflowError):
                 renewal = True
         aggressive_controls.append({"account":key,"lifecycle":lifecycle,"status":control.status,
             "technical_only":control.technical_only,"renewal_required":renewal,
             "decision_id":control.decision_id,"bias":control.bias,
             "side_permission":control.side_permission,"long_leverage_cap":control.long_leverage_cap,
             "short_leverage_cap":control.short_leverage_cap,"exposure":control.exposure,
-            "valid_until_utc":expires})
+            "valid_until_utc":expires, "luna_observed_at_utc": luna_clock})
+    manual_reviews = [_manual_news_review_snapshot(record, now, key)
+                      for key in ("news_manual", "news_lab")]
+    news_fast = _news_fast_review_snapshot(record, now)
+    if news_fast is not None:
+        manual_reviews.append(news_fast)
+    news_input_reviews = _news_input_reviews(record, now, aggressive_controls, fast_context, manual_reviews)
+    issues.extend({"news_input_review": issue} for issue in news_input_reviews["issues"])
     return {"trial":record.get("trial"),"run_record_status":record.get("status"),
         "accounts":[{"account":spec.key,"lifecycle":lifecycle_for(record,spec),"strategy":spec.strategy,"config":spec.config,
             "db":account_record(record,spec)["db"],"log":account_record(record,spec)["log"],
             "api_port":spec.port} for spec in account_specs_for_record(record)],
         "approved_watches":approved,"due_watches":due,"issues":issues,
         "fast_context":fast_context,"aggressive_controls":aggressive_controls,
-        "news_fast_review":_news_fast_review_snapshot(record,now)}
+        "manual_news_reviews": manual_reviews,
+        "news_input_reviews": news_input_reviews,
+        "news_fast_review":news_fast}
 
 
 def _candle_facts(candles, now, hours):

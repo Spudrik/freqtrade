@@ -112,6 +112,25 @@ def decision(strategy, frame):
     return row, result
 
 
+@pytest.mark.parametrize("close,low,high,forbidden", [
+    (89.,90.,110.,"long"),(111.,90.,110.,"short"),
+    (90.,90.,110.,"long"),(110.,90.,110.,"short"),
+])
+def test_reclaim_never_signals_an_already_invalidated_boundary(close,low,high,forbidden):
+    frame=signal_frame("reclaim")
+    frame.loc[1,["close_15m","ag_prior_low_15m","ag_prior_high_15m"]]=[close,low,high]
+    row,_=decision(PaperAggressiveReclaim(config("aggressive_reclaim")),frame)
+    assert row[f"enter_{forbidden}"]==0
+    assert row["ag_signal"]  # The alternative best guess remains available.
+
+
+def test_reclaim_refuses_both_sides_when_no_boundary_survives():
+    frame=signal_frame("reclaim")
+    frame.loc[1,["close_15m","ag_prior_low_15m","ag_prior_high_15m"]]=[100.,100.,100.]
+    row,_=decision(PaperAggressiveReclaim(config("aggressive_reclaim")),frame)
+    assert not row["ag_signal"] and row["enter_long"]==row["enter_short"]==0
+
+
 @pytest.mark.parametrize("family,side", [(family, side) for family in CLASSES for side in ("long", "short")])
 def test_each_family_has_primary_two_sided_route(family, side):
     row, _ = decision(CLASSES[family](config(f"aggressive_{family}")), signal_frame(family, side=side, primary=True))
@@ -130,6 +149,96 @@ def test_family_best_guess_stays_active_without_primary_setup(family, side):
     assert row["ag_mode"] == "exploratory"
     assert row["ag_decision_side"] == side
     assert row["ag_score"] > 0
+
+
+@pytest.mark.parametrize("family,side,frozen,current,close,pressure", [
+    ("vacuum", "long", 101., 99., 100., -.3),
+    ("vacuum", "short", 99., 101., 100., .3),
+    ("auction", "long", 95., 93., 94., 0.),
+    ("auction", "short", 105., 107., 106., 0.),
+])
+def test_weak_vacuum_and_auction_guesses_do_not_claim_observed_failure(
+        family, side, frozen, current, close, pressure):
+    strategy = CLASSES[family](config(f"aggressive_{family}"))
+    feature = ("vah_1h" if side == "long" else "val_1h") if family == "vacuum" else (
+        "val_4h" if side == "long" else "vah_4h")
+    plan = {"family": family, "route": "best_guess", "structural_anchor": frozen,
+            "features": {feature: frozen}}
+    row = {"close_15m": close, "ag_pressure_15m": pressure,
+           "ag_vah_1h": current, "ag_val_1h": current,
+           "ag_vah_4h": current, "ag_val_4h": current}
+    assert strategy._failure_exit_reason(row, plan, side) is None
+
+
+@pytest.mark.parametrize("family,route,side,feature,frozen,current,close,pressure,expected", [
+    ("vacuum", "profile_acceptance", "long", "vah_1h", 101., 99., 100., -.3,
+     "vacuum_profile_acceptance_failed"),
+    ("vacuum", "profile_acceptance", "short", "val_1h", 99., 101., 100., .3,
+     "vacuum_profile_acceptance_failed"),
+    ("auction", "accepted_value_escape", "long", "vah_4h", 101., 99., 100., 0.,
+     "auction_accepted_escape_failed"),
+    ("auction", "accepted_value_escape", "short", "val_4h", 99., 101., 100., 0.,
+     "auction_accepted_escape_failed"),
+    ("auction", "value_edge_rotation", "long", "val_4h", 99., 97., 98., 0.,
+     "auction_value_edge_rotation_failed"),
+    ("auction", "value_edge_rotation", "short", "vah_4h", 101., 103., 102., 0.,
+     "auction_value_edge_rotation_failed"),
+])
+def test_observed_profile_failures_use_frozen_entry_features(
+        family, route, side, feature, frozen, current, close, pressure, expected):
+    strategy = CLASSES[family](config(f"aggressive_{family}"))
+    plan = {"family": family, "route": route, "structural_anchor": frozen,
+            "features": {feature: frozen}}
+    row = {"close_15m": close, "ag_pressure_15m": pressure,
+           "ag_vah_1h": current, "ag_val_1h": current,
+           "ag_vah_4h": current, "ag_val_4h": current}
+    assert strategy._failure_exit_reason(row, plan, side) == expected
+
+
+@pytest.mark.parametrize("side,open_,high,low,close,route_reason", [
+    ("long", 95.4, 96., 95., 95.5, "observed lower"),
+    ("short", 104.8, 105., 104., 104.5, "observed upper"),
+])
+def test_auction_edge_rejection_route_and_reason_match_winning_side(
+        side, open_, high, low, close, route_reason):
+    frame = signal_frame("auction", side=side, primary=False)
+    frame.loc[1, ["open_15m", "high_15m", "low_15m", "close_15m", "ag_vah_4h",
+                  "ag_val_4h", "ag_poc_4h", "ag_range_expansion_15m",
+                  "ag_relative_volume_15m"]] = [open_, high, low, close, 105., 95., 100., .7, 1.]
+    row, _ = decision(PaperAggressiveAuction(config("aggressive_auction")), frame)
+    assert row["ag_decision_side"] == side
+    assert row["ag_route"] == "value_edge_rotation"
+    assert route_reason in row["ag_reason"]
+
+
+def test_auction_route_follows_winning_side_when_opposite_escape_fires():
+    frame = signal_frame("auction", side="short", primary=True)
+    frame.loc[0, "close_15m"] = 94.8
+    frame.loc[1, ["open_15m", "high_15m", "low_15m", "close_15m", "ag_vah_4h",
+                  "ag_val_4h", "ag_poc_4h", "ag_range_expansion_15m",
+                  "ag_relative_volume_15m", "ag_poc_migration_4h"]] = [
+                      90., 91., 89., 90., 105., 95., 100., 1.2, 1.2, .02]
+    row, _ = decision(PaperAggressiveAuction(config("aggressive_auction")), frame)
+    assert row["ag_decision_side"] == "long"
+    assert row["ag_mode"] == "exploratory"
+    assert row["ag_route"] == "best_guess"
+    assert "weak anticipated long" in row["ag_reason"]
+
+
+@pytest.mark.parametrize("excess,rank,own_return,close,side", [
+    (.004, .95, .001, 90., "long"),   # positive excess wins despite daily low / clipping tie
+    (-.004, .05, -.001, 110., "short"), # negative excess wins despite daily high
+    (0., .5, .001, 90., "long"),       # own return breaks a neutral cohort tie
+    (0., .5, -.001, 110., "short"),
+])
+def test_rotation_direction_cannot_be_reversed_by_daily_position(
+        excess, rank, own_return, close, side):
+    frame = signal_frame("rotation", side="long", primary=False)
+    frame.loc[1, ["close_15m", "ag_cohort_excess", "ag_cohort_rank",
+                  "ag_cohort_return", "ag_cohort_dispersion"]] = [
+                      close, excess, rank, own_return, .004]
+    row, _ = decision(PaperAggressiveRotation(config("aggressive_rotation")), frame)
+    assert row["ag_decision_side"] == side
 
 
 @pytest.mark.parametrize("family,mutate", [
@@ -477,14 +586,14 @@ def test_journalled_main_force_entry_passes_real_strategy_callbacks_without_auto
     record_file.write_text(json.dumps(record), encoding="utf-8")
     monkeypatch.setattr(controller, "RUN_RECORD", record_file)
     monkeypatch.setattr(controller, "_verify_running_account", lambda overlay: {})
-    monkeypatch.setattr(controller, "load_luna_context", lambda now: SimpleNamespace(status="observed", sources=(SOURCE,)))
+    monkeypatch.setattr(controller, "load_luna_context", lambda now: SimpleNamespace(status="observed", sources=(SOURCE,), observed_at=NOW))
     monkeypatch.setattr(controller, "load_aggressive_control", lambda *args: control)
     monkeypatch.setattr(controller, "_seen_decision", lambda *args: False)
     monkeypatch.setattr(controller, "_record", lambda row, account: rows.append(deepcopy(row)))
     monkeypatch.setattr(controller, "_api", lambda overlay, route, payload=None:
         routes.append((route, payload)) or ([] if route == "status" else {"total_bot": 10000.} if route == "balance" else {"order_id": "paper-only"}))
     monkeypatch.setattr(paper_news_manual, "decision_rows", lambda path: rows)
-    monkeypatch.setattr(context, "load_luna_context", lambda now: SimpleNamespace(status="observed", sources=(SOURCE,)))
+    monkeypatch.setattr(context, "load_luna_context", lambda now: SimpleNamespace(status="observed", sources=(SOURCE,), observed_at=NOW))
 
     assert controller.main(["enter", "--account", "aggressive_vacuum", "--decision-id", approval["decision_id"],
         "--reason", approval["reason"], "--source", SOURCE, "--pair", PAIRS[0], "--side", "short",
@@ -547,7 +656,7 @@ def test_fee_meaningful_manual_target_survives_controller_trade_and_order_filled
     monkeypatch.setattr(controller, "_assert_manual_lifecycle_allows", lambda *args: None)
     monkeypatch.setattr(controller, "_verify_running_account", lambda overlay: {})
     monkeypatch.setattr(controller, "load_luna_context",
-                        lambda now: SimpleNamespace(status="observed", sources=(SOURCE,)))
+                        lambda now: SimpleNamespace(status="observed", sources=(SOURCE,), observed_at=NOW))
     monkeypatch.setattr(controller, "load_aggressive_control", lambda *args: control)
     monkeypatch.setattr(controller, "_seen_decision", lambda *args: False)
     monkeypatch.setattr(controller, "_record", lambda row, account: rows.append(deepcopy(row)))
@@ -556,7 +665,7 @@ def test_fee_meaningful_manual_target_survives_controller_trade_and_order_filled
         {"total_bot": 10000.} if route == "balance" else {"order_id": "paper-only"}))
     monkeypatch.setattr(paper_news_manual, "decision_rows", lambda path: rows)
     monkeypatch.setattr(context, "load_luna_context",
-                        lambda now: SimpleNamespace(status="observed", sources=(SOURCE,)))
+                        lambda now: SimpleNamespace(status="observed", sources=(SOURCE,), observed_at=NOW))
     monkeypatch.setattr(Trade, "get_open_trades", lambda: [])
     monkeypatch.setattr(Trade, "get_custom_data",
                         lambda trade, key, default=None: deepcopy(stored.get((trade.id, key), default)))
@@ -690,6 +799,95 @@ def _margin_headroom_strategy(monkeypatch, side, equity):
     return strategy, control, row
 
 
+def _reclaim_pending_entry(monkeypatch, side):
+    strategy = PaperAggressiveReclaim(config("aggressive_reclaim"))
+    boundary = 100.
+    row = pd.Series({"ag_decision_side": side, "ag_mode": "exploratory", "ag_score": .55,
+        "ag_reason": "boundary callback test", "ag_route": "best_guess", "ag_atr5": .02,
+        "ag_atr_15m": .4, "ag_prior_low_15m": 100. if side == "long" else 98.,
+        "ag_prior_high_15m": 102. if side == "long" else 100.})
+    control = context.AggressiveControl("observed", "reclaim-boundary-control", 0, "both", 7., 7., "normal")
+    strategy._control = lambda _now: control
+    strategy._current_row = lambda pair, now, **kwargs: row
+    strategy._geometry = lambda _row, direction, rate: (
+        rate * (.98 if direction == "long" else 1.02),
+        rate * (1.04 if direction == "long" else .96), rate, "test_target")
+    strategy._context_size_factor = lambda *args: 1.
+    strategy._features = lambda _row: {}
+    strategy._top_rank_allows = lambda *args, **kwargs: True
+    strategy.wallets = SimpleNamespace(get_total_stake_amount=lambda: 10000.)
+    monkeypatch.setattr(Trade, "get_open_trades", lambda: [])
+    reference_rate = boundary + .001 if side == "long" else boundary - .001
+    entry_tag = f"aggressive:reclaim:exploratory:best_guess:{side}"
+    stake = strategy.custom_stake_amount(PAIRS[0], NOW, reference_rate, 1500., 1., 1500., 3., entry_tag, side)
+    assert stake > 0
+    return strategy, row, control, boundary, reference_rate, entry_tag, stake, stake * 3. / reference_rate
+
+
+@pytest.mark.parametrize("side", ["long", "short"])
+def test_reclaim_confirmation_rejects_crossed_or_touched_frozen_boundary(monkeypatch, side):
+    strategy, _, _, boundary, _, entry_tag, _, amount = _reclaim_pending_entry(monkeypatch, side)
+    crossed = boundary - .001 if side == "long" else boundary + .001
+    valid = boundary + .001 if side == "long" else boundary - .001
+    for rate in (crossed, boundary):
+        assert not strategy.confirm_trade_entry(PAIRS[0], "market", amount, rate, "gtc", NOW,
+                                                 entry_tag, side)
+    assert strategy.confirm_trade_entry(PAIRS[0], "market", amount, valid, "gtc", NOW,
+                                         entry_tag, side)
+
+
+@pytest.mark.parametrize("side", ["long", "short"])
+def test_reclaim_crossed_market_fill_persists_emergency_stop_and_exit(monkeypatch, tmp_path, side):
+    from freqtrade.persistence.models import (
+        PairLock, WalletHistory, _CustomData, _KeyValueStoreModel, init_db,
+    )
+    strategy, _, _, boundary, _, entry_tag, stake, amount = _reclaim_pending_entry(monkeypatch, side)
+    valid_confirmation = boundary + .001 if side == "long" else boundary - .001
+    crossed_fill = boundary - .001 if side == "long" else boundary + .001
+    assert strategy.confirm_trade_entry(PAIRS[0], "market", amount, valid_confirmation, "gtc", NOW,
+                                         entry_tag, side)
+    classes = (Trade, Order, PairLock, WalletHistory, _CustomData, _KeyValueStoreModel)
+    previous = {item: (hasattr(item, "session"), getattr(item, "session", None)) for item in classes}
+    init_db(f"sqlite:///{(tmp_path/'reclaim-emergency.sqlite').as_posix()}")
+    engine = Trade.session().get_bind()
+    try:
+        trade, order = _freqtrade_trade_order(trade_id=991 if side == "long" else 992,
+            pair=PAIRS[0], entry_tag=entry_tag, side=side, rate=crossed_fill,
+            amount=amount, stake=stake, leverage=3.)
+        trade.price_precision = 3
+        trade.precision_mode_price = 2
+        stored = {}
+        monkeypatch.setattr(Trade, "get_custom_data",
+                            lambda trade, key, default=None: deepcopy(stored.get((trade.id, key), default)))
+        monkeypatch.setattr(Trade, "set_custom_data",
+                            lambda trade, key, value: stored.__setitem__((trade.id, key), deepcopy(value)))
+        Trade.session.add(trade)
+        Trade.commit()
+        with pytest.raises(ValueError, match="crossed its frozen entry boundary"):
+            strategy.order_filled(PAIRS[0], trade, order, NOW)
+        assert (trade.id, context.PLAN_KEY) not in stored
+
+        # This is the same regular strategy stoploss path Freqtrade runs after a
+        # fill. The invalid plan selects the existing emergency margin stop.
+        strategy.ft_stoploss_adjust(crossed_fill, trade, NOW, 0., 0., after_fill=False)
+        Trade.commit()
+        Trade.session.expire_all()
+        persisted = Trade.session.query(Trade).filter_by(id=trade.id).one()
+        assert persisted.stop_loss > 0
+        emergency_distance = abs(persisted.stop_loss / persisted.open_rate - 1.) * persisted.leverage
+        assert emergency_distance <= context.AGGRESSIVE_LIMITS["emergency_margin_loss_pct"] + 1e-6
+        assert strategy.custom_exit(PAIRS[0], persisted, NOW, crossed_fill, 0.) == \
+            "aggressive_missing_or_invalid_protection_emergency_exit"
+    finally:
+        Trade.session.remove()
+        engine.dispose()
+        for item, (had_session, session) in previous.items():
+            if had_session:
+                item.session = session
+            elif hasattr(item, "session"):
+                delattr(item, "session")
+
+
 @pytest.mark.parametrize("side", ["long", "short"])
 def test_automatic_market_fill_headroom_reproduces_sui_margin_breach_and_keeps_caps(monkeypatch, side):
     rate, fill_rate = 1.1314, 1.1319
@@ -798,7 +996,7 @@ def test_controller_protection_journal_is_applied_by_actual_strategy_callback(mo
     rows, calls = [], []
     monkeypatch.setattr(controller, "_assert_manual_lifecycle_allows", lambda *args: None)
     monkeypatch.setattr(controller, "_verify_running_account", lambda overlay: {})
-    monkeypatch.setattr(controller, "load_luna_context", lambda now: SimpleNamespace(status="observed", sources=(SOURCE,)))
+    monkeypatch.setattr(controller, "load_luna_context", lambda now: SimpleNamespace(status="observed", sources=(SOURCE,), observed_at=NOW))
     monkeypatch.setattr(controller, "load_aggressive_trade_plan", lambda account, trade_id: original)
     monkeypatch.setattr(controller, "_seen_decision", lambda *args: False)
     monkeypatch.setattr(controller, "_record", lambda row, account: rows.append(deepcopy(row)))
@@ -837,6 +1035,12 @@ def test_actual_custom_exit_has_immediate_target_and_family_failure_routes(monke
     strategy_class = CLASSES[family]
     strategy = strategy_class(config(f"aggressive_{family}"))
     plan = dict(_filled_plan("long"), family=family, route=route)
+    if family == "vacuum":
+        plan["features"] = {"vah_1h": 101.}
+        plan["structural_anchor"] = 101.
+    elif family == "auction":
+        plan["features"] = {"vah_4h": 101.}
+        plan["structural_anchor"] = 101.
     if family == "reclaim":
         plan["entry_reclaim_boundary"] = 95.
     trade = SimpleNamespace(pair=PAIRS[0], is_short=False, open_rate=100., amount=50.,
@@ -926,7 +1130,7 @@ def test_aggressive_manual_reduce_is_rejected_before_any_api_write(monkeypatch):
     from user_data.Custom_Launcher.research import paper_trial_control as controller
     monkeypatch.setattr(controller, "_assert_manual_lifecycle_allows", lambda *args: None)
     monkeypatch.setattr(controller, "_verify_running_account", lambda overlay: {})
-    monkeypatch.setattr(controller, "load_luna_context", lambda now: SimpleNamespace(status="observed", sources=(SOURCE,)))
+    monkeypatch.setattr(controller, "load_luna_context", lambda now: SimpleNamespace(status="observed", sources=(SOURCE,), observed_at=NOW))
     routes = []
     monkeypatch.setattr(controller, "_api", lambda overlay, route, payload=None:
         routes.append((route, payload)) or ([{"trade_id": 51, "pair": PAIRS[0], "amount": 50., "is_short": False}]
@@ -943,7 +1147,7 @@ def test_aggressive_controller_keeps_journalled_full_exit_route(monkeypatch):
     from user_data.Custom_Launcher.research import paper_trial_control as controller
     monkeypatch.setattr(controller, "_assert_manual_lifecycle_allows", lambda *args: None)
     monkeypatch.setattr(controller, "_verify_running_account", lambda overlay: {})
-    monkeypatch.setattr(controller, "load_luna_context", lambda now: SimpleNamespace(status="observed", sources=(SOURCE,)))
+    monkeypatch.setattr(controller, "load_luna_context", lambda now: SimpleNamespace(status="observed", sources=(SOURCE,), observed_at=NOW))
     monkeypatch.setattr(controller, "_seen_decision", lambda *args: False)
     journal, calls = [], []
     monkeypatch.setattr(controller, "_record", lambda row, account: journal.append(deepcopy(row)))
