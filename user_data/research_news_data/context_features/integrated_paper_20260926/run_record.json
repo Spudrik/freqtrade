@@ -1,7 +1,7 @@
 {
   "trial": "integrated_paper_20260926",
   "stage": "comparative_sieve_and_directional_paper",
-  "status": "twelve_paper_accounts_running_inverse_signals_added",
+  "status": "twenty_three_paper_accounts_registered_not_all_running",
   "started_at_utc": "2026-09-26T21:46:08Z",
   "working_directory": "C:\\FreqTradeStuff",
   "python_exe": "C:\\FreqTradeStuff\\.venv\\Scripts\\python.exe",
@@ -14,28 +14,29 @@
   "command_template": "python -m freqtrade trade --config user_data/configs/integrated_paper_20260926_base.json --config user_data/configs/integrated_paper_20260926_<ACCOUNT>.json --strategy-path user_data/strategies --strategy IntegratedPaper --logfile user_data/research_news_data/context_features/integrated_paper_20260926/<ACCOUNT>.log",
   "accounts": {
     "auto": {
-      "parent_pid": 46000,
-      "worker_pid": 72604,
+      "parent_pid": 40068,
+      "worker_pid": 30980,
       "config": "user_data/configs/integrated_paper_20260926_auto.json",
       "db": "auto_trades.sqlite",
       "log": "auto.log",
       "decision_log": "decisions_auto.jsonl",
       "manual_api": false,
       "strategy": "IntegratedPaper",
-      "restarted_at_utc": "2026-10-05T20:35:01.672535+00:00",
+      "restarted_at_utc": "2026-10-07T22:36:37.942204+00:00",
       "entry_mode": "automatic",
       "command": "C:\\FreqTradeStuff\\.venv\\Scripts\\python.exe -m freqtrade trade --config C:\\FreqTradeStuff\\user_data\\configs\\integrated_paper_20260926_base.json --config C:\\FreqTradeStuff\\user_data\\configs\\integrated_paper_20260926_auto.json --strategy-path C:\\FreqTradeStuff\\user_data\\strategies --strategy IntegratedPaper --logfile C:\\FreqTradeStuff\\user_data\\research_news_data\\context_features\\integrated_paper_20260926\\auto.log",
-      "parent_created_at_utc": "2026-10-05T20:35:01.685158+00:00",
+      "parent_created_at_utc": "2026-10-07T22:36:37.966527+00:00",
       "last_recovery": {
-        "status": "draining_paused",
-        "at_utc": "2026-10-05T20:35:01.672535+00:00",
-        "log_offset": 1618024
+        "status": "parked_flat",
+        "at_utc": "2026-10-07T22:40:05.418913+00:00",
+        "open_trades": 0,
+        "open_orders": 0
       },
-      "lifecycle_changed_at_utc": "2026-10-05T08:44:56.852261+00:00"
+      "lifecycle_changed_at_utc": "2026-10-07T22:40:05.418913+00:00"
     },
     "manual": {
-      "parent_pid": 59752,
-      "worker_pid": 46560,
+      "parent_pid": 77936,
+      "worker_pid": 72456,
       "config": "user_data/configs/integrated_paper_20260926_manual.json",
       "db": "manual_trades.sqlite",
       "log": "manual.log",
@@ -43,16 +44,17 @@
       "intervention_log": "manual_interventions.jsonl",
       "manual_api": "127.0.0.1:8096",
       "strategy": "IntegratedPaper",
-      "restarted_at_utc": "2026-10-05T20:35:09.166512+00:00",
+      "restarted_at_utc": "2026-10-07T22:36:55.305509+00:00",
       "entry_mode": "automatic_with_manual_adjustments",
       "command": "C:\\FreqTradeStuff\\.venv\\Scripts\\python.exe -m freqtrade trade --config C:\\FreqTradeStuff\\user_data\\configs\\integrated_paper_20260926_base.json --config C:\\FreqTradeStuff\\user_data\\configs\\integrated_paper_20260926_manual.json --strategy-path C:\\FreqTradeStuff\\user_data\\strategies --strategy IntegratedPaper --logfile C:\\FreqTradeStuff\\user_data\\research_news_data\\context_features\\integrated_paper_20260926\\manual.log",
-      "parent_created_at_utc": "2026-10-05T20:35:09.179645+00:00",
+      "parent_created_at_utc": "2026-10-07T22:36:55.322325+00:00",
       "last_recovery": {
-        "status": "draining_paused",
-        "at_utc": "2026-10-05T20:35:09.166512+00:00",
-        "log_offset": 1625110
+        "status": "parked_flat",
+        "at_utc": "2026-10-07T22:40:05.953975+00:00",
+        "open_trades": 0,
+        "open_orders": 0
       },
-      "lifecycle_changed_at_utc": "2026-10-05T08:44:56.852261+00:00"
+      "lifecycle_changed_at_utc": "2026-10-07T22:40:05.953975+00:00"
     },
     "news_manual": {
       "parent_pid": 33316,
@@ -151,6 +153,58 @@
         "log_offset": 1389644
       },
       "restarted_at_utc": "2026-10-05T20:36:19.473402+00:00"
+    },
+    "news_fast": {
+      "bot_name": "paper_news_fast",
+      "strategy": "PaperNewsManual",
+      "config": "user_data/configs/paper_news_fast.json",
+      "db": "news_fast_trades.sqlite",
+      "log": "news_fast.log",
+      "decision_log": "news_fast_decisions.jsonl",
+      "manual_api": "127.0.0.1:8099",
+      "entry_mode": "manual_only_no_automatic_signals",
+      "risk_envelope": {
+        "starting_virtual_balance_usdt": 10000,
+        "max_positions": 3,
+        "max_stake_fraction": 0.15,
+        "max_leverage": 10,
+        "emergency_margin_loss_pct": 0.25,
+        "explicit_protection_required": true
+      },
+      "purpose": "High-risk manual-only news/market best-guess learning; aim multiple trades/day; main decides long/short/hold/close/reverse at every existing four-hour wake even without demonstrated edge, normally consider re-entry when flat and current price/protection usable. Collector-update gaps are unknown, not catalysts. Preserve losses and explicit stop/optional target; no automated entries.",
+      "user_authorized_at_utc": "2026-10-07T10:54:50.909457+00:00",
+      "authorization_basis": "Reviewed user request; explicit GO after final QA",
+      "registered_at_utc": "2026-10-07T10:54:50.909457+00:00",
+      "lifecycle_changed_at_utc": "2026-10-07T10:54:50.909457+00:00",
+      "database_create_attempted_at_utc": "2026-10-07T10:55:08.912139+00:00",
+      "last_recovery": {
+        "status": "running",
+        "at_utc": "2026-10-07T10:55:08.912139+00:00",
+        "log_offset": 0
+      },
+      "parent_pid": 65804,
+      "worker_pid": 17776,
+      "restarted_at_utc": "2026-10-07T10:55:08.912139+00:00",
+      "command": "C:\\FreqTradeStuff\\.venv\\Scripts\\python.exe -m freqtrade trade --config C:\\FreqTradeStuff\\user_data\\configs\\integrated_paper_20260926_base.json --config C:\\FreqTradeStuff\\user_data\\configs\\paper_news_fast.json --strategy-path C:\\FreqTradeStuff\\user_data\\strategies --strategy PaperNewsManual --logfile C:\\FreqTradeStuff\\user_data\\research_news_data\\context_features\\integrated_paper_20260926\\news_fast.log",
+      "parent_created_at_utc": "2026-10-07T10:55:08.928916+00:00",
+      "database_initialized_at_utc": "2026-10-07T10:55:15.806070+00:00",
+      "started_at_utc": "2026-10-07T10:55:08.928916+00:00",
+      "initial_api_check": {
+        "checked_at_utc": "2026-10-07T10:57:34.558192+00:00",
+        "status": "passed",
+        "dry_run": true,
+        "bot_name": "paper_news_fast",
+        "strategy": "PaperNewsManual",
+        "trading_mode": "futures",
+        "exchange": "binance",
+        "api_listen": "127.0.0.1:8099",
+        "equity_usdt": 10000.0,
+        "api_positions": 0,
+        "database_trades": 0,
+        "database_open_trades": 0,
+        "database_orders": 0,
+        "heartbeat_at_utc": "2026-10-07T10:57:18.864000+00:00"
+      }
     }
   },
   "fast_reaction_pair": {
@@ -258,15 +312,17 @@
       "initial_virtual_balance_usdt": 10000,
       "started_at_utc": "2026-10-01T16:23:32Z",
       "command": "C:\\FreqTradeStuff\\.venv\\Scripts\\python.exe -m freqtrade trade --config C:\\FreqTradeStuff\\user_data\\configs\\integrated_paper_20260926_base.json --config C:\\FreqTradeStuff\\user_data\\configs\\paper_fast_level_inverse.json --strategy-path C:\\FreqTradeStuff\\user_data\\strategies --strategy PaperFastLevelInverse --logfile C:\\FreqTradeStuff\\user_data\\research_news_data\\context_features\\integrated_paper_20260926\\fast_level_inverse.log",
-      "parent_pid": 38044,
-      "worker_pid": 66628,
-      "parent_created_at_utc": "2026-10-05T20:36:30.434655+00:00",
+      "parent_pid": 74428,
+      "worker_pid": 67332,
+      "parent_created_at_utc": "2026-10-07T22:37:45.094884+00:00",
       "last_recovery": {
-        "status": "running",
-        "at_utc": "2026-10-05T20:36:30.425481+00:00",
-        "log_offset": 1026049
+        "status": "parked_flat",
+        "at_utc": "2026-10-07T22:40:07.698898+00:00",
+        "open_trades": 0,
+        "open_orders": 0
       },
-      "restarted_at_utc": "2026-10-05T20:36:30.425481+00:00"
+      "restarted_at_utc": "2026-10-07T22:37:45.081168+00:00",
+      "lifecycle_changed_at_utc": "2026-10-07T22:40:07.698898+00:00"
     }
   },
   "source_families": [
@@ -294,40 +350,42 @@
     "parked_state": "The eight parked overlays explicitly set initial_state=stopped; they have no launched processes and no manual-order API.",
     "running": {
       "10": {
-        "parent_pid": 80600,
-        "worker_pid": 79928,
+        "parent_pid": 51980,
+        "worker_pid": 34088,
         "strategy": "PaperVariant10",
         "config": "user_data/configs/integrated_paper_variants/v10.json",
         "db": "v10_trades.sqlite",
         "log": "v10.log",
         "started_at_utc": "2026-09-27T00:02:20Z",
-        "restarted_at_utc": "2026-10-05T20:35:24.292814+00:00",
+        "restarted_at_utc": "2026-10-07T22:37:25.754800+00:00",
         "command": "C:\\FreqTradeStuff\\.venv\\Scripts\\python.exe -m freqtrade trade --config C:\\FreqTradeStuff\\user_data\\configs\\integrated_paper_20260926_base.json --config C:\\FreqTradeStuff\\user_data\\configs\\integrated_paper_variants\\v10.json --strategy-path C:\\FreqTradeStuff\\user_data\\strategies --strategy PaperVariant10 --logfile C:\\FreqTradeStuff\\user_data\\research_news_data\\context_features\\integrated_paper_20260926\\v10.log",
-        "parent_created_at_utc": "2026-10-05T20:35:24.306040+00:00",
+        "parent_created_at_utc": "2026-10-07T22:37:25.769280+00:00",
         "last_recovery": {
-          "status": "draining_paused",
-          "at_utc": "2026-10-05T20:35:24.292814+00:00",
-          "log_offset": 1666521
+          "status": "parked_flat",
+          "at_utc": "2026-10-07T22:40:07.111069+00:00",
+          "open_trades": 0,
+          "open_orders": 0
         },
-        "lifecycle_changed_at_utc": "2026-10-05T08:44:56.852261+00:00"
+        "lifecycle_changed_at_utc": "2026-10-07T22:40:07.111069+00:00"
       },
       "01": {
-        "parent_pid": 83240,
-        "worker_pid": 67580,
+        "parent_pid": 62232,
+        "worker_pid": 29004,
         "strategy": "PaperVariant01",
         "config": "user_data/configs/integrated_paper_variants/v01.json",
         "db": "v01_trades.sqlite",
         "log": "v01.log",
         "started_at_utc": "2026-09-27T00:02:20Z",
-        "restarted_at_utc": "2026-10-05T20:35:16.685918+00:00",
+        "restarted_at_utc": "2026-10-07T22:37:10.571404+00:00",
         "command": "C:\\FreqTradeStuff\\.venv\\Scripts\\python.exe -m freqtrade trade --config C:\\FreqTradeStuff\\user_data\\configs\\integrated_paper_20260926_base.json --config C:\\FreqTradeStuff\\user_data\\configs\\integrated_paper_variants\\v01.json --strategy-path C:\\FreqTradeStuff\\user_data\\strategies --strategy PaperVariant01 --logfile C:\\FreqTradeStuff\\user_data\\research_news_data\\context_features\\integrated_paper_20260926\\v01.log",
-        "parent_created_at_utc": "2026-10-05T20:35:16.696428+00:00",
+        "parent_created_at_utc": "2026-10-07T22:37:10.586915+00:00",
         "last_recovery": {
-          "status": "draining_paused",
-          "at_utc": "2026-10-05T20:35:16.685918+00:00",
-          "log_offset": 1590821
+          "status": "parked_flat",
+          "at_utc": "2026-10-07T22:40:06.593754+00:00",
+          "open_trades": 0,
+          "open_orders": 0
         },
-        "lifecycle_changed_at_utc": "2026-10-05T08:44:56.852261+00:00"
+        "lifecycle_changed_at_utc": "2026-10-07T22:40:06.593754+00:00"
       }
     },
     "command_template": "C:\\FreqTradeStuff\\.venv\\Scripts\\python.exe -m freqtrade trade --config user_data/configs/integrated_paper_20260926_base.json --config user_data/configs/integrated_paper_variants/v<ID>.json --strategy-path user_data/strategies --strategy PaperVariant<ID> --logfile C:\\FreqTradeStuff\\user_data\\research_news_data\\context_features\\integrated_paper_20260926\\v<ID>.log",
@@ -380,12 +438,12 @@
       "restarted_at_utc": "2026-10-05T20:35:39.398522+00:00",
       "parent_created_at_utc": "2026-10-05T20:35:39.409169+00:00",
       "last_recovery": {
-        "status": "draining_paused",
-        "at_utc": "2026-10-05T20:35:39.398522+00:00",
-        "log_offset": 1662789,
-        "verified_at_utc": "2026-10-05T20:41:43.121556+00:00"
+        "status": "parked_flat",
+        "at_utc": "2026-10-07T05:37:33.629740+00:00",
+        "open_trades": 0,
+        "open_orders": 0
       },
-      "lifecycle_changed_at_utc": "2026-10-05T08:44:56.852261+00:00"
+      "lifecycle_changed_at_utc": "2026-10-07T05:37:33.629740+00:00"
     },
     "summary_command_template": "C:\\FreqTradeStuff\\.venv\\Scripts\\python.exe -m freqtrade show-trades --config user_data/configs/integrated_paper_20260926_base.json --config <arm-config>",
     "started_at_utc": "2026-09-27T00:55:31Z",
@@ -525,6 +583,22 @@
     }
   },
   "announcement_watches": [
+    {
+      "event_id": "fomc_minutes_20261007",
+      "name": "FOMC minutes through existing regular review",
+      "event_time_utc": "2026-10-07T18:00:00Z",
+      "proposed_checks_utc": [
+        "2026-10-07T18:10:00Z"
+      ],
+      "status": "observed_closed_existing_regular_review",
+      "automation_id": "paper-trial-weekly-comparison",
+      "source": "https://www.federalreserve.gov/newsevents/2026-october.htm",
+      "approved_at_utc": "2026-10-07T02:11:48Z",
+      "reason": "Official Fed calendar confirms 7 October minutes at 14:00 Eastern / 18:00 UTC. Use the already scheduled four-hour review around 18:10 UTC for one post-release assessment; decline the additional 18:30 wake as redundant. No automation cadence change or new task. Use the preceding Luna brief as a pre-release baseline only if genuinely recorded and fresh; compare published content and observed BTC/ETH response with overlapping drivers. Consensus content is unknown; do not invent a numerical surprise or trade solely because minutes were released. If the existing wake or source evidence is missing, label the window unobserved. Close this occurrence after assessment without treating an absent reaction as universal disproof.",
+      "observed_at_utc": "2026-10-07T18:19:43.423062+00:00",
+      "post_review_note": "18:11UTC scheduled main wake occurred. Pre-release Luna brief expired18:00UTC; fresh bounded update published18:18:20UTC after official Fed minutes and Binance1m verification. Official minutes confirm September25bp hike and most saw another hike likely by year-end; expectations for today wording unknown. BTC/ETH17:59to18:14 closes rose0.227percent/0.294percent, not proof of causal reaction. Wider rates/USD confirmation unknown. Main verified news_fast prior two shorts closed with manual_news_invalidation reasons and cumulative51.67766USDT profit. New best-guess BTC10x short journaled separately, based on rebound fading plus older broad weakness, not a proven news surprise. No new wake or schedule change; this occurrence closed.",
+      "actual_source": "https://www.federalreserve.gov/monetarypolicy/fomcminutes20260916.htm"
+    },
     {
       "event_id": "rba_pre",
       "name": "Paper RBA pre-release review",
@@ -674,20 +748,33 @@
       "sieve_h4_vp_lvn_long",
       "sieve_pivot_partial",
       "v01",
-      "v10"
+      "v10",
+      "news_fast",
+      "swing_level_bounce",
+      "swing_level_break_hold",
+      "aggressive_vacuum",
+      "aggressive_reclaim",
+      "aggressive_auction",
+      "aggressive_rotation"
     ],
     "paused_accounts": [
+      "auto",
       "fast_auto",
-      "fast_context"
+      "fast_context",
+      "fast_level_inverse",
+      "leader_impulse",
+      "manual",
+      "v01",
+      "v10"
     ],
     "helper": "user_data/Custom_Launcher/research/paper_trial_runtime.py",
     "command": "C:\\FreqTradeStuff\\.venv\\Scripts\\python.exe -B -m user_data.Custom_Launcher.research.paper_trial_runtime --apply",
     "config_sha256": {
       "user_data/configs/integrated_paper_20260926_base.json": "043f5bea641ef1fa57f2a11229cfc3cf9cb479424fe69ad3a63a12a97a207835",
-      "user_data/configs/integrated_paper_20260926_auto.json": "98466c0acc76e5ce7df06c1a864ea4a351188bca7d39694a7d07eda9ddc20221",
-      "user_data/configs/integrated_paper_20260926_manual.json": "b7fa0114bdcb4f2844ec31fb86f00b9b513cd51ad02d692149c8d683a88295c4",
-      "user_data/configs/integrated_paper_variants/v01.json": "786f9543860eb81112048c28487bf5350e577151807b34e74cccca77459f522a",
-      "user_data/configs/integrated_paper_variants/v10.json": "aad86798ba8b00586f43a7960e6cbe52c7c035ed585a063fd1811f678fa63521",
+      "user_data/configs/integrated_paper_20260926_auto.json": "36610f133a0f5cf566d4a2858a4eaefd86c359aa8864a94372eaefe3d90bbf4f",
+      "user_data/configs/integrated_paper_20260926_manual.json": "b427f5812249780176fa1c86d17ca83d771e6ffaf54d1a1ed1c50ec51872faa9",
+      "user_data/configs/integrated_paper_variants/v01.json": "7dd051ac7ea2908513cf6bc0ef1e6253c580fe267999633cd0626657a4485bb6",
+      "user_data/configs/integrated_paper_variants/v10.json": "9769eaa70b6b51076de7cfea3f10a7e235243f5cdcc967e2ad9ff761e620e52d",
       "user_data/configs/integrated_paper_fast_pivot.json": "33e863ace11ab5239fefe21bafadba191cefc8fc113ce0cd8f5a70aee341e285",
       "user_data/configs/integrated_paper_leader_impulse.json": "4bff8bb9aa7c64829cbe737dd176366016f1641f01204591b83afc6e9ffd2e61",
       "user_data/configs/paper_news_manual.json": "7816ccec8bc5896c9f3cc421734e39b47dc8d91f9beb70defa4feb5a42f0bd60",
@@ -695,11 +782,18 @@
       "user_data/configs/paper_fast_auto.json": "fe63be8909c97984e878a12aeb2477004e2a2dcae2775a39668040689826a999",
       "user_data/configs/paper_fast_context.json": "ea4b42ca7543ca7c7c5c110dc086165b6d406359e524981c7daf83a0faf26390",
       "user_data/configs/paper_leader_inverse.json": "e23bad9727517545eadd21425342b3373d717de8248a00ff20eacd3947393056",
-      "user_data/configs/paper_fast_level_inverse.json": "e59b2966d2b67aabc00c26f714528e9cdc4ba2aa065d37e9fdbb106d0eeef7e2",
+      "user_data/configs/paper_fast_level_inverse.json": "f7937be6f1ee9f32bed79c4c8b7b85a9ea7b58ae6e716a405a43b7c64ebc1e07",
       "user_data/configs/paper_sieve_pivot_partial.json": "9841dcd6d21546be91063d15777b1bea08826632e02c7953f245f47579e32ebe",
       "user_data/configs/paper_sieve_d1_vp_bos_short.json": "9fbb20f65c462f16ce1c62fb06b80084625777e157003f71c1eada67fa796ebd",
       "user_data/configs/paper_sieve_d1_support_break_long.json": "18289108ff66acfc0e92dd20d47501bab19ae8b0902e29962ab495c47485d851",
-      "user_data/configs/paper_sieve_h4_vp_lvn_long.json": "c27e0396dd79a68e045b0d5a38792228913f3d43933b236f5b3383333fa15c7d"
+      "user_data/configs/paper_sieve_h4_vp_lvn_long.json": "c27e0396dd79a68e045b0d5a38792228913f3d43933b236f5b3383333fa15c7d",
+      "user_data/configs/paper_news_fast.json": "3ff66f7b19af6ede4e9dd5cc1ae475d4a8089f38733c26f7a0a30a688b771cf5",
+      "user_data/configs/paper_swing_level_bounce.json": "370370da517bed6a1f8094f2bec67f3b08b437854b2f63ea2e0b764c70639e3a",
+      "user_data/configs/paper_swing_level_break_hold.json": "4aa089b1549d6833ca46c6e4ce48621a0941610a5231a9b309ed4cb16fc1d6b9",
+      "user_data/configs/paper_aggressive_vacuum.json": "bd4be41e9522a4b408b01540ab61d29eee492fe84867ae1fbc5942d942bd3293",
+      "user_data/configs/paper_aggressive_reclaim.json": "de5dda1843465f1c802ad8f7f6c4bd122434c3b6f4ca0ca6c7bcb275cfc32af1",
+      "user_data/configs/paper_aggressive_auction.json": "1462abf63a8127f3d16b56e240244af3241e4672dea59e32b205d9dd1be5bbaf",
+      "user_data/configs/paper_aggressive_rotation.json": "722b26fbd0d561ef3df8b6d326fc284a02af5019cf35fbbd1bd6a5e1b4fc3ede"
     },
     "authority": "Luna and main scheduled reviews may restore missing exact current PAPER bots only. No strategy/config/core/risk changes, orders, process kills, parked/retired accounts, database resets or retry of failed/unresolved launches.",
     "events": [
@@ -1531,6 +1625,525 @@
           "sieve_d1_support_break_long",
           "sieve_h4_vp_lvn_long"
         ]
+      },
+      {
+        "account": "leader_impulse",
+        "status": "parked_flat",
+        "at_utc": "2026-10-07T05:37:33.629740+00:00",
+        "open_trades": 0,
+        "open_orders": 0
+      },
+      {
+        "account": "auto",
+        "status": "draining_paused",
+        "at_utc": "2026-10-07T08:30:49.586441+00:00",
+        "log_offset": 1886509,
+        "parent_pid": 77092,
+        "worker_pid": 58080
+      },
+      {
+        "account": "auto",
+        "preserved_database": "auto_trades.sqlite",
+        "open_trade_ids_before": [
+          2,
+          7
+        ],
+        "prior_worker_state": "PAUSED",
+        "status": "drain_restart_completed",
+        "at_utc": "2026-10-07T08:31:03.113352+00:00",
+        "open_trade_ids_after": [
+          2,
+          7
+        ],
+        "closed_ids_during_restart": [],
+        "startup": {
+          "account": "auto",
+          "status": "draining_paused",
+          "parent_pid": 77092,
+          "worker_pid": 58080
+        },
+        "startup_heartbeat_at_utc": "2026-10-07T08:31:00.954000+00:00"
+      },
+      {
+        "account": "manual",
+        "status": "draining_paused",
+        "at_utc": "2026-10-07T08:31:04.626145+00:00",
+        "log_offset": 1894709,
+        "parent_pid": 21048,
+        "worker_pid": 55232
+      },
+      {
+        "account": "manual",
+        "preserved_database": "manual_trades.sqlite",
+        "open_trade_ids_before": [
+          2,
+          7
+        ],
+        "prior_worker_state": "PAUSED",
+        "status": "drain_restart_completed",
+        "at_utc": "2026-10-07T08:31:17.885009+00:00",
+        "open_trade_ids_after": [
+          2,
+          7
+        ],
+        "closed_ids_during_restart": [],
+        "startup": {
+          "account": "manual",
+          "status": "draining_paused",
+          "parent_pid": 21048,
+          "worker_pid": 55232
+        },
+        "startup_heartbeat_at_utc": "2026-10-07T08:31:15.868000+00:00"
+      },
+      {
+        "account": "v10",
+        "status": "draining_paused",
+        "at_utc": "2026-10-07T08:31:19.385715+00:00",
+        "log_offset": 1932096,
+        "parent_pid": 58028,
+        "worker_pid": 21404
+      },
+      {
+        "account": "v10",
+        "preserved_database": "v10_trades.sqlite",
+        "open_trade_ids_before": [
+          2,
+          6,
+          7
+        ],
+        "prior_worker_state": "PAUSED",
+        "status": "drain_restart_completed",
+        "at_utc": "2026-10-07T08:31:32.730548+00:00",
+        "open_trade_ids_after": [
+          2,
+          6,
+          7
+        ],
+        "closed_ids_during_restart": [],
+        "startup": {
+          "account": "v10",
+          "status": "draining_paused",
+          "parent_pid": 58028,
+          "worker_pid": 21404
+        },
+        "startup_heartbeat_at_utc": "2026-10-07T08:31:31.452000+00:00"
+      },
+      {
+        "account": "news_fast",
+        "status": "running",
+        "at_utc": "2026-10-07T10:55:08.912139+00:00",
+        "log_offset": 0,
+        "parent_pid": 65804,
+        "worker_pid": 17776
+      },
+      {
+        "status": "paper_retirement_authorized",
+        "at_utc": "2026-10-07T22:36:17.739522+00:00",
+        "approved_at_utc": "2026-10-07T22:36:17.739522+00:00",
+        "approved_by": "user",
+        "target_accounts": [
+          "auto",
+          "manual",
+          "v01",
+          "v10",
+          "fast_level_inverse"
+        ],
+        "intent": "Retire all current DRAINING targets and fast_level_inverse through reviewed strategy force-close callbacks and normal PAPER engine market fills.",
+        "preserve_existing_history_and_losses": true,
+        "no_sql_close_or_balance_reset": true,
+        "fast_auto_remains_parked_flat_and_stopped": true,
+        "pre_action": {
+          "auto": {
+            "lifecycle_before": "DRAINING",
+            "open_trade_ids": [
+              2
+            ],
+            "open_orders": 0,
+            "exact_tree": {
+              "parent": {
+                "pid": 77092,
+                "ppid": 60808,
+                "name": "python.exe",
+                "create_time": 1791361849.6066628,
+                "cwd": "C:\\FreqTradeStuff"
+              },
+              "worker": {
+                "pid": 58080,
+                "ppid": 77092,
+                "name": "python.exe",
+                "create_time": 1791361849.62602,
+                "cwd": "C:\\FreqTradeStuff"
+              }
+            },
+            "heartbeat": {
+              "state": "PAUSED",
+              "at_utc": "2026-10-07T22:35:58.278000+00:00",
+              "fresh": true,
+              "pid": 58080
+            }
+          },
+          "manual": {
+            "lifecycle_before": "DRAINING",
+            "open_trade_ids": [
+              2
+            ],
+            "open_orders": 0,
+            "exact_tree": {
+              "parent": {
+                "pid": 21048,
+                "ppid": 60808,
+                "name": "python.exe",
+                "create_time": 1791361864.6388896,
+                "cwd": "C:\\FreqTradeStuff"
+              },
+              "worker": {
+                "pid": 55232,
+                "ppid": 21048,
+                "name": "python.exe",
+                "create_time": 1791361864.6569371,
+                "cwd": "C:\\FreqTradeStuff"
+              }
+            },
+            "heartbeat": {
+              "state": "PAUSED",
+              "at_utc": "2026-10-07T22:35:48.578000+00:00",
+              "fresh": true,
+              "pid": 55232
+            }
+          },
+          "v01": {
+            "lifecycle_before": "DRAINING",
+            "open_trade_ids": [
+              2
+            ],
+            "open_orders": 0,
+            "exact_tree": {
+              "parent": {
+                "pid": 83240,
+                "ppid": 66088,
+                "name": "python.exe",
+                "create_time": 1791232516.696428,
+                "cwd": "C:\\FreqTradeStuff"
+              },
+              "worker": {
+                "pid": 67580,
+                "ppid": 83240,
+                "name": "python.exe",
+                "create_time": 1791232516.7156732,
+                "cwd": "C:\\FreqTradeStuff"
+              }
+            },
+            "heartbeat": {
+              "state": "PAUSED",
+              "at_utc": "2026-10-07T22:35:58.144000+00:00",
+              "fresh": true,
+              "pid": 67580
+            }
+          },
+          "v10": {
+            "lifecycle_before": "DRAINING",
+            "open_trade_ids": [
+              2,
+              6
+            ],
+            "open_orders": 0,
+            "exact_tree": {
+              "parent": {
+                "pid": 58028,
+                "ppid": 60808,
+                "name": "python.exe",
+                "create_time": 1791361879.4004025,
+                "cwd": "C:\\FreqTradeStuff"
+              },
+              "worker": {
+                "pid": 21404,
+                "ppid": 58028,
+                "name": "python.exe",
+                "create_time": 1791361879.41978,
+                "cwd": "C:\\FreqTradeStuff"
+              }
+            },
+            "heartbeat": {
+              "state": "PAUSED",
+              "at_utc": "2026-10-07T22:35:53.140000+00:00",
+              "fresh": true,
+              "pid": 21404
+            }
+          },
+          "fast_level_inverse": {
+            "lifecycle_before": "ACTIVE",
+            "open_trade_ids": [],
+            "open_orders": 0,
+            "exact_tree": {
+              "parent": {
+                "pid": 38044,
+                "ppid": 66088,
+                "name": "python.exe",
+                "create_time": 1791232590.4346552,
+                "cwd": "C:\\FreqTradeStuff"
+              },
+              "worker": {
+                "pid": 66628,
+                "ppid": 38044,
+                "name": "python.exe",
+                "create_time": 1791232590.453088,
+                "cwd": "C:\\FreqTradeStuff"
+              }
+            },
+            "heartbeat": {
+              "state": "RUNNING",
+              "at_utc": "2026-10-07T22:35:51.023000+00:00",
+              "fresh": true,
+              "pid": 66628
+            }
+          },
+          "fast_auto": {
+            "lifecycle_before": "PARKED",
+            "open_trade_ids": [],
+            "open_orders": 0,
+            "exact_tree": null,
+            "heartbeat": {
+              "state": null,
+              "at_utc": null,
+              "fresh": false
+            }
+          }
+        },
+        "updated_overlay_config_pins": [
+          "user_data/configs/integrated_paper_20260926_auto.json",
+          "user_data/configs/integrated_paper_20260926_manual.json",
+          "user_data/configs/integrated_paper_variants/v01.json",
+          "user_data/configs/integrated_paper_variants/v10.json",
+          "user_data/configs/paper_fast_level_inverse.json"
+        ],
+        "base_config_pin_unchanged": true,
+        "fast_auto_config_pin_unchanged": true
+      },
+      {
+        "account": "auto",
+        "status": "draining_paused",
+        "at_utc": "2026-10-07T22:36:37.942204+00:00",
+        "log_offset": 1999712,
+        "parent_pid": 40068,
+        "worker_pid": 30980
+      },
+      {
+        "account": "auto",
+        "preserved_database": "auto_trades.sqlite",
+        "open_trade_ids_before": [
+          2
+        ],
+        "prior_worker_state": "PAUSED",
+        "status": "drain_restart_completed",
+        "at_utc": "2026-10-07T22:36:53.733320+00:00",
+        "open_trade_ids_after": [],
+        "closed_ids_during_restart": [
+          2
+        ],
+        "startup": {
+          "account": "auto",
+          "status": "draining_paused",
+          "parent_pid": 40068,
+          "worker_pid": 30980
+        },
+        "startup_heartbeat_at_utc": "2026-10-07T22:36:52.397000+00:00"
+      },
+      {
+        "account": "manual",
+        "status": "draining_paused",
+        "at_utc": "2026-10-07T22:36:55.305509+00:00",
+        "log_offset": 2008730,
+        "parent_pid": 77936,
+        "worker_pid": 72456
+      },
+      {
+        "account": "manual",
+        "preserved_database": "manual_trades.sqlite",
+        "open_trade_ids_before": [
+          2
+        ],
+        "prior_worker_state": "PAUSED",
+        "status": "drain_restart_completed",
+        "at_utc": "2026-10-07T22:37:08.965557+00:00",
+        "open_trade_ids_after": [],
+        "closed_ids_during_restart": [
+          2
+        ],
+        "startup": {
+          "account": "manual",
+          "status": "draining_paused",
+          "parent_pid": 77936,
+          "worker_pid": 72456
+        },
+        "startup_heartbeat_at_utc": "2026-10-07T22:37:08.888000+00:00"
+      },
+      {
+        "account": "v01",
+        "status": "draining_paused",
+        "at_utc": "2026-10-07T22:37:10.571404+00:00",
+        "log_offset": 1964779,
+        "parent_pid": 62232,
+        "worker_pid": 29004
+      },
+      {
+        "account": "v01",
+        "preserved_database": "v01_trades.sqlite",
+        "open_trade_ids_before": [
+          2
+        ],
+        "prior_worker_state": "PAUSED",
+        "status": "drain_restart_completed",
+        "at_utc": "2026-10-07T22:37:24.181824+00:00",
+        "open_trade_ids_after": [],
+        "closed_ids_during_restart": [
+          2
+        ],
+        "startup": {
+          "account": "v01",
+          "status": "draining_paused",
+          "parent_pid": 62232,
+          "worker_pid": 29004
+        },
+        "startup_heartbeat_at_utc": "2026-10-07T22:37:22.235000+00:00"
+      },
+      {
+        "account": "v10",
+        "status": "draining_paused",
+        "at_utc": "2026-10-07T22:37:25.754800+00:00",
+        "log_offset": 2045543,
+        "parent_pid": 51980,
+        "worker_pid": 34088
+      },
+      {
+        "account": "v10",
+        "preserved_database": "v10_trades.sqlite",
+        "open_trade_ids_before": [
+          2,
+          6
+        ],
+        "prior_worker_state": "PAUSED",
+        "status": "drain_restart_completed",
+        "at_utc": "2026-10-07T22:37:43.502422+00:00",
+        "open_trade_ids_after": [],
+        "closed_ids_during_restart": [
+          2,
+          6
+        ],
+        "startup": {
+          "account": "v10",
+          "status": "draining_paused",
+          "parent_pid": 51980,
+          "worker_pid": 34088
+        },
+        "startup_heartbeat_at_utc": "2026-10-07T22:37:41.960000+00:00"
+      },
+      {
+        "account": "fast_level_inverse",
+        "status": "draining_paused",
+        "at_utc": "2026-10-07T22:37:45.081168+00:00",
+        "log_offset": 1599503,
+        "parent_pid": 74428,
+        "worker_pid": 67332
+      },
+      {
+        "account": "fast_level_inverse",
+        "preserved_database": "fast_level_inverse_trades.sqlite",
+        "open_trade_ids_before": [],
+        "prior_worker_state": "RUNNING",
+        "status": "drain_restart_completed",
+        "at_utc": "2026-10-07T22:37:56.424423+00:00",
+        "open_trade_ids_after": [],
+        "closed_ids_during_restart": [],
+        "startup": {
+          "account": "fast_level_inverse",
+          "status": "draining_paused",
+          "parent_pid": 74428,
+          "worker_pid": 67332
+        },
+        "startup_heartbeat_at_utc": "2026-10-07T22:37:55.505000+00:00"
+      },
+      {
+        "account": "auto",
+        "status": "parked_flat",
+        "at_utc": "2026-10-07T22:40:05.418913+00:00",
+        "open_trades": 0,
+        "open_orders": 0
+      },
+      {
+        "account": "manual",
+        "status": "parked_flat",
+        "at_utc": "2026-10-07T22:40:05.953975+00:00",
+        "open_trades": 0,
+        "open_orders": 0
+      },
+      {
+        "account": "v01",
+        "status": "parked_flat",
+        "at_utc": "2026-10-07T22:40:06.593754+00:00",
+        "open_trades": 0,
+        "open_orders": 0
+      },
+      {
+        "account": "v10",
+        "status": "parked_flat",
+        "at_utc": "2026-10-07T22:40:07.111069+00:00",
+        "open_trades": 0,
+        "open_orders": 0
+      },
+      {
+        "account": "fast_level_inverse",
+        "status": "parked_flat",
+        "at_utc": "2026-10-07T22:40:07.698898+00:00",
+        "open_trades": 0,
+        "open_orders": 0
+      },
+      {
+        "account": "swing_level_bounce",
+        "status": "running",
+        "at_utc": "2026-10-07T23:12:50.593940+00:00",
+        "log_offset": 0,
+        "parent_pid": 47896,
+        "worker_pid": 81972
+      },
+      {
+        "account": "swing_level_break_hold",
+        "status": "running",
+        "at_utc": "2026-10-07T23:13:00.927557+00:00",
+        "log_offset": 0,
+        "parent_pid": 27492,
+        "worker_pid": 32068
+      },
+      {
+        "account": "aggressive_vacuum",
+        "status": "running",
+        "at_utc": "2026-10-08T07:50:09.711908+00:00",
+        "log_offset": 0,
+        "parent_pid": 7192,
+        "worker_pid": 7112
+      },
+      {
+        "account": "aggressive_reclaim",
+        "status": "running",
+        "at_utc": "2026-10-08T07:50:17.961509+00:00",
+        "log_offset": 0,
+        "parent_pid": 32048,
+        "worker_pid": 18292
+      },
+      {
+        "account": "aggressive_auction",
+        "status": "running",
+        "at_utc": "2026-10-08T07:50:26.151391+00:00",
+        "log_offset": 0,
+        "parent_pid": 53244,
+        "worker_pid": 83092
+      },
+      {
+        "account": "aggressive_rotation",
+        "status": "running",
+        "at_utc": "2026-10-08T07:50:34.340196+00:00",
+        "log_offset": 0,
+        "parent_pid": 40260,
+        "worker_pid": 73228
       }
     ],
     "codex_startup": {
@@ -1543,53 +2156,43 @@
       "validation": "Task registration/target/principal/trigger verified. No reboot or forced application relaunch performed."
     },
     "recovery_delay": "At next existing four-hour scheduled agent wake after Windows sign-in/app availability; not immediate reboot recovery.",
-    "last_check_at_utc": "2026-10-05T20:37:07.517458+00:00",
+    "last_check_at_utc": "2026-10-08T05:36:05.973577+00:00",
     "last_results": [
       {
         "account": "auto",
-        "status": "draining_paused",
-        "parent_pid": 46000,
-        "worker_pid": 72604
+        "status": "paused_do_not_restart"
       },
       {
         "account": "manual",
-        "status": "draining_paused",
-        "parent_pid": 59752,
-        "worker_pid": 46560
+        "status": "paused_do_not_restart"
       },
       {
         "account": "v01",
-        "status": "draining_paused",
-        "parent_pid": 83240,
-        "worker_pid": 67580
+        "status": "paused_do_not_restart"
       },
       {
         "account": "v10",
-        "status": "draining_paused",
-        "parent_pid": 80600,
-        "worker_pid": 79928
+        "status": "paused_do_not_restart"
       },
       {
         "account": "fast_pivot",
-        "status": "running",
+        "status": "already_running",
         "parent_pid": 53320,
         "worker_pid": 33616
       },
       {
         "account": "leader_impulse",
-        "status": "starting",
-        "parent_pid": 23780,
-        "worker_pid": 24840
+        "status": "paused_do_not_restart"
       },
       {
         "account": "news_manual",
-        "status": "running",
+        "status": "already_running",
         "parent_pid": 33316,
         "worker_pid": 52132
       },
       {
         "account": "news_lab",
-        "status": "running",
+        "status": "already_running",
         "parent_pid": 76452,
         "worker_pid": 15044
       },
@@ -1603,58 +2206,81 @@
       },
       {
         "account": "leader_inverse",
-        "status": "running",
+        "status": "already_running",
         "parent_pid": 68800,
         "worker_pid": 34000
       },
       {
         "account": "fast_level_inverse",
-        "status": "running",
-        "parent_pid": 38044,
-        "worker_pid": 66628
+        "status": "paused_do_not_restart"
       },
       {
         "account": "sieve_pivot_partial",
-        "status": "running",
+        "status": "already_running",
         "parent_pid": 32280,
         "worker_pid": 58836
       },
       {
         "account": "sieve_d1_vp_bos_short",
-        "status": "running",
+        "status": "already_running",
         "parent_pid": 22180,
         "worker_pid": 79896
       },
       {
         "account": "sieve_d1_support_break_long",
-        "status": "running",
+        "status": "already_running",
         "parent_pid": 77028,
         "worker_pid": 51568
       },
       {
         "account": "sieve_h4_vp_lvn_long",
-        "status": "running",
+        "status": "already_running",
         "parent_pid": 68576,
         "worker_pid": 24860
+      },
+      {
+        "account": "news_fast",
+        "status": "already_running",
+        "parent_pid": 65804,
+        "worker_pid": 17776
+      },
+      {
+        "account": "swing_level_bounce",
+        "status": "already_running",
+        "parent_pid": 47896,
+        "worker_pid": 81972
+      },
+      {
+        "account": "swing_level_break_hold",
+        "status": "already_running",
+        "parent_pid": 27492,
+        "worker_pid": 32068
       }
     ],
     "account_lifecycle": {
-      "auto": "DRAINING",
-      "manual": "DRAINING",
-      "v01": "DRAINING",
-      "v10": "DRAINING",
+      "auto": "PARKED",
+      "manual": "PARKED",
+      "v01": "PARKED",
+      "v10": "PARKED",
       "fast_pivot": "ACTIVE",
-      "leader_impulse": "DRAINING",
+      "leader_impulse": "PARKED",
       "news_manual": "ACTIVE",
       "news_lab": "ACTIVE",
       "fast_auto": "PARKED",
       "fast_context": "PARKED",
       "leader_inverse": "ACTIVE",
-      "fast_level_inverse": "ACTIVE",
+      "fast_level_inverse": "PARKED",
       "sieve_pivot_partial": "ACTIVE",
       "sieve_d1_vp_bos_short": "ACTIVE",
       "sieve_d1_support_break_long": "ACTIVE",
-      "sieve_h4_vp_lvn_long": "ACTIVE"
+      "sieve_h4_vp_lvn_long": "ACTIVE",
+      "news_fast": "ACTIVE",
+      "swing_level_bounce": "ACTIVE",
+      "swing_level_break_hold": "ACTIVE",
+      "aggressive_vacuum": "ACTIVE",
+      "aggressive_reclaim": "ACTIVE",
+      "aggressive_auction": "ACTIVE",
+      "aggressive_rotation": "ACTIVE"
     }
   },
   "entry_refresh": {
@@ -1916,5 +2542,434 @@
     },
     "process_gap_note": "During the approved drain restarts, manual, v01, v10, leader_impulse and fast_auto produced healthy PAUSED startup heartbeats and then their trees disappeared after the exec helper was interrupted. Their log tails showed no ERROR or normal shutdown. The interrupted helper is a plausible, unproven cause; those five were restored once through the approved exact-list recovery helper. Real off-process gaps occurred; no fills or uninterrupted stop operation are imputed. Existing databases and losses were preserved.",
     "routine_new_database_guard": "Routine run_check blocks first database creation for an unattempted, uninitialized new Sieve identity with status blocked_requires_attended_initialization. Only attended --initialize-new may create its first database; normal recovery may restore an initialized database, and an unresolved recorded creation attempt never creates a replacement balance."
+  },
+  "swing_level_pair": {
+    "approved_at_utc": "2026-10-07T23:11:44.537528+00:00",
+    "purpose": "Matched PAPER comparison of two less-twitchy swing-level entry mechanisms on the same six-pair universe, equal isolated virtual capital, risk envelope, and protective exits. Learning trial only; no profitability claim.",
+    "strategy_file": "user_data/strategies/paper_swing_levels.py",
+    "pair_universe": [
+      "1000PEPE/USDT:USDT",
+      "BNB/USDT:USDT",
+      "BTC/USDT:USDT",
+      "DOGE/USDT:USDT",
+      "ETH/USDT:USDT",
+      "SOL/USDT:USDT"
+    ],
+    "timeframe_contract": "Use only pre-existing levels from completed H1, H4, and D1 candles; H1 is the decision/confirmation timeframe.",
+    "comparison": "bounce enters on a completed-H1 bounce/rejection; break_hold requires the break and a second completed-H1 close holding beyond the level. Other risk and exit rules remain matched.",
+    "risk_contract": "Each account starts with 10000 USDT virtual equity, isolated margin, 3x leverage, at most 3 positions, at most 25% equity margin per position, 2% planned equity loss per trade and 4% combined planned equity loss; 20% margin-loss emergency backstop. No exchange credentials or order API.",
+    "exit_contract": "Structural stop 0.5 ATR beyond the level, with at least 1.5 ATR room; use a pre-existing level target only when cost-adjusted reward is at least 1.5R, otherwise a 2R volatility target. Invalidate after two completed H1 candles; maximum hold 48 hours.",
+    "initial_history": "Both identities are newly registered but uninitialized: no DB, trades, orders, or prior balance at registration. The runtime helper records the initialization attempt and confirmed DB initialization during the one attended first launch.",
+    "bounce": {
+      "bot_name": "paper_swing_level_bounce",
+      "strategy": "PaperSwingLevelBounce",
+      "config": "user_data/configs/paper_swing_level_bounce.json",
+      "db": "swing_level_bounce_trades.sqlite",
+      "log": "swing_level_bounce.log",
+      "manual_api": "disabled",
+      "entry_mode": "bounce",
+      "initial_virtual_balance_usdt": 10000,
+      "risk_envelope": {
+        "starting_virtual_balance_usdt": 10000,
+        "max_positions": 3,
+        "max_leverage": 3,
+        "max_margin_pct_equity_per_position": 25,
+        "max_planned_loss_pct_equity_per_trade": 2,
+        "max_combined_planned_loss_pct_equity": 4,
+        "emergency_loss_pct_margin": 20,
+        "explicit_protection_required": true,
+        "no_exchange_credentials": true,
+        "order_api_enabled": false
+      },
+      "purpose": "Trade completed-H1 bounces/rejections at pre-existing H1/H4/D1 levels.",
+      "authorization_basis": "Explicit attended PAPER launch authorization after candidate review and QA.",
+      "registered_at_utc": "2026-10-07T23:11:44.537528+00:00",
+      "lifecycle_changed_at_utc": "2026-10-07T23:11:44.537528+00:00",
+      "initial_database_state": "uninitialized at registration: no database/log file, no prior trades or orders; balance is initialized only by the approved first-launch helper.",
+      "command": "C:\\FreqTradeStuff\\.venv\\Scripts\\python.exe -m freqtrade trade --config C:\\FreqTradeStuff\\user_data\\configs\\integrated_paper_20260926_base.json --config C:\\FreqTradeStuff\\user_data\\configs\\paper_swing_level_bounce.json --strategy-path C:\\FreqTradeStuff\\user_data\\strategies --strategy PaperSwingLevelBounce --logfile C:\\FreqTradeStuff\\user_data\\research_news_data\\context_features\\integrated_paper_20260926\\swing_level_bounce.log",
+      "database_create_attempted_at_utc": "2026-10-07T23:12:50.593940+00:00",
+      "last_recovery": {
+        "status": "running",
+        "at_utc": "2026-10-07T23:12:50.593940+00:00",
+        "log_offset": 0
+      },
+      "parent_pid": 47896,
+      "worker_pid": 81972,
+      "restarted_at_utc": "2026-10-07T23:12:50.593940+00:00",
+      "parent_created_at_utc": "2026-10-07T23:12:50.612644+00:00",
+      "database_initialized_at_utc": "2026-10-07T23:12:59.707840+00:00"
+    },
+    "break_hold": {
+      "bot_name": "paper_swing_level_break_hold",
+      "strategy": "PaperSwingLevelBreakHold",
+      "config": "user_data/configs/paper_swing_level_break_hold.json",
+      "db": "swing_level_break_hold_trades.sqlite",
+      "log": "swing_level_break_hold.log",
+      "manual_api": "disabled",
+      "entry_mode": "break_hold",
+      "initial_virtual_balance_usdt": 10000,
+      "risk_envelope": {
+        "starting_virtual_balance_usdt": 10000,
+        "max_positions": 3,
+        "max_leverage": 3,
+        "max_margin_pct_equity_per_position": 25,
+        "max_planned_loss_pct_equity_per_trade": 2,
+        "max_combined_planned_loss_pct_equity": 4,
+        "emergency_loss_pct_margin": 20,
+        "explicit_protection_required": true,
+        "no_exchange_credentials": true,
+        "order_api_enabled": false
+      },
+      "purpose": "Trade H1 level breaks only after a second completed-H1 hold beyond the pre-existing level.",
+      "authorization_basis": "Explicit attended PAPER launch authorization after candidate review and QA.",
+      "registered_at_utc": "2026-10-07T23:11:44.537528+00:00",
+      "lifecycle_changed_at_utc": "2026-10-07T23:11:44.537528+00:00",
+      "initial_database_state": "uninitialized at registration: no database/log file, no prior trades or orders; balance is initialized only by the approved first-launch helper.",
+      "command": "C:\\FreqTradeStuff\\.venv\\Scripts\\python.exe -m freqtrade trade --config C:\\FreqTradeStuff\\user_data\\configs\\integrated_paper_20260926_base.json --config C:\\FreqTradeStuff\\user_data\\configs\\paper_swing_level_break_hold.json --strategy-path C:\\FreqTradeStuff\\user_data\\strategies --strategy PaperSwingLevelBreakHold --logfile C:\\FreqTradeStuff\\user_data\\research_news_data\\context_features\\integrated_paper_20260926\\swing_level_break_hold.log",
+      "database_create_attempted_at_utc": "2026-10-07T23:13:00.927557+00:00",
+      "last_recovery": {
+        "status": "running",
+        "at_utc": "2026-10-07T23:13:00.927557+00:00",
+        "log_offset": 0
+      },
+      "parent_pid": 27492,
+      "worker_pid": 32068,
+      "restarted_at_utc": "2026-10-07T23:13:00.927557+00:00",
+      "parent_created_at_utc": "2026-10-07T23:13:00.944062+00:00",
+      "database_initialized_at_utc": "2026-10-07T23:13:07.782530+00:00"
+    }
+  },
+  "aggressive_accounts": {
+    "operating_contract": {
+      "authorization": "User-requested four distinct PAPER experiments; root GO after independent QA. PAPER-only; no live trading authority.",
+      "registered_at_utc": "2026-10-08T07:49:27.039983+00:00",
+      "universe": {
+        "pairs": [
+          "AVAX/USDT:USDT",
+          "DOGE/USDT:USDT",
+          "ENA/USDT:USDT",
+          "NEAR/USDT:USDT",
+          "SUI/USDT:USDT",
+          "UNI/USDT:USDT",
+          "XRP/USDT:USDT",
+          "ZEC/USDT:USDT"
+        ],
+        "market": "Binance USDT perpetuals",
+        "pair_substitution": "not allowed without approval",
+        "btc_eth_context_only_not_traded": true
+      },
+      "execution": {
+        "base_timeframe": "5m",
+        "ranked_entry_opportunity_interval_minutes": 15,
+        "completed_context_timeframes": [
+          "15m",
+          "1h",
+          "4h",
+          "1d"
+        ],
+        "no_strategy_network_calls": true
+      },
+      "entry_policy": {
+        "mode": "family-specific primary interaction plus family-specific exploratory long/short ranking when primary setup is absent",
+        "exploratory_is_labelled": true,
+        "directional_confidence_gate": false,
+        "uncertainty_is_not_blanket_entry_block": true
+      },
+      "account_envelope": {
+        "runmode": "dry_run",
+        "trading_mode": "futures",
+        "margin_mode": "isolated",
+        "initial_virtual_balance_usdt": 10000,
+        "max_open_positions": 3,
+        "pyramiding": false,
+        "leverage_x": {
+          "minimum": 3,
+          "normal": 7,
+          "maximum": 10,
+          "weak_or_exploratory": 3,
+          "subject_to_exchange_brackets": true
+        }
+      },
+      "risk_envelope": {
+        "max_entry_margin_fraction_current_equity": 0.15,
+        "max_planned_stop_plus_roundtrip_cost_risk_fraction_equity": 0.03,
+        "max_combined_open_and_reserved_risk_fraction_equity": 0.08,
+        "position_margin_emergency_stop_fraction": 0.25,
+        "roundtrip_fee_slippage_planning_allowance": 0.0014,
+        "structural_stop_extra_completed_15m_atr_minimum": 0.75,
+        "normal_reassessment_minutes": 15,
+        "maximum_hold_hours": 24,
+        "no_automatic_stop_widening": true,
+        "verify_closed_before_opposite_entry": true,
+        "actual_fees_and_funding_recorded_separately": true,
+        "emergency_stop_is_backstop_not_normal_target_loss": true
+      },
+      "control_policy": {
+        "authority": "main-agent sourced and journalled; Luna is advisory/read-only and never places orders or publishes controls",
+        "freshness_max_hours": 4,
+        "must_not_outlive_supporting_luna_brief": true,
+        "bias_range": [
+          -2,
+          2
+        ],
+        "side_permission": [
+          "both",
+          "long_only",
+          "short_only"
+        ],
+        "long_and_short_leverage_caps_x": [
+          3,
+          10
+        ],
+        "exposure": [
+          "normal",
+          "reduced"
+        ],
+        "missing_stale_or_malformed": "visible technical-only 3x mode; not healthy-neutral news and not a blanket entry block",
+        "existing_fast_context_expiry_policy": "unchanged: while ACTIVE an expired control blocks new contextual entries"
+      },
+      "main_agent_manual_authority": {
+        "actions": [
+          "force_entry",
+          "full_exit",
+          "explicit_protection_tightening"
+        ],
+        "force_entry_requires_validated_durable_plan_without_automatic_setup": true,
+        "manual_direction_override_is_for_that_decision_only": true,
+        "risk_and_protection_constraints_still_apply": true,
+        "uncertain_order": "inspect read-only and request attention; never retry, replace, or compensate"
+      },
+      "local_isolation": {
+        "api_bind": "127.0.0.1",
+        "per_account_auth_stored_only_in_private_ignored_config": true,
+        "distinct_database_log_control_journal_and_decision_journal": true
+      },
+      "review_cadence": "Use the existing four-hour Luna-to-main handoff; no new scheduler or monitoring framework.",
+      "controller_commands": {
+        "status": ".venv\\Scripts\\python.exe -B -m user_data.Custom_Launcher.research.paper_trial_control status --account <aggressive_account>",
+        "publish_account_control": ".venv\\Scripts\\python.exe -B -m user_data.Custom_Launcher.research.paper_fast_control publish --account <aggressive_account> --decision-id <id> --bias <-2..2> --side-permission <both|long_only|short_only> --long-leverage-cap <3..10> --short-leverage-cap <3..10> --exposure <normal|reduced> --reason <text> --source <source>",
+        "manual_entry": ".venv\\Scripts\\python.exe -B -m user_data.Custom_Launcher.research.paper_trial_control enter --account <aggressive_account> --pair <fixed_pair> --side <long|short> --reference-rate <price> --stake-pct <fraction> --leverage <3..10> --stop-price <price> --take-profit-price <price> --decision-id <id> --reason <text> --source <fresh_source>",
+        "full_exit": ".venv\\Scripts\\python.exe -B -m user_data.Custom_Launcher.research.paper_trial_control exit --account <aggressive_account> --trade-id <id> --decision-id <id> --reason <text> --source <fresh_source>",
+        "tighten_protection": ".venv\\Scripts\\python.exe -B -m user_data.Custom_Launcher.research.paper_trial_control protect --account <aggressive_account> --trade-id <id> --reference-rate <price> --stop-price <tighter_price> --take-profit-price <price> --decision-id <id> --reason <text> --source <fresh_source>",
+        "attended_initialization": ".venv\\Scripts\\python.exe -B -m user_data.Custom_Launcher.research.paper_trial_runtime --initialize-new aggressive_vacuum aggressive_reclaim aggressive_auction aggressive_rotation --apply"
+      },
+      "startup_acceptance": "Require exact process/log/API/database identities, fresh analyzed candles and scored candidates for all eight configured pairs, plus read-only fill/order/protection/cost verification. Process presence alone is not readiness; do not force trades to manufacture readiness or claim a proven edge."
+    },
+    "vacuum": {
+      "account": "aggressive_vacuum",
+      "family": "vacuum",
+      "bot_name": "paper_aggressive_vacuum",
+      "config": "user_data/configs/paper_aggressive_vacuum.json",
+      "db": "aggressive_vacuum_trades.sqlite",
+      "log": "aggressive_vacuum.log",
+      "strategy": "PaperAggressiveVacuum",
+      "command": "C:\\FreqTradeStuff\\.venv\\Scripts\\python.exe -m freqtrade trade --config C:\\FreqTradeStuff\\user_data\\configs\\integrated_paper_20260926_base.json --config C:\\FreqTradeStuff\\user_data\\configs\\paper_aggressive_vacuum.json --strategy-path C:\\FreqTradeStuff\\user_data\\strategies --strategy PaperAggressiveVacuum --logfile C:\\FreqTradeStuff\\user_data\\research_news_data\\context_features\\integrated_paper_20260926\\aggressive_vacuum.log",
+      "api_host": "127.0.0.1",
+      "api_port": 8100,
+      "control_file": "user_data/research_news_data/context_features/integrated_paper_20260926/aggressive_vacuum_control.json",
+      "control_journal": "user_data/research_news_data/context_features/integrated_paper_20260926/aggressive_vacuum_control_decisions.jsonl",
+      "decision_log": "user_data/research_news_data/context_features/integrated_paper_20260926/aggressive_vacuum_decisions.jsonl",
+      "registered_at_utc": "2026-10-08T07:49:27.039983+00:00",
+      "lifecycle_changed_at_utc": "2026-10-08T07:49:27.039983+00:00",
+      "purpose": "Does directional volume pressure carry a break or pullback through a thin profile region toward the next substantial volume or structure level?",
+      "exit_contract": "Freeze structural invalidation and ATR at entry; target the next useful profile or structure level, or a labelled volatility objective; tighten after meaningful cost-adjusted progress and allow strong continuation.",
+      "entry_mode": "automatic family-specific primary plus labelled exploratory long/short ranking",
+      "pair_universe": [
+        "AVAX/USDT:USDT",
+        "DOGE/USDT:USDT",
+        "ENA/USDT:USDT",
+        "NEAR/USDT:USDT",
+        "SUI/USDT:USDT",
+        "UNI/USDT:USDT",
+        "XRP/USDT:USDT",
+        "ZEC/USDT:USDT"
+      ],
+      "base_timeframe": "5m",
+      "ranked_entry_opportunity_interval_minutes": 15,
+      "completed_context_timeframes": [
+        "15m",
+        "1h",
+        "4h",
+        "1d"
+      ],
+      "max_open_trades": 3,
+      "initial_virtual_balance_usdt": 10000,
+      "risk_envelope_ref": "aggressive_accounts.operating_contract.risk_envelope",
+      "control_policy_ref": "aggressive_accounts.operating_contract.control_policy",
+      "manual_authority_ref": "aggressive_accounts.operating_contract.main_agent_manual_authority",
+      "database_create_attempted_at_utc": "2026-10-08T07:50:09.711908+00:00",
+      "last_recovery": {
+        "status": "running",
+        "at_utc": "2026-10-08T07:50:09.711908+00:00",
+        "log_offset": 0
+      },
+      "parent_pid": 7192,
+      "worker_pid": 7112,
+      "restarted_at_utc": "2026-10-08T07:50:09.711908+00:00",
+      "parent_created_at_utc": "2026-10-08T07:50:09.731882+00:00",
+      "database_initialized_at_utc": "2026-10-08T07:50:16.640236+00:00"
+    },
+    "reclaim": {
+      "account": "aggressive_reclaim",
+      "family": "reclaim",
+      "bot_name": "paper_aggressive_reclaim",
+      "config": "user_data/configs/paper_aggressive_reclaim.json",
+      "db": "aggressive_reclaim_trades.sqlite",
+      "log": "aggressive_reclaim.log",
+      "strategy": "PaperAggressiveReclaim",
+      "command": "C:\\FreqTradeStuff\\.venv\\Scripts\\python.exe -m freqtrade trade --config C:\\FreqTradeStuff\\user_data\\configs\\integrated_paper_20260926_base.json --config C:\\FreqTradeStuff\\user_data\\configs\\paper_aggressive_reclaim.json --strategy-path C:\\FreqTradeStuff\\user_data\\strategies --strategy PaperAggressiveReclaim --logfile C:\\FreqTradeStuff\\user_data\\research_news_data\\context_features\\integrated_paper_20260926\\aggressive_reclaim.log",
+      "api_host": "127.0.0.1",
+      "api_port": 8101,
+      "control_file": "user_data/research_news_data/context_features/integrated_paper_20260926/aggressive_reclaim_control.json",
+      "control_journal": "user_data/research_news_data/context_features/integrated_paper_20260926/aggressive_reclaim_control_decisions.jsonl",
+      "decision_log": "user_data/research_news_data/context_features/integrated_paper_20260926/aggressive_reclaim_decisions.jsonl",
+      "registered_at_utc": "2026-10-08T07:49:27.039983+00:00",
+      "lifecycle_changed_at_utc": "2026-10-08T07:49:27.039983+00:00",
+      "purpose": "Is a high/low sweep being rejected despite large activity, using pre-existing extremes, wick/reclaim geometry, limited follow-through and changing pressure/momentum?",
+      "exit_contract": "Stop beyond the swept extreme with volatility room; seek value/midpoint then a larger opposite reaction zone; leave on a failed reclaim rather than ordinary price wiggle.",
+      "entry_mode": "automatic family-specific primary plus labelled exploratory long/short ranking",
+      "pair_universe": [
+        "AVAX/USDT:USDT",
+        "DOGE/USDT:USDT",
+        "ENA/USDT:USDT",
+        "NEAR/USDT:USDT",
+        "SUI/USDT:USDT",
+        "UNI/USDT:USDT",
+        "XRP/USDT:USDT",
+        "ZEC/USDT:USDT"
+      ],
+      "base_timeframe": "5m",
+      "ranked_entry_opportunity_interval_minutes": 15,
+      "completed_context_timeframes": [
+        "15m",
+        "1h",
+        "4h",
+        "1d"
+      ],
+      "max_open_trades": 3,
+      "initial_virtual_balance_usdt": 10000,
+      "risk_envelope_ref": "aggressive_accounts.operating_contract.risk_envelope",
+      "control_policy_ref": "aggressive_accounts.operating_contract.control_policy",
+      "manual_authority_ref": "aggressive_accounts.operating_contract.main_agent_manual_authority",
+      "database_create_attempted_at_utc": "2026-10-08T07:50:17.961509+00:00",
+      "last_recovery": {
+        "status": "running",
+        "at_utc": "2026-10-08T07:50:17.961509+00:00",
+        "log_offset": 0
+      },
+      "parent_pid": 32048,
+      "worker_pid": 18292,
+      "restarted_at_utc": "2026-10-08T07:50:17.961509+00:00",
+      "parent_created_at_utc": "2026-10-08T07:50:17.983441+00:00",
+      "database_initialized_at_utc": "2026-10-08T07:50:24.925540+00:00"
+    },
+    "auction": {
+      "account": "aggressive_auction",
+      "family": "auction",
+      "bot_name": "paper_aggressive_auction",
+      "config": "user_data/configs/paper_aggressive_auction.json",
+      "db": "aggressive_auction_trades.sqlite",
+      "log": "aggressive_auction.log",
+      "strategy": "PaperAggressiveAuction",
+      "command": "C:\\FreqTradeStuff\\.venv\\Scripts\\python.exe -m freqtrade trade --config C:\\FreqTradeStuff\\user_data\\configs\\integrated_paper_20260926_base.json --config C:\\FreqTradeStuff\\user_data\\configs\\paper_aggressive_auction.json --strategy-path C:\\FreqTradeStuff\\user_data\\strategies --strategy PaperAggressiveAuction --logfile C:\\FreqTradeStuff\\user_data\\research_news_data\\context_features\\integrated_paper_20260926\\aggressive_auction.log",
+      "api_host": "127.0.0.1",
+      "api_port": 8102,
+      "control_file": "user_data/research_news_data/context_features/integrated_paper_20260926/aggressive_auction_control.json",
+      "control_journal": "user_data/research_news_data/context_features/integrated_paper_20260926/aggressive_auction_control_decisions.jsonl",
+      "decision_log": "user_data/research_news_data/context_features/integrated_paper_20260926/aggressive_auction_decisions.jsonl",
+      "registered_at_utc": "2026-10-08T07:49:27.039983+00:00",
+      "lifecycle_changed_at_utc": "2026-10-08T07:49:27.039983+00:00",
+      "purpose": "Can price rotate through a stable value/range auction when overlapping timeframe boundaries and changing pressure favour an edge-to-centre move?",
+      "exit_contract": "Freeze the stop outside the auction boundary; target a useful centre/opposite value region; detect a genuine range escape before repeated mean-reversion losses.",
+      "entry_mode": "automatic family-specific primary plus labelled exploratory long/short ranking",
+      "pair_universe": [
+        "AVAX/USDT:USDT",
+        "DOGE/USDT:USDT",
+        "ENA/USDT:USDT",
+        "NEAR/USDT:USDT",
+        "SUI/USDT:USDT",
+        "UNI/USDT:USDT",
+        "XRP/USDT:USDT",
+        "ZEC/USDT:USDT"
+      ],
+      "base_timeframe": "5m",
+      "ranked_entry_opportunity_interval_minutes": 15,
+      "completed_context_timeframes": [
+        "15m",
+        "1h",
+        "4h",
+        "1d"
+      ],
+      "max_open_trades": 3,
+      "initial_virtual_balance_usdt": 10000,
+      "risk_envelope_ref": "aggressive_accounts.operating_contract.risk_envelope",
+      "control_policy_ref": "aggressive_accounts.operating_contract.control_policy",
+      "manual_authority_ref": "aggressive_accounts.operating_contract.main_agent_manual_authority",
+      "database_create_attempted_at_utc": "2026-10-08T07:50:26.151391+00:00",
+      "last_recovery": {
+        "status": "running",
+        "at_utc": "2026-10-08T07:50:26.151391+00:00",
+        "log_offset": 0
+      },
+      "parent_pid": 53244,
+      "worker_pid": 83092,
+      "restarted_at_utc": "2026-10-08T07:50:26.151391+00:00",
+      "parent_created_at_utc": "2026-10-08T07:50:26.167619+00:00",
+      "database_initialized_at_utc": "2026-10-08T07:50:33.114003+00:00"
+    },
+    "rotation": {
+      "account": "aggressive_rotation",
+      "family": "rotation",
+      "bot_name": "paper_aggressive_rotation",
+      "config": "user_data/configs/paper_aggressive_rotation.json",
+      "db": "aggressive_rotation_trades.sqlite",
+      "log": "aggressive_rotation.log",
+      "strategy": "PaperAggressiveRotation",
+      "command": "C:\\FreqTradeStuff\\.venv\\Scripts\\python.exe -m freqtrade trade --config C:\\FreqTradeStuff\\user_data\\configs\\integrated_paper_20260926_base.json --config C:\\FreqTradeStuff\\user_data\\configs\\paper_aggressive_rotation.json --strategy-path C:\\FreqTradeStuff\\user_data\\strategies --strategy PaperAggressiveRotation --logfile C:\\FreqTradeStuff\\user_data\\research_news_data\\context_features\\integrated_paper_20260926\\aggressive_rotation.log",
+      "api_host": "127.0.0.1",
+      "api_port": 8103,
+      "control_file": "user_data/research_news_data/context_features/integrated_paper_20260926/aggressive_rotation_control.json",
+      "control_journal": "user_data/research_news_data/context_features/integrated_paper_20260926/aggressive_rotation_control_decisions.jsonl",
+      "decision_log": "user_data/research_news_data/context_features/integrated_paper_20260926/aggressive_rotation_decisions.jsonl",
+      "registered_at_utc": "2026-10-08T07:49:27.039983+00:00",
+      "lifecycle_changed_at_utc": "2026-10-08T07:49:27.039983+00:00",
+      "purpose": "Which liquid alt is strengthening/weakening relative to its cohort and BTC/ETH background, and does local structure allow joining that move?",
+      "exit_contract": "Use a local pullback/structure stop; follow continuing relative momentum; exit when the meaningful relative/pressure advantage or protected price boundary fails.",
+      "entry_mode": "automatic family-specific primary plus labelled exploratory long/short ranking",
+      "pair_universe": [
+        "AVAX/USDT:USDT",
+        "DOGE/USDT:USDT",
+        "ENA/USDT:USDT",
+        "NEAR/USDT:USDT",
+        "SUI/USDT:USDT",
+        "UNI/USDT:USDT",
+        "XRP/USDT:USDT",
+        "ZEC/USDT:USDT"
+      ],
+      "base_timeframe": "5m",
+      "ranked_entry_opportunity_interval_minutes": 15,
+      "completed_context_timeframes": [
+        "15m",
+        "1h",
+        "4h",
+        "1d"
+      ],
+      "max_open_trades": 3,
+      "initial_virtual_balance_usdt": 10000,
+      "risk_envelope_ref": "aggressive_accounts.operating_contract.risk_envelope",
+      "control_policy_ref": "aggressive_accounts.operating_contract.control_policy",
+      "manual_authority_ref": "aggressive_accounts.operating_contract.main_agent_manual_authority",
+      "database_create_attempted_at_utc": "2026-10-08T07:50:34.340196+00:00",
+      "last_recovery": {
+        "status": "running",
+        "at_utc": "2026-10-08T07:50:34.340196+00:00",
+        "log_offset": 0
+      },
+      "parent_pid": 40260,
+      "worker_pid": 73228,
+      "restarted_at_utc": "2026-10-08T07:50:34.340196+00:00",
+      "parent_created_at_utc": "2026-10-08T07:50:34.368229+00:00",
+      "database_initialized_at_utc": "2026-10-08T07:50:41.259742+00:00"
+    }
   }
 }

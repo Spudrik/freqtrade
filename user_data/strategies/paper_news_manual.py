@@ -23,16 +23,40 @@ from user_data.strategies.paper_trial_level import PaperTrialLevel
 LOG = logging.getLogger(__name__)
 OUTPUT = Path(__file__).resolve().parents[1] / "research_news_data/context_features/integrated_paper_20260926"
 NEWS_JOURNAL = OUTPUT / "news_manual_decisions.jsonl"
+NEWS_FAST_JOURNAL = OUTPUT / "news_fast_decisions.jsonl"
+SIEVE_PAIRS = frozenset({"BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT"})
+BASE_NEWS_PAIRS = frozenset({*SIEVE_PAIRS, "BNB/USDT:USDT", "DOGE/USDT:USDT", "1000PEPE/USDT:USDT"})
+MANUAL_EMERGENCY_MARGIN_LOSS_PCT = 0.25
 MANUAL_ACCOUNTS = {
     "paper_news_manual": (8097, NEWS_JOURNAL),
     "paper_news_lab": (8098, OUTPUT / "news_lab_decisions.jsonl"),
+    "paper_news_fast": (8099, NEWS_FAST_JOURNAL),
+}
+MANUAL_ACCOUNT_PAIRS = {
+    "paper_news_manual": BASE_NEWS_PAIRS,
+    "paper_news_lab": BASE_NEWS_PAIRS,
+    "paper_news_fast": SIEVE_PAIRS,
+}
+MANUAL_ACCOUNT_CAPS = {
+    "paper_news_manual": {"max_stake_pct": 0.25, "max_leverage": 5.0},
+    "paper_news_lab": {"max_stake_pct": 0.25, "max_leverage": 5.0},
+    "paper_news_fast": {"max_stake_pct": 0.15, "max_leverage": 10.0},
 }
 PLAN_KEY = "paper_news_manual_plan"
 TAG_PREFIX = "news_manual:"
 
 
-def validate_manual_plan(plan: dict, rate: float) -> None:
-    """Reject ill-defined protection instead of inferring missing price levels."""
+def validate_manual_plan(plan: dict, rate: float, account: str = "paper_news_manual", *,
+                         actual_leverage: float | None = None) -> None:
+    """Reject ill-defined protection instead of inferring missing price levels.
+
+    Stake ceilings are enforced on fresh entries by the controller and entry
+    callbacks. They do not apply to existing-position protection plans, whose
+    stake percentage can rise after account equity falls.
+    """
+    if account not in MANUAL_ACCOUNT_CAPS:
+        raise ValueError("Unknown manual paper account")
+    caps = MANUAL_ACCOUNT_CAPS[account]
     if plan.get("side") not in {"long", "short"} or not isinstance(plan.get("pair"), str):
         raise ValueError("Manual plan needs an explicit pair and side")
     for key in ("stop_price", "reference_rate", "stake_pct", "leverage"):
@@ -40,12 +64,19 @@ def validate_manual_plan(plan: dict, rate: float) -> None:
             raise ValueError(f"Invalid manual plan {key}")
     if not isfinite(rate) or rate <= 0:
         raise ValueError("Invalid current decision price")
+    if (plan["pair"] not in MANUAL_ACCOUNT_PAIRS[account]
+            or float(plan["leverage"]) > caps["max_leverage"]):
+        raise ValueError("Manual plan exceeds this account's pair or risk envelope")
+    if actual_leverage is not None:
+        if (not isfinite(float(actual_leverage)) or float(actual_leverage) <= 0
+                or not isclose(float(plan["leverage"]), float(actual_leverage))):
+            raise ValueError("Persisted plan leverage does not match actual position leverage")
     stop = float(plan["stop_price"])
     short = plan["side"] == "short"
     if (short and stop <= rate) or (not short and stop >= rate):
         raise ValueError("Stop must be beyond the current price on the loss side")
-    if abs(stop / rate - 1.) * float(plan["leverage"]) >= .25:
-        raise ValueError("Planned stop must be inside the existing 25% position emergency floor")
+    if abs(stop / rate - 1.) * float(plan["leverage"]) >= MANUAL_EMERGENCY_MARGIN_LOSS_PCT:
+        raise ValueError("Planned stop must be inside the 25% initial-margin emergency floor")
     target = plan.get("take_profit_price")
     if target is not None:
         target = float(target)
@@ -95,6 +126,10 @@ class PaperNewsManual(PaperTrialLevel):
         account, journal = self._account()
         return entry_plan(entry_tag, now, fresh=fresh, path=journal, account=account)
 
+    def _validate_plan(self, plan, rate):
+        account, _ = self._account()
+        validate_manual_plan(plan, rate, account)
+
     def bot_start(self, **kwargs) -> None:
         if self.config.get("dry_run") is not True or self.config.get("runmode") != RunMode.DRY_RUN:
             raise RuntimeError("PaperNewsManual is dry-run only")
@@ -109,9 +144,15 @@ class PaperNewsManual(PaperTrialLevel):
                 or api.get("listen_port") != MANUAL_ACCOUNTS[self.config["bot_name"]][0]):
             raise RuntimeError("Invalid manual-only local paper-account configuration")
         limits = self.config["paper_manual_limits"]
-        if not 0 < float(limits["max_stake_pct"]) <= 1 or not 1 <= float(limits["max_leverage"]) <= 5:
-            raise RuntimeError("Invalid discretionary paper envelope")
         account, _ = self._account()
+        caps = MANUAL_ACCOUNT_CAPS[account]
+        if (not 0 < float(limits["max_stake_pct"]) <= caps["max_stake_pct"]
+                or not 1 <= float(limits["max_leverage"]) <= caps["max_leverage"]
+                or float(limits.get("emergency_margin_loss_pct", MANUAL_EMERGENCY_MARGIN_LOSS_PCT))
+                != MANUAL_EMERGENCY_MARGIN_LOSS_PCT
+                or self.stoploss != -MANUAL_EMERGENCY_MARGIN_LOSS_PCT
+                or set(self.config.get("exchange", {}).get("pair_whitelist", [])) != MANUAL_ACCOUNT_PAIRS[account]):
+            raise RuntimeError("Invalid discretionary paper risk envelope")
         expected_db = f"sqlite:///user_data/research_news_data/context_features/integrated_paper_20260926/{account.removeprefix('paper_')}_trades.sqlite"
         if self.config.get("db_url") != expected_db:
             raise RuntimeError("Manual paper account has an unexpected database")
@@ -137,7 +178,7 @@ class PaperNewsManual(PaperTrialLevel):
                             min_stake, max_stake, leverage, entry_tag, side, **kwargs) -> float:
         try:
             plan = self._entry_plan(entry_tag, current_time)
-            validate_manual_plan(plan, current_rate)
+            self._validate_plan(plan, current_rate)
             limits = self.config["paper_manual_limits"]
             if (plan["pair"] != pair or plan["side"] != side
                     or not isclose(float(plan["leverage"]), float(leverage))
@@ -158,7 +199,7 @@ class PaperNewsManual(PaperTrialLevel):
         # expected invalid-plan/IO failures must explicitly return False here.
         try:
             plan = self._entry_plan(entry_tag, current_time)
-            validate_manual_plan(plan, rate)
+            self._validate_plan(plan, rate)
             limits = self.config["paper_manual_limits"]
             requested = float(self.wallets.get_total_stake_amount()) * float(plan["stake_pct"])
             return (plan["pair"] == pair and plan["side"] == side
@@ -188,6 +229,8 @@ class PaperNewsManual(PaperTrialLevel):
             if latest["pair"] != trade.pair or (latest["side"] == "short") != trade.is_short:
                 raise ValueError("Protection update does not match the paper position")
             plan = latest
+        validate_manual_plan(plan, float(plan["reference_rate"]), account,
+                             actual_leverage=float(trade.leverage))
         return plan
 
     def custom_stoploss(self, pair, trade, current_time, current_rate,

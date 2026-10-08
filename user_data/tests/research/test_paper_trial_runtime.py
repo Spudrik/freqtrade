@@ -9,6 +9,8 @@ from types import SimpleNamespace
 import pytest
 
 from user_data.Custom_Launcher.research import paper_trial_runtime as runtime
+from user_data.strategies import paper_aggressive_context as aggressive_context
+from user_data.strategies.paper_aggressive_context import AGGRESSIVE_LIMITS
 
 
 @pytest.fixture
@@ -39,13 +41,30 @@ def setup(tmp_path, monkeypatch):
                   "api_server": {"enabled": spec.port is not None, "listen_ip_address": "127.0.0.1", "listen_port": spec.port}}
         if spec.new_identity:
             config.update(max_open_trades=3, exchange={"pair_whitelist": sorted(spec.pairs)})
+        if spec.key in runtime.AGGRESSIVE_ACCOUNT_KEYS:
+            config.update(timeframe="5m", initial_state="running", paper_aggressive_limits=AGGRESSIVE_LIMITS)
+            config["api_server"].update(username="test-user", password="test-password",
+                jwt_secret_key="test-jwt", ws_token="test-ws", verbosity="error", enable_openapi=False,
+                CORS_origins=[])
+        if spec.bot_name in runtime.MANUAL_ACCOUNT_CAPS:
+            config["paper_manual_limits"] = {
+                **runtime.MANUAL_ACCOUNT_CAPS[spec.bot_name],
+                "emergency_margin_loss_pct": runtime.MANUAL_EMERGENCY_MARGIN_LOSS_PCT,
+            }
         path.write_text(json.dumps(config))
         row = record
         for key in spec.record_keys:
             row = row.setdefault(key, {})
         row.update(config=spec.config, strategy=spec.strategy, db=f"{spec.key}_trades.sqlite", log=f"{spec.key}.log", parent_pid=99, worker_pid=98)
         with closing(sqlite3.connect(report / f"{spec.key}_trades.sqlite")) as connection, connection:
-            connection.executescript("CREATE TABLE trades (id INTEGER, is_open INTEGER); CREATE TABLE trade_custom_data (ft_trade_id INTEGER, cd_key TEXT, cd_value TEXT);")
+            if spec.key in runtime.AGGRESSIVE_ACCOUNT_KEYS:
+                connection.executescript("CREATE TABLE trades (id INTEGER, pair TEXT, is_short INTEGER, open_rate REAL, amount REAL, stake_amount REAL, leverage REAL, contract_size REAL, is_open INTEGER); CREATE TABLE trade_custom_data (ft_trade_id INTEGER, cd_key TEXT, cd_value TEXT);")
+            elif spec.key in {"news_manual", "news_lab", "news_fast"}:
+                connection.executescript("CREATE TABLE trades (id INTEGER, is_open INTEGER, leverage REAL); CREATE TABLE trade_custom_data (ft_trade_id INTEGER, cd_key TEXT, cd_value TEXT);")
+            elif spec.key in {"swing_level_bounce", "swing_level_break_hold"}:
+                connection.executescript("CREATE TABLE trades (id INTEGER, is_open INTEGER, leverage REAL); CREATE TABLE trade_custom_data (ft_trade_id INTEGER, cd_key TEXT, cd_value TEXT);")
+            else:
+                connection.executescript("CREATE TABLE trades (id INTEGER, is_open INTEGER); CREATE TABLE trade_custom_data (ft_trade_id INTEGER, cd_key TEXT, cd_value TEXT);")
     for filename in (runtime.BASE, *(s.config for s in runtime.ACCOUNTS)):
         record["process_recovery"]["config_sha256"][filename] = hashlib.sha256((tmp_path / filename).read_bytes()).hexdigest()
     runtime.RECORD.write_text(json.dumps(record))
@@ -66,8 +85,159 @@ def modify_config(record, spec, changes):
     record["process_recovery"]["config_sha256"][spec.config] = hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _registry(record, keys):
+    policy = record["process_recovery"]
+    policy["allowed_accounts"] = sorted(keys)
+    policy["account_lifecycle"] = {
+        key: "PARKED" if key in runtime.DRAINING_ACCOUNT_KEYS else "ACTIVE" for key in keys
+    }
+    policy["paused_accounts"] = sorted(key for key in keys if policy["account_lifecycle"][key] == "PARKED")
+
+
+def test_optional_news_fast_registry_preserves_legacy16_checks_and_new17_identity(setup):
+    _registry(setup, runtime.REVIEWED_16_ACCOUNT_KEYS)
+    specs = runtime.account_specs_for_record(setup)
+    assert len(specs) == 16 and "news_fast" not in {spec.key for spec in specs}
+    rows = runtime.run_check(setup, apply=False, accounts=["auto"])
+    assert rows == [{"account": "auto", "status": "paused_do_not_restart"}]
+    setup["process_recovery"]["paused_accounts"] = []
+    with pytest.raises(RuntimeError, match="exact PARKED lifecycle set"):
+        runtime.run_check(setup, apply=False, accounts=["auto"])
+
+    _registry(setup, runtime.ALL_ACCOUNT_KEYS)
+    specs = runtime.account_specs_for_record(setup)
+    assert len(specs) == 17 and next(spec for spec in specs if spec.key == "news_fast").new_identity
+    inverse = next(spec for spec in specs if spec.key == "fast_level_inverse")
+    assert runtime.lifecycle_for(setup, inverse) == "ACTIVE"
+    assert runtime.validate_config(setup, inverse)["strategy"] == inverse.strategy
+
+
+def test_attended_initialization_accepts_existing16_and_optional17_registries(setup, monkeypatch):
+    _registry(setup, runtime.REVIEWED_16_ACCOUNT_KEYS)
+    sieve = next(spec for spec in runtime.NEW_SIEVE_ACCOUNTS if spec.key == "sieve_pivot_partial")
+    (runtime.REPORT / f"{sieve.key}_trades.sqlite").unlink()
+    _registry(setup, runtime.REVIEWED_16_ACCOUNT_KEYS)
+    launched = []
+    monkeypatch.setattr(runtime, "_preflight_write_environment", lambda: None)
+    monkeypatch.setattr(runtime, "validate_config", lambda *args: {})
+    monkeypatch.setattr(runtime, "matching_processes", lambda *args: None)
+    monkeypatch.setattr(runtime, "start_missing", lambda record, spec, **kwargs:
+                        launched.append(spec.key) or {"account": spec.key, "status": "running"})
+    assert runtime.initialize_new_accounts(setup, [sieve.key])[0]["status"] == "running"
+    assert launched == [sieve.key]
+
+    _registry(setup, runtime.ALL_ACCOUNT_KEYS)
+    fast = next(spec for spec in runtime.NEW_MANUAL_ACCOUNTS if spec.key == "news_fast")
+    (runtime.REPORT / f"{fast.key}_trades.sqlite").unlink()
+    assert runtime.initialize_new_accounts(setup, [fast.key])[0]["account"] == "news_fast"
+    assert launched == [sieve.key, fast.key]
+
+    _registry(setup, runtime.REVIEWED_19_ACCOUNT_KEYS)
+    swing_specs = runtime.NEW_SWING_ACCOUNTS
+    for spec in swing_specs:
+        (runtime.REPORT / f"{spec.key}_trades.sqlite").unlink()
+    assert runtime.initialize_new_accounts(setup, [swing_specs[0].key, swing_specs[1].key]) == [
+        {"account": swing_specs[0].key, "status": "running"},
+        {"account": swing_specs[1].key, "status": "running"},
+    ]
+    assert launched == [sieve.key, fast.key, *(spec.key for spec in swing_specs)]
+
+
+def test_explicit19_registry_preserves_17_active_inverse_and_requires_both_new_swing_accounts(setup):
+    _registry(setup, runtime.ALL_ACCOUNT_KEYS)
+    inverse = next(spec for spec in runtime.REVIEWED_17_ACCOUNTS if spec.key == "fast_level_inverse")
+    assert runtime.lifecycle_for(setup, inverse) == "ACTIVE"
+    assert len(runtime.account_specs_for_record(setup)) == 17
+
+    _registry(setup, runtime.REVIEWED_19_ACCOUNT_KEYS)
+    policy = setup["process_recovery"]
+    policy["account_lifecycle"]["fast_level_inverse"] = "PARKED"
+    policy["paused_accounts"] = sorted(key for key, state in policy["account_lifecycle"].items()
+                                        if state == "PARKED")
+    specs = runtime.account_specs_for_record(setup)
+    assert len(specs) == 19
+    assert runtime.lifecycle_for(setup, inverse) == "PARKED"
+    for spec in runtime.NEW_SWING_ACCOUNTS:
+        assert runtime.lifecycle_for(setup, spec) == "ACTIVE"
+        assert runtime.validate_config(setup, spec)["strategy"] == spec.strategy
+
+    incomplete = runtime.REVIEWED_17_ACCOUNT_KEYS | {"swing_level_bounce"}
+    _registry(setup, incomplete)
+    with pytest.raises(RuntimeError, match="neither exact legacy12"):
+        runtime.account_specs_for_record(setup)
+
+
+def test_explicit23_registry_preserves19_and_validates_all_four_aggressive_accounts(setup):
+    _registry(setup, runtime.REVIEWED_19_ACCOUNT_KEYS)
+    assert len(runtime.account_specs_for_record(setup)) == 19
+
+    _registry(setup, runtime.REVIEWED_23_ACCOUNT_KEYS)
+    specs = runtime.account_specs_for_record(setup)
+    assert len(specs) == 23
+    for spec in runtime.NEW_AGGRESSIVE_ACCOUNTS:
+        assert runtime.lifecycle_for(setup, spec) == "ACTIVE"
+        assert runtime.validate_config(setup, spec)["strategy"] == spec.strategy
+
+    incomplete = runtime.REVIEWED_19_ACCOUNT_KEYS | {runtime.NEW_AGGRESSIVE_ACCOUNTS[0].key}
+    _registry(setup, incomplete)
+    with pytest.raises(RuntimeError, match="neither exact legacy12"):
+        runtime.account_specs_for_record(setup)
+
+
+def test_runtime_validates_persisted_open_aggressive_position_contract_size(setup):
+    _registry(setup, runtime.REVIEWED_23_ACCOUNT_KEYS)
+    spec = runtime.NEW_AGGRESSIVE_ACCOUNTS[0]
+    pair = sorted(aggressive_context.AGGRESSIVE_PAIRS)[0]
+    pending = {"family": aggressive_context.AGGRESSIVE_ACCOUNTS[spec.key]["family"],
+        "mode": "primary", "route": "profile_acceptance", "pair": pair, "side": "long",
+        "entry_tag": "aggressive:vacuum:primary:profile_acceptance:long",
+        "provenance": "automatic_signal", "reason": "runtime validation test", "features": {},
+        "reference_rate": 100., "entry_atr": 2., "atr15": 4., "structural_anchor": 97.,
+        "stop_price": 97., "target_price": 110., "target_kind": "next_observed_4h_range",
+        "risk_reserve_usdt": 180., "entry_equity_usdt": 10000., "stake_usdt": 1000.,
+        "requested_leverage": 5.}
+    plan = aggressive_context.build_aggressive_filled_plan(
+        pending, pair=pair, side="long", open_rate=100., quantity=50., stake=1000.,
+        leverage=5., contract_size=1., filled_at=datetime(2026, 10, 8, tzinfo=timezone.utc))
+    db = runtime.REPORT / f"{spec.key}_trades.sqlite"
+    with closing(sqlite3.connect(db)) as connection, connection:
+        connection.execute("INSERT INTO trades VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)",
+                           (1, pair, 0, 100., 50., 1000., 5., 1.))
+        connection.execute("INSERT INTO trade_custom_data VALUES (?, ?, ?)",
+                           (1, aggressive_context.PLAN_KEY, json.dumps(plan)))
+
+    assert runtime.validate_config(setup, spec)["strategy"] == spec.strategy
+
+
+def test_swing_recovery_revalidates_persisted_plan_against_actual_leverage(setup):
+    from user_data.strategies.paper_swing_levels import (
+        FEE_AND_SLIPPAGE, PLAN_KEY, swing_stop_price, swing_target_price,
+    )
+
+    _registry(setup, runtime.REVIEWED_19_ACCOUNT_KEYS)
+    spec = runtime.NEW_SWING_ACCOUNTS[0]
+    stake, entry, atr, level, leverage = 1000., 101., 1., 100., 3.
+    stop = swing_stop_price("long", entry, atr, level)
+    target, target_kind = swing_target_price("long", entry, stop, None)
+    plan = {"side": "long", "open_rate": entry, "entry_atr": atr, "stop_price": stop,
+        "target_price": target, "planned_loss_usdt": stake * leverage * (abs(entry-stop)/entry + FEE_AND_SLIPPAGE),
+        "entry_equity_usdt": 10000., "leverage": leverage, "trigger_level": level,
+        "level_source": "4h_rolling20_low", "signal_kind": "bounce", "target_kind": target_kind,
+        "stake_usdt": stake, "target_level": None, "target_source": None}
+    db = runtime.REPORT / f"{spec.key}_trades.sqlite"
+    encoded = json.dumps(plan)
+    with closing(sqlite3.connect(db)) as connection, connection:
+        connection.execute("INSERT INTO trades VALUES (1, 1, 3)")
+        connection.execute("INSERT INTO trade_custom_data VALUES (1, ?, ?)", (PLAN_KEY, encoded))
+    assert runtime.validate_config(setup, spec)["strategy"] == spec.strategy
+    with closing(sqlite3.connect(db)) as connection, connection:
+        connection.execute("UPDATE trades SET leverage=2 WHERE id=1")
+    with pytest.raises(ValueError, match="differs from the persisted trade"):
+        runtime.validate_config(setup, spec)
+
+
 @pytest.mark.parametrize("spec", runtime.ACCOUNTS, ids=lambda s: s.key)
-def test_all_twelve_exact_configurations_are_accepted(setup, spec):
+def test_all_registered_exact_configurations_are_accepted(setup, spec):
     assert runtime.validate_config(setup, spec)["dry_run"] is True
 
 
@@ -97,7 +267,7 @@ def test_news_position_requires_persisted_explicit_protection(setup):
     spec = runtime.ACCOUNTS[6]
     path = runtime.REPORT / f"{spec.key}_trades.sqlite"
     with closing(sqlite3.connect(path)) as con, con:
-        con.execute("INSERT INTO trades VALUES (1,1)")
+        con.execute("INSERT INTO trades(id,is_open,leverage) VALUES (1,1,3)")
     with pytest.raises(RuntimeError, match="persisted protection"):
         runtime.validate_config(setup, spec)
     now = datetime.now(timezone.utc)
@@ -109,6 +279,35 @@ def test_news_position_requires_persisted_explicit_protection(setup):
         con.execute("INSERT INTO trade_custom_data VALUES (1,'paper_news_manual_plan',?)", (json.dumps(plan),))
     # Entry approval expiry must NOT erase protection on an existing position.
     assert runtime.validate_config(setup, spec)["strategy"] == "PaperNewsManual"
+    mismatched_plan = {**plan, "leverage": 5.}
+    with closing(sqlite3.connect(path)) as con, con:
+        con.execute("UPDATE trade_custom_data SET cd_value=?", (json.dumps(mismatched_plan),))
+    with pytest.raises(ValueError, match="actual position leverage"):
+        runtime.validate_config(setup, spec)
+
+
+def test_news_fast_recovery_audits_account_scoped_ten_x_plan(setup):
+    spec=next(item for item in runtime.NEW_MANUAL_ACCOUNTS if item.key=="news_fast")
+    path=runtime.REPORT/f"{spec.key}_trades.sqlite"
+    with closing(sqlite3.connect(path)) as con,con:
+        con.execute("INSERT INTO trades(id,is_open,leverage) VALUES (1,1,10)")
+    with pytest.raises(RuntimeError,match="persisted protection"):
+        runtime.validate_config(setup,spec)
+    now=datetime.now(timezone.utc)
+    plan={"side":"short","pair":"BTC/USDT:USDT","reference_rate":100.,"stake_pct":.15,
+        "leverage":10.,"stop_price":102.,"take_profit_price":97.,
+        "valid_until_utc":(now+timedelta(minutes=5)).isoformat(),
+        "review_due_at_utc":(now+timedelta(hours=4)).isoformat()}
+    with closing(sqlite3.connect(path)) as con,con:
+        con.execute("INSERT INTO trade_custom_data VALUES (1,'paper_news_manual_plan',?)",(json.dumps(plan),))
+    assert runtime.validate_config(setup,spec)["strategy"]=="PaperNewsManual"
+    # A 5x plan would approve a 4% stop as a 20% margin loss, while the actual
+    # 10x position would lose 40%; recovery must reject that mismatch.
+    mismatched_plan={**plan,"leverage":5.,"stop_price":104.}
+    with closing(sqlite3.connect(path)) as con,con:
+        con.execute("UPDATE trade_custom_data SET cd_value=?",(json.dumps(mismatched_plan),))
+    with pytest.raises(ValueError,match="actual position leverage"):
+        runtime.validate_config(setup,spec)
 
 
 def test_venv_parent_child_are_one_job_not_two(setup):
@@ -155,7 +354,7 @@ def test_paused_unapproved_and_environment_override_refused(setup, monkeypatch):
         runtime.run_check(setup, apply=True, accounts=["manual"])
     monkeypatch.delenv("FREQTRADE__DRY_RUN")
     setup["process_recovery"]["allowed_accounts"].append("retired_A")
-    with pytest.raises(RuntimeError, match="exact legacy set nor reviewed 16-account set"):
+    with pytest.raises(RuntimeError, match="neither exact legacy12"):
         runtime.run_check(setup, apply=True, accounts=["auto"])
 
 
@@ -231,6 +430,32 @@ def test_fast_position_requires_valid_retained_plan(setup, key):
         runtime.validate_config(setup,spec)
 
 
+def test_fast_level_inverse_is_allowed_to_drain_on_its_paused_overlay(setup):
+    _registry(setup, runtime.REVIEWED_16_ACCOUNT_KEYS)
+    spec = next(item for item in runtime.LEGACY_ACCOUNTS if item.key == "fast_level_inverse")
+    setup["process_recovery"]["account_lifecycle"][spec.key] = "DRAINING"
+    setup["process_recovery"]["paused_accounts"] = sorted(
+        key for key, state in setup["process_recovery"]["account_lifecycle"].items() if state == "PARKED"
+    )
+    modify_config(setup, spec, {"initial_state": "paused"})
+    assert runtime.account_specs_for_record(setup)
+    assert runtime.lifecycle_for(setup, spec) == "DRAINING"
+    assert runtime.validate_config(setup, spec)["initial_state"] == "paused"
+    assert spec.key in runtime.DRAIN_RESTART_ACCOUNT_KEYS
+
+
+def test_fast_level_inverse_can_be_parked_without_becoming_mandatory_legacy_drain(setup):
+    _registry(setup, runtime.ALL_ACCOUNT_KEYS)
+    spec = next(item for item in runtime.ACCOUNTS if item.key == "fast_level_inverse")
+    setup["process_recovery"]["account_lifecycle"][spec.key] = "PARKED"
+    setup["process_recovery"]["paused_accounts"] = sorted(
+        key for key, state in setup["process_recovery"]["account_lifecycle"].items() if state == "PARKED"
+    )
+    modify_config(setup, spec, {"initial_state": "paused"})
+    assert runtime.lifecycle_for(setup, spec) == "PARKED"
+    assert runtime.validate_config(setup, spec)["initial_state"] == "paused"
+
+
 REPAIR_REASON = "Activate reviewed partial fill and persisted stop repair"
 
 
@@ -239,21 +464,23 @@ def active_setup(setup, monkeypatch):
     policy = setup["process_recovery"]
     policy["allowed_accounts"] = sorted(runtime.ALL_ACCOUNT_KEYS)
     policy["account_lifecycle"] = {s.key: "DRAINING" if s.key in runtime.DRAINING_ACCOUNT_KEYS else "ACTIVE"
-                                   for s in runtime.ACCOUNTS}
-    for spec in runtime.ACCOUNTS:
+                                   for s in runtime.REVIEWED_17_ACCOUNTS}
+    for spec in runtime.REVIEWED_17_ACCOUNTS:
         if spec.key in runtime.DRAINING_ACCOUNT_KEYS:
             modify_config(setup, spec, {"initial_state": "paused"})
         if spec.new_identity:
             runtime.account_record(setup, spec)["database_initialized_at_utc"] = runtime.utc_now()
         with closing(sqlite3.connect(runtime.REPORT / f"{spec.key}_trades.sqlite")) as con, con:
-            con.executescript("ALTER TABLE trades ADD COLUMN pair TEXT DEFAULT 'BTC/USDT:USDT';"
-                "ALTER TABLE trades ADD COLUMN is_short INTEGER DEFAULT 0;"
-                "ALTER TABLE trades ADD COLUMN open_rate REAL DEFAULT 100;"
-                "ALTER TABLE trades ADD COLUMN stop_loss REAL DEFAULT 95;"
-                "ALTER TABLE trades ADD COLUMN leverage REAL DEFAULT 1;"
-                "ALTER TABLE trades ADD COLUMN amount REAL DEFAULT 1;"
-                "ALTER TABLE trades ADD COLUMN stake_amount REAL DEFAULT 100;"
-                "CREATE TABLE orders (ft_is_open INTEGER);")
+            columns = ["ALTER TABLE trades ADD COLUMN pair TEXT DEFAULT 'BTC/USDT:USDT';",
+                "ALTER TABLE trades ADD COLUMN is_short INTEGER DEFAULT 0;",
+                "ALTER TABLE trades ADD COLUMN open_rate REAL DEFAULT 100;",
+                "ALTER TABLE trades ADD COLUMN stop_loss REAL DEFAULT 95;"]
+            if spec.key not in {"news_manual", "news_lab", "news_fast", "swing_level_bounce", "swing_level_break_hold"}:
+                columns.append("ALTER TABLE trades ADD COLUMN leverage REAL DEFAULT 1;")
+            columns.extend(["ALTER TABLE trades ADD COLUMN amount REAL DEFAULT 1;",
+                "ALTER TABLE trades ADD COLUMN stake_amount REAL DEFAULT 100;",
+                "CREATE TABLE orders (ft_is_open INTEGER);"])
+            con.executescript("".join(columns))
     wrapper = runtime.ROOT / runtime.ACTIVE_REPAIR_STRATEGY
     wrapper.parent.mkdir(parents=True, exist_ok=True)
     wrapper.write_bytes(b"isolated test reviewed wrapper")

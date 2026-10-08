@@ -2,5 +2,6 @@
   "initial_state": "paused",
   "bot_name": "integrated_paper_auto",
   "strategy": "IntegratedPaper",
-  "db_url": "sqlite:///user_data/research_news_data/context_features/integrated_paper_20260926/auto_trades.sqlite"
+  "db_url": "sqlite:///user_data/research_news_data/context_features/integrated_paper_20260926/auto_trades.sqlite",
+  "paper_force_close": true
 }

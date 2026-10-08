@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -28,7 +29,14 @@ from zoneinfo import ZoneInfo
 from freqtrade.configuration.load_config import load_from_files
 from user_data.Custom_Launcher.launcher_v2.services.collector_service import utf8_subprocess_env
 from user_data.Custom_Launcher.research.paper_trial_control import ALLOWED_PAIRS
-from user_data.strategies.paper_news_manual import decision_rows, validate_manual_plan
+from user_data.strategies.paper_news_manual import (
+    MANUAL_ACCOUNT_CAPS, MANUAL_ACCOUNT_PAIRS, MANUAL_EMERGENCY_MARGIN_LOSS_PCT,
+    decision_rows, validate_manual_plan,
+)
+from user_data.strategies.paper_aggressive_context import (
+    AGGRESSIVE_ACCOUNT_KEYS, AGGRESSIVE_ACCOUNTS, AGGRESSIVE_PAIRS,
+    validate_aggressive_config, validate_aggressive_filled_plan,
+)
 
 ROOT = Path(__file__).resolve().parents[3]
 REPORT = ROOT / "user_data/research_news_data/context_features/integrated_paper_20260926"
@@ -70,10 +78,42 @@ NEW_SIEVE_ACCOUNTS = (
     Account("sieve_d1_support_break_long", "user_data/configs/paper_sieve_d1_support_break_long.json", "PaperSieveD1SupportBreakLong", "paper_sieve_d1_support_break_long", ("entry_refresh", "accounts", "sieve_d1_support_break_long"), pairs=SIEVE_PAIRS, new_identity=True),
     Account("sieve_h4_vp_lvn_long", "user_data/configs/paper_sieve_h4_vp_lvn_long.json", "PaperSieveH4VpLvnLong", "paper_sieve_h4_vp_lvn_long", ("entry_refresh", "accounts", "sieve_h4_vp_lvn_long"), pairs=SIEVE_PAIRS, new_identity=True),
 )
-ACCOUNTS = LEGACY_ACCOUNTS + NEW_SIEVE_ACCOUNTS
+NEW_MANUAL_ACCOUNTS = (
+    Account("news_fast", "user_data/configs/paper_news_fast.json", "PaperNewsManual", "paper_news_fast",
+            ("accounts", "news_fast"), 8099, pairs=MANUAL_ACCOUNT_PAIRS["paper_news_fast"], new_identity=True),
+)
+NEW_SWING_ACCOUNTS = (
+    Account("swing_level_bounce", "user_data/configs/paper_swing_level_bounce.json",
+            "PaperSwingLevelBounce", "paper_swing_level_bounce",
+            ("swing_level_pair", "bounce"), new_identity=True),
+    Account("swing_level_break_hold", "user_data/configs/paper_swing_level_break_hold.json",
+            "PaperSwingLevelBreakHold", "paper_swing_level_break_hold",
+            ("swing_level_pair", "break_hold"), new_identity=True),
+)
+NEW_AGGRESSIVE_ACCOUNTS = tuple(
+    Account(key, AGGRESSIVE_ACCOUNTS[key]["config"], AGGRESSIVE_ACCOUNTS[key]["strategy"],
+            AGGRESSIVE_ACCOUNTS[key]["bot_name"], ("aggressive_accounts", AGGRESSIVE_ACCOUNTS[key]["family"]),
+            AGGRESSIVE_ACCOUNTS[key]["port"], pairs=AGGRESSIVE_PAIRS, new_identity=True)
+    for key in AGGRESSIVE_ACCOUNT_KEYS
+)
+REVIEWED_16_ACCOUNTS = LEGACY_ACCOUNTS + NEW_SIEVE_ACCOUNTS
+REVIEWED_17_ACCOUNTS = REVIEWED_16_ACCOUNTS + NEW_MANUAL_ACCOUNTS
+REVIEWED_19_ACCOUNTS = REVIEWED_17_ACCOUNTS + NEW_SWING_ACCOUNTS
+REVIEWED_23_ACCOUNTS = REVIEWED_19_ACCOUNTS + NEW_AGGRESSIVE_ACCOUNTS
+ACCOUNTS = REVIEWED_23_ACCOUNTS
 LEGACY_ACCOUNT_KEYS = frozenset(spec.key for spec in LEGACY_ACCOUNTS)
-ALL_ACCOUNT_KEYS = frozenset(spec.key for spec in ACCOUNTS)
+REVIEWED_16_ACCOUNT_KEYS = frozenset(spec.key for spec in REVIEWED_16_ACCOUNTS)
+REVIEWED_17_ACCOUNT_KEYS = frozenset(spec.key for spec in REVIEWED_17_ACCOUNTS)
+REVIEWED_19_ACCOUNT_KEYS = frozenset(spec.key for spec in REVIEWED_19_ACCOUNTS)
+REVIEWED_23_ACCOUNT_KEYS = frozenset(spec.key for spec in REVIEWED_23_ACCOUNTS)
+# Keep the historical name as the exact 17-account registry for callers and
+# tests that need to construct/recognize that optional compatibility state.
+ALL_ACCOUNT_KEYS = REVIEWED_17_ACCOUNT_KEYS
+KNOWN_ACCOUNT_KEYS = REVIEWED_23_ACCOUNT_KEYS
+REVIEWED_REGISTRIES = frozenset({REVIEWED_16_ACCOUNT_KEYS, REVIEWED_17_ACCOUNT_KEYS,
+                                 REVIEWED_19_ACCOUNT_KEYS, REVIEWED_23_ACCOUNT_KEYS})
 DRAINING_ACCOUNT_KEYS = frozenset({"auto", "manual", "v01", "v10", "leader_impulse", "fast_auto", "fast_context"})
+DRAIN_RESTART_ACCOUNT_KEYS = DRAINING_ACCOUNT_KEYS | {"fast_level_inverse"}
 ACTIVE_REPAIR_ACCOUNT_KEYS = frozenset({"sieve_pivot_partial", "sieve_d1_support_break_long", "sieve_d1_vp_bos_short"})
 ACTIVE_REPAIR_STRATEGY = "user_data/strategies/paper_sieve_refresh.py"
 ACTIVE_REPAIR_SHA256 = "a3e0cff0baac3db408971a6d06f948488e1454fce389fd4aed85e4dd23a6b342"
@@ -93,24 +133,32 @@ def account_record(record: dict, spec: Account) -> dict:
 
 
 def account_specs_for_record(record: dict) -> tuple[Account, ...]:
-    """Accept only the exact pre-refresh or reviewed 16-account registry."""
+    """Accept only exact legacy12 or explicitly reviewed16/17/19/23 registries."""
     allowed = frozenset(record["process_recovery"]["allowed_accounts"])
     if allowed == LEGACY_ACCOUNT_KEYS:
         return LEGACY_ACCOUNTS
-    if allowed != ALL_ACCOUNT_KEYS:
-        raise RuntimeError("Recorded account allowlist is neither the exact legacy set nor reviewed 16-account set")
+    if allowed == REVIEWED_16_ACCOUNT_KEYS:
+        specs = REVIEWED_16_ACCOUNTS
+    elif allowed == REVIEWED_17_ACCOUNT_KEYS:
+        specs = REVIEWED_17_ACCOUNTS
+    elif allowed == REVIEWED_19_ACCOUNT_KEYS:
+        specs = REVIEWED_19_ACCOUNTS
+    elif allowed == REVIEWED_23_ACCOUNT_KEYS:
+        specs = REVIEWED_23_ACCOUNTS
+    else:
+        raise RuntimeError("Recorded account allowlist is neither exact legacy12 nor a reviewed16/17/19/23 registry")
     lifecycle = record["process_recovery"].get("account_lifecycle")
-    if not isinstance(lifecycle, dict) or set(lifecycle) != ALL_ACCOUNT_KEYS:
-        raise RuntimeError("Reviewed account lifecycle map must cover all 16 fixed identities")
+    if not isinstance(lifecycle, dict) or set(lifecycle) != allowed:
+        raise RuntimeError("Reviewed account lifecycle map must cover the exact recorded identity set")
     if set(lifecycle.values()) - {"ACTIVE", "DRAINING", "PARKED"}:
         raise RuntimeError("Unknown account lifecycle state")
     if any(lifecycle[key] not in {"DRAINING", "PARKED"} for key in DRAINING_ACCOUNT_KEYS):
         raise RuntimeError("Only the seven reviewed legacy identities may be draining or parked")
-    if any(lifecycle[key] != "ACTIVE" for key in ALL_ACCOUNT_KEYS - DRAINING_ACCOUNT_KEYS):
+    if any(lifecycle[key] != "ACTIVE" for key in allowed - DRAIN_RESTART_ACCOUNT_KEYS):
         raise RuntimeError("New and retained paper identities must remain active")
-    for spec in ACCOUNTS:
+    for spec in specs:
         account_record(record, spec)
-    return ACCOUNTS
+    return specs
 
 
 def lifecycle_for(record: dict, spec: Account) -> str:
@@ -265,6 +313,10 @@ def validate_config(record: dict, spec: Account) -> dict:
         raise RuntimeError("Additional configuration includes are not approved for recovery")
     exchange = config["exchange"]
     expected_pairs = spec.pairs
+    if spec.key in AGGRESSIVE_ACCOUNT_KEYS:
+        base_config = json.loads((ROOT / BASE).read_text(encoding="utf-8"))
+        overlay_config = json.loads((ROOT / spec.config).read_text(encoding="utf-8"))
+        validate_aggressive_config(base_config, overlay_config, spec.key)
     expected_initial_state = "paused" if lifecycle_for(record, spec) in {"DRAINING", "PARKED"} else "running"
     if (config.get("dry_run") is not True or config.get("trading_mode") != "futures"
             or config.get("margin_mode") != "isolated" or exchange.get("name") != "binance"
@@ -275,6 +327,14 @@ def validate_config(record: dict, spec: Account) -> dict:
             or config.get("initial_state", "running") != expected_initial_state
             or config.get("db_url") != f"sqlite:///user_data/research_news_data/context_features/integrated_paper_20260926/{spec.key}_trades.sqlite"):
         raise RuntimeError(f"{spec.key}: not the approved isolated paper configuration")
+    if spec.bot_name in MANUAL_ACCOUNT_CAPS:
+        limits = config.get("paper_manual_limits", {})
+        caps = MANUAL_ACCOUNT_CAPS[spec.bot_name]
+        if (float(limits.get("max_stake_pct", 0)) != caps["max_stake_pct"]
+                or float(limits.get("max_leverage", 0)) != caps["max_leverage"]
+                or float(limits.get("emergency_margin_loss_pct", MANUAL_EMERGENCY_MARGIN_LOSS_PCT))
+                != MANUAL_EMERGENCY_MARGIN_LOSS_PCT):
+            raise RuntimeError(f"{spec.key}: manual paper risk envelope drifted")
     api = config.get("api_server", {})
     if spec.port is None:
         if api.get("enabled") or config.get("force_entry_enable"):
@@ -291,13 +351,14 @@ def validate_config(record: dict, spec: Account) -> dict:
         return config
     with closing(sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True)) as connection:
         connection.execute("SELECT id FROM trades LIMIT 1").fetchall()
-        if spec.key in {"news_manual", "news_lab"}:
-            plans = connection.execute("SELECT t.id, c.cd_value FROM trades t LEFT JOIN trade_custom_data c ON c.ft_trade_id=t.id AND c.cd_key='paper_news_manual_plan' WHERE t.is_open=1").fetchall()
-            for trade_id, encoded in plans:
+        if spec.key in {"news_manual", "news_lab", "news_fast"}:
+            plans = connection.execute("SELECT t.id, t.leverage, c.cd_value FROM trades t LEFT JOIN trade_custom_data c ON c.ft_trade_id=t.id AND c.cd_key='paper_news_manual_plan' WHERE t.is_open=1").fetchall()
+            for trade_id, actual_leverage, encoded in plans:
                 if encoded is None:
                     raise RuntimeError(f"{spec.key}: open trade {trade_id} has no persisted protection")
                 plan = json.loads(encoded)
-                validate_manual_plan(plan, float(plan["reference_rate"]))
+                validate_manual_plan(plan, float(plan["reference_rate"]), spec.bot_name,
+                                     actual_leverage=float(actual_leverage))
         if spec.key in {"fast_auto", "fast_context", "fast_level_inverse"}:
             from user_data.strategies.paper_fast_reaction import validate_fast_plan
             plans = connection.execute("SELECT t.id, c.cd_value FROM trades t LEFT JOIN trade_custom_data c ON c.ft_trade_id=t.id AND c.cd_key='paper_fast_plan' WHERE t.is_open=1").fetchall()
@@ -305,6 +366,30 @@ def validate_config(record: dict, spec: Account) -> dict:
                 if encoded is None:
                     raise RuntimeError(f"{spec.key}: open trade {trade_id} has no persisted protection")
                 validate_fast_plan(json.loads(encoded))
+        if spec.key in {"swing_level_bounce", "swing_level_break_hold"}:
+            from user_data.strategies.paper_swing_levels import validate_swing_plan
+            plans = connection.execute("SELECT t.id, t.leverage, c.cd_value FROM trades t LEFT JOIN trade_custom_data c ON c.ft_trade_id=t.id AND c.cd_key='paper_fast_plan' WHERE t.is_open=1").fetchall()
+            for trade_id, actual_leverage, encoded in plans:
+                if encoded is None:
+                    raise RuntimeError(f"{spec.key}: open trade {trade_id} has no persisted protection")
+                validate_swing_plan(json.loads(encoded), actual_leverage=float(actual_leverage))
+        if spec.key in AGGRESSIVE_ACCOUNT_KEYS:
+            plans = connection.execute(
+                "SELECT t.id,t.pair,t.is_short,t.open_rate,t.amount,t.stake_amount,t.leverage,t.contract_size,c.cd_value "
+                "FROM trades t LEFT JOIN trade_custom_data c "
+                "ON c.ft_trade_id=t.id AND c.cd_key='paper_aggressive_plan' WHERE t.is_open=1"
+            ).fetchall()
+            for (trade_id, pair, is_short, open_rate, amount, stake, leverage, contract_size, encoded) in plans:
+                if encoded is None:
+                    raise RuntimeError(f"{spec.key}: open trade {trade_id} has no persisted aggressive protection")
+                validate_aggressive_filled_plan(json.loads(encoded), actual_pair=pair,
+                    actual_side="short" if is_short else "long", actual_open_rate=float(open_rate),
+                    actual_quantity=float(amount), actual_stake=float(stake),
+                    actual_leverage=float(leverage))
+                plan = json.loads(encoded)
+                if (plan.get("family") != AGGRESSIVE_ACCOUNTS[spec.key]["family"]
+                        or not math.isclose(float(plan["contract_size"]), float(contract_size), rel_tol=1e-9, abs_tol=1e-9)):
+                    raise RuntimeError(f"{spec.key}: trade {trade_id} contract size differs from its durable plan")
     return config
 
 
@@ -327,7 +412,7 @@ def _preflight_write_environment() -> None:
 def _validate_new_strategy_bootstrap(record: dict, spec: Account, config: dict | None = None) -> None:
     """Load the exact wrapper and assert locked parameters before its first process launch."""
     if not spec.new_identity:
-        raise ValueError("Bootstrap validation is restricted to new Sieve identities")
+        raise ValueError("Bootstrap validation is restricted to new paper identities")
     from freqtrade.enums import RunMode
     from freqtrade.resolvers import StrategyResolver
     from freqtrade.configuration import validate_config_consistency
@@ -728,8 +813,8 @@ def restart_draining(record: dict, account_keys: list[str]) -> list[dict]:
     """Attended exact-list restart onto paused overlays, preserving every DB."""
     _preflight_write_environment()
     specs = account_specs_for_record(record)
-    if len(specs) != len(ACCOUNTS) or not account_keys or not set(account_keys) <= DRAINING_ACCOUNT_KEYS:
-        raise ValueError("Drain restart is limited to named reviewed DRAINING accounts in the 16-account registry")
+    if frozenset(spec.key for spec in specs) not in REVIEWED_REGISTRIES or not account_keys or not set(account_keys) <= DRAIN_RESTART_ACCOUNT_KEYS:
+        raise ValueError("Drain restart is limited to named reviewed DRAINING accounts in a reviewed registry")
     results = []
     for key in account_keys:
         spec = next(spec for spec in LEGACY_ACCOUNTS if spec.key == key)
@@ -802,10 +887,12 @@ def restart_active(record: dict, account_keys: list[str], *, apply: bool, repair
         raise ValueError("A meaningful single-line --repair-reason (12-500 characters, at least three words) is required")
     specs = account_specs_for_record(record)
     policy = record["process_recovery"]
-    if (len(specs) != len(ACCOUNTS) or policy.get("enabled") is not True
+    if (frozenset(spec.key for spec in specs) not in REVIEWED_REGISTRIES
+            or policy.get("enabled") is not True
+            or set(policy.get("allowed_accounts", [])) != {spec.key for spec in specs}
             or set(policy.get("paused_accounts", [])) !=
                 {key for key, state in policy["account_lifecycle"].items() if state == "PARKED"}):
-        raise RuntimeError("Active restart requires the enabled reviewed 16-account lifecycle registry")
+        raise RuntimeError("Active restart requires an enabled reviewed 16/17/19/23-account lifecycle registry")
     prepared, results = [], []
     # Validate all named identities/configs/wrappers before stopping any worker.
     for key in account_keys:
@@ -837,15 +924,19 @@ def restart_active(record: dict, account_keys: list[str], *, apply: bool, repair
 
 
 def initialize_new_accounts(record: dict, account_keys: list[str]) -> list[dict]:
-    """Attended first launch for only the four new, isolated PAPER identities."""
+    """Attended first launch for exact named new, isolated PAPER identities."""
     _preflight_write_environment()
     specs = account_specs_for_record(record)
-    new_keys = {spec.key for spec in NEW_SIEVE_ACCOUNTS}
-    if len(specs) != len(ACCOUNTS) or not account_keys or not set(account_keys) <= new_keys:
-        raise ValueError("Initialization is limited to explicitly named new Sieve PAPER identities")
+    registered_keys = frozenset(spec.key for spec in specs)
+    if registered_keys not in REVIEWED_REGISTRIES:
+        raise ValueError("Initialization requires an exact reviewed16/17/19/23 registry")
+    new_specs = tuple(spec for spec in specs if spec.new_identity)
+    new_keys = {spec.key for spec in new_specs}
+    if not account_keys or not set(account_keys) <= new_keys:
+        raise ValueError("Initialization is limited to explicitly named new PAPER identities in the recorded registry")
     results = []
     for key in account_keys:
-        spec = next(spec for spec in NEW_SIEVE_ACCOUNTS if spec.key == key)
+        spec = next(spec for spec in new_specs if spec.key == key)
         row = account_record(record, spec)
         if lifecycle_for(record, spec) != "ACTIVE" or row.get("database_initialized_at_utc"):
             raise RuntimeError(f"{key}: identity is not an uninitialized ACTIVE new account")
@@ -872,7 +963,7 @@ def run_check(record: dict, *, apply: bool, accounts: list[str]) -> list[dict]:
     paused = set(policy["paused_accounts"])
     if not paused <= expected_keys:
         raise ValueError("Unknown paused account")
-    if len(specs) == len(ACCOUNTS):
+    if "account_lifecycle" in policy:
         parked = {key for key, state in policy["account_lifecycle"].items() if state == "PARKED"}
         if parked != paused:
             raise RuntimeError("paused_accounts must equal the exact PARKED lifecycle set")
@@ -975,13 +1066,13 @@ def acknowledge_fixed_startup(record: dict, accounts: list[str], reason: str) ->
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true", help="Start approved missing workers; finalize only reviewed flat/orderless drains")
-    parser.add_argument("--accounts", nargs="+", choices=sorted(ALL_ACCOUNT_KEYS))
-    parser.add_argument("--restart-draining", nargs="+", choices=sorted(DRAINING_ACCOUNT_KEYS),
+    parser.add_argument("--accounts", nargs="+", choices=sorted(KNOWN_ACCOUNT_KEYS))
+    parser.add_argument("--restart-draining", nargs="+", choices=sorted(DRAIN_RESTART_ACCOUNT_KEYS),
                         help="Attended, exact-list restart onto paused overlays; requires --apply")
     parser.add_argument("--restart-active", nargs="+", choices=sorted(ACTIVE_REPAIR_ACCOUNT_KEYS),
                         help="Attended repaired-wrapper restart; without --apply performs read-only preflight")
-    parser.add_argument("--initialize-new", nargs="+", choices=sorted(spec.key for spec in NEW_SIEVE_ACCOUNTS),
-                        help="Attended first launch for isolated new Sieve accounts; requires --apply")
+    parser.add_argument("--initialize-new", nargs="+", choices=sorted(spec.key for spec in (NEW_SIEVE_ACCOUNTS + NEW_MANUAL_ACCOUNTS + NEW_SWING_ACCOUNTS + NEW_AGGRESSIVE_ACCOUNTS)),
+                        help="Attended first launch for isolated new PAPER accounts; requires --apply")
     parser.add_argument("--acknowledge-fixed-startup", nargs="+", choices=("fast_auto", "fast_context"))
     parser.add_argument("--repair-reason")
     args = parser.parse_args(argv)
@@ -1014,7 +1105,8 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError("Repair acknowledgement requires an explicit apply run")
             acknowledge_fixed_startup(record, args.acknowledge_fixed_startup, args.repair_reason)
         if results is None:
-            results = run_check(record, apply=args.apply, accounts=args.accounts or sorted(ALL_ACCOUNT_KEYS))
+            results = run_check(record, apply=args.apply,
+                                accounts=args.accounts or sorted(spec.key for spec in account_specs_for_record(record)))
     print(json.dumps({"applied": applied, "accounts": results}, indent=2))
     blocked_statuses = {"blocked", "starting", "deferred_resource_reserve", "deferred_resource_reserve_before_restart",
                         "drain_restart_pending", "drain_restart_continuity_review", "missing_draining_worker",

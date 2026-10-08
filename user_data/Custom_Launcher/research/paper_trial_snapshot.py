@@ -28,6 +28,10 @@ from user_data.strategies.paper_fast_context import CONTROL_FILE, load_fast_cont
 from user_data.strategies.paper_fast_context import CONTROL_JOURNAL, parse_fast_control
 from user_data.strategies.paper_news_manual import decision_rows
 from user_data.strategies.paper_trial_level_orderbook import _recent_pressure
+from user_data.strategies.paper_aggressive_context import (
+    AGGRESSIVE_ACCOUNT_KEYS, AGGRESSIVE_ACCOUNTS, CONTROL_FILES,
+    load_aggressive_control, validate_aggressive_filled_plan,
+)
 
 
 GLOBAL_CONTEXT_SOURCE_LIMIT = 40
@@ -205,6 +209,57 @@ def _watch_times(watch):
     return sorted(times), errors
 
 
+def _news_fast_review_snapshot(record, now):
+    """Bounded local handoff of news_fast's own journal and persisted open plans."""
+    spec = next((item for item in account_specs_for_record(record) if item.key == "news_fast"), None)
+    if spec is None:
+        return None
+    journal = _journal("news_fast")
+    journal_state = "observed" if journal.is_file() else "missing"
+    journal_rows = decision_rows(journal)
+    latest = None
+    if journal_rows:
+        valid_rows = [row for row in journal_rows if isinstance(row, dict) and row.get("account") == spec.bot_name]
+        if valid_rows:
+            row = max(valid_rows, key=lambda value: _utc(value["at_utc"]))
+            latest = {key: row.get(key) for key in ("decision_id", "action", "status", "at_utc")}
+    info = account_record(record, spec)
+    database = REPORT / info["db"]
+    if not database.is_file():
+        database_state = "not_initialized" if not info.get("database_initialized_at_utc") else "missing"
+        positions = None
+    else:
+        database_state = "initialized"
+        positions = []
+        uri = database.resolve().as_uri() + "?mode=ro"
+        with closing(sqlite3.connect(uri, uri=True)) as connection:
+            rows = connection.execute(
+                "SELECT t.id,t.pair,t.is_short,t.leverage,t.stop_loss,c.cd_value "
+                "FROM trades t LEFT JOIN trade_custom_data c "
+                "ON c.ft_trade_id=t.id AND c.cd_key='paper_news_manual_plan' WHERE t.is_open=1"
+            ).fetchall()
+        from user_data.strategies.paper_news_manual import validate_manual_plan
+        for trade_id, pair, is_short, leverage, stop_price, encoded in rows:
+            plan = json.loads(encoded) if encoded is not None else None
+            state = "stored_valid"
+            try:
+                validate_manual_plan(plan, float(plan["reference_rate"]), spec.bot_name,
+                                     actual_leverage=float(leverage))
+                if plan["pair"] != pair or (plan["side"] == "short") != bool(is_short):
+                    raise ValueError("Persisted plan does not match its position")
+            except (ValueError, TypeError, KeyError):
+                state = "missing_or_invalid"
+                plan = None
+            positions.append({"trade_id": trade_id, "pair": pair, "side": "short" if is_short else "long",
+                "leverage": leverage, "stop_price": stop_price, "protection_state": state, "stored_plan": plan})
+    lifecycle = lifecycle_for(record, spec)
+    return {"account": spec.key, "lifecycle": lifecycle,
+        "required": lifecycle == "ACTIVE", "review_policy": "best_guess_each_four_hour_wake",
+        "database_state": database_state, "journal": str(journal), "journal_state": journal_state,
+        "journal_row_count": len(journal_rows), "latest_decision": latest, "open_positions": positions,
+        "observed_at_utc": now.isoformat()}
+
+
 def review_context_snapshot(now, record=None):
     """Current identities/watches/control only; no health scan or record writes."""
     record = read_json(RECORD) if record is None else record
@@ -247,12 +302,45 @@ def review_context_snapshot(now, record=None):
             **control_times} if control is not None else {
             "status":"not_needed_for_lifecycle","lifecycle":fast_context_lifecycle,
             "renewal_required":False,"stored_control_not_read":True})
+    aggressive_controls = []
+    for key in AGGRESSIVE_ACCOUNT_KEYS:
+        spec = next((item for item in account_specs_for_record(record) if item.key == key), None)
+        if spec is None:
+            continue
+        lifecycle = lifecycle_for(record, spec)
+        if lifecycle != "ACTIVE":
+            aggressive_controls.append({"account":key,"lifecycle":lifecycle,
+                "status":"not_needed_for_lifecycle","renewal_required":False,"stored_control_not_read":True})
+            continue
+        control = load_aggressive_control(key, now)
+        expires = None
+        path = CONTROL_FILES[key]
+        if path.is_file():
+            try:
+                encoded = read_json(path)
+                if isinstance(encoded, dict) and encoded.get("account") == AGGRESSIVE_ACCOUNTS[key]["bot_name"]:
+                    expires = encoded.get("valid_until_utc")
+            except (ValueError, TypeError, OSError):
+                issues.append(f"{key}: control clock unavailable; technical-only 3x mode remains active")
+        renewal = control.status != "observed"
+        if expires:
+            try:
+                renewal = renewal or _utc(expires) <= now + timedelta(minutes=30)
+            except ValueError:
+                renewal = True
+        aggressive_controls.append({"account":key,"lifecycle":lifecycle,"status":control.status,
+            "technical_only":control.technical_only,"renewal_required":renewal,
+            "decision_id":control.decision_id,"bias":control.bias,
+            "side_permission":control.side_permission,"long_leverage_cap":control.long_leverage_cap,
+            "short_leverage_cap":control.short_leverage_cap,"exposure":control.exposure,
+            "valid_until_utc":expires})
     return {"trial":record.get("trial"),"run_record_status":record.get("status"),
         "accounts":[{"account":spec.key,"lifecycle":lifecycle_for(record,spec),"strategy":spec.strategy,"config":spec.config,
             "db":account_record(record,spec)["db"],"log":account_record(record,spec)["log"],
             "api_port":spec.port} for spec in account_specs_for_record(record)],
         "approved_watches":approved,"due_watches":due,"issues":issues,
-        "fast_context":fast_context}
+        "fast_context":fast_context,"aggressive_controls":aggressive_controls,
+        "news_fast_review":_news_fast_review_snapshot(record,now)}
 
 
 def _candle_facts(candles, now, hours):
@@ -296,7 +384,7 @@ def higher_snapshot(now):
     return output
 
 
-def _protection_state(trade, session):
+def _protection_state(trade, session, account=None):
     """Reuse the strategy's persisted-plan validators, including inverse/manual bots."""
     if not isfinite(float(trade.stop_loss or 0)) or float(trade.stop_loss or 0) <= 0:
         return "missing_or_invalid"
@@ -306,12 +394,29 @@ def _protection_state(trade, session):
             encoded = session.execute(text("SELECT cd_value FROM trade_custom_data WHERE ft_trade_id=:trade_id AND cd_key=:key"),
                 {"trade_id":trade.id,"key":"paper_fast_plan"}).scalar_one_or_none()
             validate_fast_plan(json.loads(encoded) if encoded is not None else None)
+        elif trade.strategy in {"PaperSwingLevelBounce", "PaperSwingLevelBreakHold"}:
+            from user_data.strategies.paper_swing_levels import validate_swing_plan
+            encoded = session.execute(text("SELECT cd_value FROM trade_custom_data WHERE ft_trade_id=:trade_id AND cd_key=:key"),
+                {"trade_id":trade.id,"key":"paper_fast_plan"}).scalar_one_or_none()
+            validate_swing_plan(json.loads(encoded) if encoded is not None else None,
+                                actual_leverage=float(trade.leverage))
         elif trade.strategy == "PaperNewsManual":
             from user_data.strategies.paper_news_manual import validate_manual_plan
             encoded = session.execute(text("SELECT cd_value FROM trade_custom_data WHERE ft_trade_id=:trade_id AND cd_key=:key"),
                 {"trade_id":trade.id,"key":"paper_news_manual_plan"}).scalar_one_or_none()
             plan = json.loads(encoded) if encoded is not None else None
-            validate_manual_plan(plan,float(plan["reference_rate"]))
+            validate_manual_plan(plan,float(plan["reference_rate"]),account or "paper_news_manual",
+                actual_leverage=float(trade.leverage))
+        elif trade.strategy in {spec["strategy"] for spec in AGGRESSIVE_ACCOUNTS.values()}:
+            encoded = session.execute(text("SELECT cd_value FROM trade_custom_data WHERE ft_trade_id=:trade_id AND cd_key=:key"),
+                {"trade_id":trade.id,"key":"paper_aggressive_plan"}).scalar_one_or_none()
+            validate_aggressive_filled_plan(json.loads(encoded) if encoded is not None else None,
+                actual_pair=trade.pair,actual_side="short" if trade.is_short else "long",
+                actual_open_rate=float(trade.open_rate),actual_quantity=float(trade.amount),
+                actual_stake=float(trade.stake_amount),actual_leverage=float(trade.leverage))
+            plan = json.loads(encoded)
+            if not isclose(float(plan["contract_size"]),float(trade.contract_size),rel_tol=1e-9,abs_tol=1e-9):
+                return "missing_or_invalid"
     except (ValueError, TypeError, KeyError):
         return "missing_or_invalid"
     return "stored_valid"
@@ -522,7 +627,7 @@ def account_snapshot(prices=False, now=None):
             unrealized=sum(t.calculate_profit(quotes[t.pair.split(':')[0].replace('/','')]).profit_abs for t in opened) if prices else (0. if not opened else None)
             if unrealized is not None and not isfinite(unrealized): unrealized=None
             positions=[{"pair":t.pair,"short":t.is_short,"leverage":t.leverage,"stop_price":t.stop_loss,
-                "margin":t.stake_amount,"protection_state":_protection_state(t,session)} for t in opened]
+                "margin":t.stake_amount,"protection_state":_protection_state(t,session,spec.bot_name)} for t in opened]
             open_order_count=session.scalar(select(func.count(Order.id)).where(Order.ft_is_open.is_(True)))
             output.append({"account":spec.key,"lifecycle":lifecycle,"database_state":"initialized","running_exact_tree":tree is not None,
                 "worker_log":_worker_log_health(spec,tree,now,lifecycle),
@@ -987,7 +1092,11 @@ def learning_review_snapshot(now=None):
     shared = Counter((pair,side,tuple(sorted(accounts))) for (pair,side,_),accounts in proxy_groups.items() if len(accounts)>1)
     shared_summary = [{"pair":pair,"side":side,"accounts":accounts,"shared_open_minute_groups":count}
         for (pair,side,accounts),count in sorted(shared.items())]
-    manual = {key:_journal_summary(key) for key in ("manual","news_manual","news_lab")}
+    manual_keys = ["manual","news_manual","news_lab"]
+    if any(spec.key == "news_fast" for spec in specs):
+        manual_keys.append("news_fast")
+    manual_keys.extend(key for key in AGGRESSIVE_ACCOUNT_KEYS if any(spec.key == key for spec in specs))
+    manual = {key:_journal_summary(key) for key in manual_keys}
     control_history = _control_history_snapshot(record,now)
     return {"observed_at_utc":now.isoformat(),"source":"allowlisted existing local account databases and journals; read-only",
         "account_count":len(reports),"active_entry_enabled_count":sum(row.get("lifecycle")=="ACTIVE" for row in reports),

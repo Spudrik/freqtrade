@@ -22,6 +22,7 @@ from freqtrade.strategy import IStrategy
 from user_data.strategies.integrated_paper_context import load_luna_context
 from user_data.strategies.paper_trial_level import PaperTrialLevel
 from user_data.strategies.paper_trial_level_orderbook import _recent_pressure
+from user_data.strategies.paper_trial_common import paper_user_force_close_reason
 from user_data.strategies.sieve3_V2_profit_ladder_three_stage_ratchet_from_mtf_std_daily_prior_high_breakout_long_1h import (
     Sieve3V2ProfitLadderThreeStageRatchetFromMtfStdDailyPriorHighBreakoutLong1h,
 )
@@ -337,6 +338,11 @@ class IntegratedPaper(IStrategy):
 
     def custom_exit(self, pair, trade, current_time, current_rate,
                     current_profit, **kwargs):
+        force_close_reason = paper_user_force_close_reason(
+            self.config, self.__class__.__name__,
+        )
+        if force_close_reason:
+            return force_close_reason
         source = self._trade_source(trade)
         source.dp = self.dp
         source_exit = source.custom_exit(pair, trade, current_time, current_rate,

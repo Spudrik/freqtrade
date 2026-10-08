@@ -2824,6 +2824,11 @@ the existing exit readers are checked; none was created in this batch.
 - Integrity correction during assembly: Matched background controls had their **own historical control clocks**. The first assembly check caught duplicate-looking rows caused by assigning the parent event clock to every control. The final artifact joins each control by event ID, control type and rank to its actual control timestamp, then places the decision four hours later. This is a source-clock correction, not a market result. Two targeted tests and Ruff pass.
 - Remaining main-batch work: The other two prototypes—calculated-area contacts and the local multi-timeframe support/resistance map—are not in this artifact. Stage-1 had only metadata coverage for the map, not event-time coordinates. Existing G17-G24 builders can generate causal surfaces, but their persisted contact/control files cannot be mistaken for an arbitrary event-time map. Materialize a bounded per-pair coordinate surface, backward-as-of join it to source and later confirmation decisions, and retain single levels separately from true price-proximate independent-family clusters. Then complete the five-family coverage and episode/control integrity audit before testing combinations or interpreting outcomes.
 
+## 2026-10-06 - User-approved metadata-source expansion (operational)
+
+- Scope and first-cycle status: By user approval, 17 metadata sources were added to the existing `global_context_sources.json` and collector database under the existing watchdog. A routine Luna `--sources` snapshot covered all 32 configured sources (26 enabled); all 17 new sources completed their first cycle with 0 errors and 251 ticks. Full source-coverage notes remain preserved.
+- Interpretation and follow-up: This is operational coverage, not new research or a readiness promotion. Source usefulness is not yet validated; trading rules and bots are unchanged. User review is planned every few days. No new framework was introduced.
+
 ## Archive Reference
 
 For old detailed history, open only when verifying evidence:

@@ -45,7 +45,7 @@ def test_ten_profiles_have_separate_paper_accounts_and_exact_sources() -> None:
         assert config["strategy"] == type(strategy).__name__
         assert strategy.stoploss == -0.06
         assert config["force_entry_enable"] is False
-        assert config["initial_state"] == ("running" if variant_id in {"01", "10"} else "stopped")
+        assert config["initial_state"] == ("paused" if variant_id in {"01", "10"} else "stopped")
         assert config["db_url"] not in dbs
         dbs.add(config["db_url"])
         assert set(strategy.spec["sources"]) <= set(strategy._sources)
@@ -146,12 +146,14 @@ def test_bitcoin_does_not_confirm_itself_as_an_independent_leader() -> None:
 def test_sieve_exit_dispatch_is_kept_except_in_explicit_context_exit_variant(monkeypatch) -> None:
     now = datetime(2026, 9, 27, tzinfo=timezone.utc)
     plain = _strategy("01")
+    plain.config.pop("paper_force_close", None)
     plain.dp = object()
     fake_source = SimpleNamespace(dp=None, custom_exit=lambda *args, **kwargs: "sieve_exit")
     monkeypatch.setattr(plain, "_trade_source", lambda trade: fake_source)
     assert plain.custom_exit("BTC/USDT:USDT", object(), now, 100.0, 0.01) == "sieve_exit"
 
     contextual = _strategy("10")
+    contextual.config.pop("paper_force_close", None)
     monkeypatch.setattr(IntegratedPaper, "custom_exit", lambda *args, **kwargs: "context_checked")
     assert contextual.custom_exit("BTC/USDT:USDT", object(), now, 100.0, 0.01) == "context_checked"
 

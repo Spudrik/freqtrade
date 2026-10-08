@@ -1,0 +1,5 @@
+{
+  "bot_name": "paper_swing_level_break_hold",
+  "strategy": "PaperSwingLevelBreakHold",
+  "db_url": "sqlite:///user_data/research_news_data/context_features/integrated_paper_20260926/swing_level_break_hold_trades.sqlite"
+}

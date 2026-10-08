@@ -226,6 +226,7 @@ docker-compose-*.yml
 user_data/configs/integrated_paper_20260926_manual.json
 user_data/configs/paper_news_lab.json
 user_data/configs/paper_news_manual.json
+user_data/configs/paper_news_fast.json
 user_data/configs/paper_trial_20260926_E.json
 !user_data/configs/*.example.json
 
@@ -292,4 +293,8 @@ user_data/research_news_data/context_features/reports/*
 .codex-remote-attachments/
 /same
 /=ro
+user_data/configs/paper_aggressive_vacuum.json
+user_data/configs/paper_aggressive_reclaim.json
+user_data/configs/paper_aggressive_auction.json
+user_data/configs/paper_aggressive_rotation.json
 ai_guidance_docs/Research Ideas/*.gdoc

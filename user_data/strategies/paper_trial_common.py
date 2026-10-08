@@ -9,8 +9,64 @@ from __future__ import annotations
 from datetime import timedelta
 from math import isfinite
 
+from freqtrade.enums import RunMode
 from freqtrade.persistence import Trade
 from freqtrade.strategy import IStrategy, stoploss_from_absolute
+
+
+_PAPER_USER_FORCE_CLOSE_IDENTITIES = {
+    "integrated_paper_auto": (
+        "IntegratedPaper",
+        "sqlite:///user_data/research_news_data/context_features/"
+        "integrated_paper_20260926/auto_trades.sqlite",
+    ),
+    "integrated_paper_manual": (
+        "IntegratedPaper",
+        "sqlite:///user_data/research_news_data/context_features/"
+        "integrated_paper_20260926/manual_trades.sqlite",
+    ),
+    "integrated_paper_v01": (
+        "PaperVariant01",
+        "sqlite:///user_data/research_news_data/context_features/"
+        "integrated_paper_20260926/v01_trades.sqlite",
+    ),
+    "integrated_paper_v10": (
+        "PaperVariant10",
+        "sqlite:///user_data/research_news_data/context_features/"
+        "integrated_paper_20260926/v10_trades.sqlite",
+    ),
+    "paper_fast_level_inverse": (
+        "PaperFastLevelInverse",
+        "sqlite:///user_data/research_news_data/context_features/"
+        "integrated_paper_20260926/fast_level_inverse_trades.sqlite",
+    ),
+}
+
+
+def paper_user_force_close_reason(config: dict, strategy_name: str) -> str | None:
+    """Return the explicit retirement exit only for its exact paper identity."""
+    if "paper_force_close" not in config:
+        return None
+    force_close = config["paper_force_close"]
+    if type(force_close) is not bool:
+        raise RuntimeError("paper_force_close must be an explicit boolean")
+    if force_close is False:
+        return None
+
+    bot_name = config.get("bot_name")
+    identity = _PAPER_USER_FORCE_CLOSE_IDENTITIES.get(bot_name)
+    if identity is None:
+        raise RuntimeError("paper_force_close is restricted to its exact reviewed paper accounts")
+    expected_strategy, expected_db = identity
+    exchange = config.get("exchange")
+    if (config.get("dry_run") is not True or config.get("runmode") != RunMode.DRY_RUN
+            or config.get("trading_mode") != "futures" or config.get("margin_mode") != "isolated"
+            or not isinstance(exchange, dict) or exchange.get("name") != "binance"
+            or any(exchange.get(key) for key in ("key", "secret", "password", "privateKey"))
+            or config.get("strategy") != expected_strategy or strategy_name != expected_strategy
+            or config.get("db_url") != expected_db):
+        raise RuntimeError("paper_force_close requires the exact isolated dry-run retirement account")
+    return "paper_user_force_close"
 
 
 class PaperTrialBase(IStrategy):

@@ -2,10 +2,13 @@
 from datetime import datetime, timedelta, timezone
 import io
 import json
+from types import SimpleNamespace
 
 import pytest
 
 from user_data.Custom_Launcher.research import paper_trial_snapshot as snapshot
+from user_data.Custom_Launcher.research import paper_trial_runtime as runtime
+from user_data.strategies import paper_aggressive_context as aggressive_context
 
 
 def _write_article_source(root, key, folder, articles):
@@ -77,6 +80,46 @@ def test_source_snapshot_requires_web_cadence_config(monkeypatch,tmp_path):
     monkeypatch.setattr(snapshot,"ROOT",tmp_path)
     with pytest.raises(FileNotFoundError):
         snapshot.source_snapshot(datetime(2026,10,5,12,tzinfo=timezone.utc))
+
+
+def test_compact_review_projection_includes_new23_registry_and_control_renewal(tmp_path,monkeypatch):
+    now=datetime(2026,10,8,12,tzinfo=timezone.utc)
+    lifecycle={spec.key:("DRAINING" if spec.key in runtime.DRAINING_ACCOUNT_KEYS else "ACTIVE")
+               for spec in runtime.REVIEWED_23_ACCOUNTS}
+    record={"trial":"integrated_paper_20260926","status":"paper_trial_active",
+        "process_recovery":{"allowed_accounts":sorted(runtime.REVIEWED_23_ACCOUNT_KEYS),
+                            "account_lifecycle":lifecycle}}
+    for spec in runtime.REVIEWED_23_ACCOUNTS:
+        row=record
+        for key in spec.record_keys:
+            row=row.setdefault(key,{})
+        row.update(db=f"{spec.key}_trades.sqlite",log=f"{spec.key}.log")
+
+    control_dir=tmp_path/"controls"; control_dir.mkdir()
+    paths={key:control_dir/f"{key}.json" for key in aggressive_context.AGGRESSIVE_ACCOUNT_KEYS}
+    monkeypatch.setattr(aggressive_context,"CONTROL_FILES",paths)
+    monkeypatch.setattr(snapshot,"CONTROL_FILES",paths)
+    for index,key in enumerate(aggressive_context.AGGRESSIVE_ACCOUNT_KEYS):
+        expires=now+timedelta(minutes=20) if index==0 else now+timedelta(hours=2)
+        row={"schema_version":1,"author":"main_agent","account":aggressive_context.AGGRESSIVE_ACCOUNTS[key]["bot_name"],
+            "decision_id":f"review-{key}","observed_at_utc":now.isoformat(),
+            "valid_until_utc":expires.isoformat(),"bias":0,"side_permission":"both",
+            "long_leverage_cap":7.,"short_leverage_cap":7.,"exposure":"normal",
+            "reason":"bounded renewal projection test","sources":["https://example.org/source"],
+            "unavailable_inputs":[]}
+        paths[key].write_text(json.dumps(row),encoding="utf-8")
+    monkeypatch.setattr(snapshot,"load_fast_control",lambda now:SimpleNamespace(
+        status="observed",decision_id="fast",bias=0,exposure="normal",entry_permission="normal",
+        leverage_for=lambda side,clock:7.,blackouts=()))
+    monkeypatch.setattr(snapshot,"CONTROL_FILE",tmp_path/"fast-control.json")
+    monkeypatch.setattr(snapshot,"_news_fast_review_snapshot",lambda record,now:None)
+
+    result=snapshot.review_context_snapshot(now,record)
+    controls={row["account"]:row for row in result["aggressive_controls"]}
+    assert len(result["accounts"])==23 and len(controls)==4
+    assert controls["aggressive_vacuum"]["renewal_required"]
+    assert not controls["aggressive_reclaim"]["renewal_required"]
+    assert all(row["status"]=="observed" and row["technical_only"] is False for row in controls.values())
 
 
 def test_source_snapshot_includes_pilot_sources_and_bounds_latest_wallet_facts(monkeypatch,tmp_path):
@@ -392,6 +435,96 @@ def test_account_snapshot_passes_one_snapshot_clock_to_worker_health(monkeypatch
     monkeypatch.setattr(snapshot,"_runtime_span",lambda *_:{"status":"unknown"})
     snapshot.account_snapshot(now=now)
     assert calls==[now]
+
+
+def test_news_fast_review_projection_includes_its_own_journal_and_protected_plan(monkeypatch,tmp_path):
+    now=datetime(2026,10,7,12,tzinfo=timezone.utc)
+    spec=type("Spec",(),{"key":"news_fast","bot_name":"paper_news_fast"})()
+    record={"process_recovery":{}}
+    journal=tmp_path/"news_fast_decisions.jsonl"
+    decision={"account":"paper_news_fast","decision_id":"fast-1","action":"enter",
+        "status":"submitted","at_utc":now.isoformat()}
+    journal.write_text(json.dumps(decision)+"\n",encoding="utf-8")
+    monkeypatch.setattr(snapshot,"account_specs_for_record",lambda *_:[spec])
+    monkeypatch.setattr(snapshot,"account_record",lambda *_:{"db":"news_fast_trades.sqlite","database_initialized_at_utc":now.isoformat()})
+    monkeypatch.setattr(snapshot,"lifecycle_for",lambda *_:"ACTIVE")
+    monkeypatch.setattr(snapshot,"REPORT",tmp_path)
+    monkeypatch.setattr(snapshot,"_journal",lambda *_:journal)
+    plan={"side":"short","pair":"BTC/USDT:USDT","reference_rate":100.,"stake_pct":.15,
+        "leverage":10.,"stop_price":102.,"take_profit_price":97.,
+        "valid_until_utc":(now+timedelta(minutes=5)).isoformat(),
+        "review_due_at_utc":(now+timedelta(hours=4)).isoformat()}
+    database=tmp_path/"news_fast_trades.sqlite"
+    with snapshot.sqlite3.connect(database) as con:
+        con.executescript("CREATE TABLE trades(id INTEGER,pair TEXT,is_short INTEGER,leverage REAL,stop_loss REAL,is_open INTEGER);"
+            "CREATE TABLE trade_custom_data(ft_trade_id INTEGER,cd_key TEXT,cd_value TEXT);")
+        con.execute("INSERT INTO trades VALUES (1,'BTC/USDT:USDT',1,10,102,1)")
+        con.execute("INSERT INTO trade_custom_data VALUES (1,'paper_news_manual_plan',?)",(json.dumps(plan),))
+    result=snapshot._news_fast_review_snapshot(record,now)
+    assert result["required"] is True
+    assert result["review_policy"]=="best_guess_each_four_hour_wake"
+    assert result["journal"]==str(journal) and result["latest_decision"]["decision_id"]=="fast-1"
+    assert result["open_positions"][0]["protection_state"]=="stored_valid"
+    assert result["open_positions"][0]["stored_plan"]==plan
+    mismatched_plan={**plan,"leverage":5.,"stop_price":104.}
+    with snapshot.sqlite3.connect(database) as con:
+        con.execute("UPDATE trade_custom_data SET cd_value=?",(json.dumps(mismatched_plan),))
+    result=snapshot._news_fast_review_snapshot(record,now)
+    assert result["open_positions"][0]["protection_state"]=="missing_or_invalid"
+    assert result["open_positions"][0]["stored_plan"] is None
+
+
+@pytest.mark.parametrize(("account","actual_leverage"),[
+    ("paper_news_manual",3.),("paper_news_fast",10.),
+])
+def test_protection_state_rejects_plan_leverage_mismatch(account,actual_leverage):
+    now=datetime(2026,10,7,12,tzinfo=timezone.utc)
+    plan={"side":"short","pair":"BTC/USDT:USDT","reference_rate":100.,"stake_pct":.2,
+        "leverage":5.,"stop_price":104.,"take_profit_price":97.,
+        "valid_until_utc":(now+timedelta(minutes=5)).isoformat(),
+        "review_due_at_utc":(now+timedelta(hours=4)).isoformat()}
+
+    class Result:
+        def scalar_one_or_none(self):
+            return json.dumps(plan)
+
+    class Session:
+        def execute(self,*args,**kwargs):
+            return Result()
+
+    trade=SimpleNamespace(stop_loss=104.,strategy="PaperNewsManual",id=1,
+        leverage=actual_leverage)
+    assert snapshot._protection_state(trade,Session(),account)=="missing_or_invalid"
+    trade.leverage=5.
+    assert snapshot._protection_state(trade,Session(),account)=="stored_valid"
+
+
+@pytest.mark.parametrize("strategy_name", ["PaperSwingLevelBounce", "PaperSwingLevelBreakHold"])
+def test_swing_protection_state_exposes_plan_and_checks_actual_trade_leverage(strategy_name):
+    from user_data.strategies.paper_swing_levels import (
+        FEE_AND_SLIPPAGE, swing_stop_price, swing_target_price,
+    )
+    entry, atr, level, stake, leverage = 101., 1., 100., 1000., 3.
+    stop = swing_stop_price("long", entry, atr, level)
+    target, target_kind = swing_target_price("long", entry, stop, None)
+    plan = {"side": "long", "open_rate": entry, "entry_atr": atr, "stop_price": stop,
+        "target_price": target, "planned_loss_usdt": stake * leverage * (abs(entry-stop)/entry + FEE_AND_SLIPPAGE),
+        "entry_equity_usdt": 10000., "leverage": leverage, "trigger_level": level,
+        "level_source": "4h_rolling20_low", "signal_kind": "bounce" if "Bounce" in strategy_name else "break_hold",
+        "target_kind": target_kind, "stake_usdt": stake, "target_level": None, "target_source": None}
+
+    class Result:
+        def scalar_one_or_none(self):
+            return json.dumps(plan)
+
+    class Session:
+        def execute(self, *args, **kwargs):
+            return Result()
+
+    trade = SimpleNamespace(stop_loss=stop, strategy=strategy_name, id=1, leverage=3.)
+    assert snapshot._protection_state(trade, Session(), "paper_swing_level_bounce") == "stored_valid"
+    trade.leverage = 2.
+    assert snapshot._protection_state(trade, Session(), "paper_swing_level_bounce") == "missing_or_invalid"
 
 
 def test_account_table_cli_uses_one_snapshot_and_no_extra_fetch(monkeypatch,capsys):

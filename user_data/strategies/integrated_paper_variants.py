@@ -21,6 +21,7 @@ from user_data.strategies.integrated_paper import (
 )
 from user_data.strategies.integrated_paper_context import load_luna_context
 from user_data.strategies.paper_trial_level_orderbook import _recent_pressure
+from user_data.strategies.paper_trial_common import paper_user_force_close_reason
 
 
 # All profiles keep the same six paper pairs, 1x leverage, 2%-of-equity maximum
@@ -294,6 +295,11 @@ class _ParkedPaperVariant:
                 "size_factor": factor, "decision": "abstain" if abstain else "enter"}
 
     def custom_exit(self, pair, trade, current_time, current_rate, current_profit, **kwargs):
+        force_close_reason = paper_user_force_close_reason(
+            self.config, self.__class__.__name__,
+        )
+        if force_close_reason:
+            return force_close_reason
         if self.spec["rule"] == "hierarchy":
             # This is the one paper hypothesis that tests the existing integrated
             # major-event + leader + local-reversal exit on top of the Sieve exit.

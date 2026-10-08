@@ -19,7 +19,7 @@ from freqtrade.enums import RunMode
 from freqtrade.persistence import Trade
 from freqtrade.strategy import merge_informative_pair, stoploss_from_absolute
 from user_data.Indicators.complex_volume_profile import add_volume_profile
-from user_data.strategies.paper_trial_common import PaperTrialBase
+from user_data.strategies.paper_trial_common import PaperTrialBase, paper_user_force_close_reason
 from user_data.strategies.paper_fast_context import FastControl, load_fast_control
 
 LOG = logging.getLogger(__name__)
@@ -246,7 +246,17 @@ class PaperFastAuto(PaperTrialBase):
         if (side == "long" and current_rate <= level) or (side == "short" and current_rate >= level):
             return 0.
         equity = float(self.wallets.get_total_stake_amount())
-        unit_loss = float(leverage) * (1.5*atr/current_rate + FEE_AND_SLIPPAGE)
+        # Optional geometry hooks are used only by tightly scoped subclasses
+        # whose entry-frozen protection differs from the original fast rule.
+        # With no hook, preserve the fast family sizing formula byte-for-byte.
+        entry_context_builder = getattr(self, "_entry_plan_context", None)
+        entry_context = entry_context_builder(row, side) if callable(entry_context_builder) else {}
+        geometry_builder = getattr(self, "_sizing_geometry", None)
+        geometry = (geometry_builder(side, float(current_rate), atr, level,
+                                     entry_context.get("target_level"), float(leverage))
+                    if callable(geometry_builder) else {})
+        unit_loss = (float(geometry["unit_loss_fraction"]) if geometry
+                     else float(leverage) * (1.5*atr/current_rate + FEE_AND_SLIPPAGE))
         committed = self._committed_risk(equity) + sum(v["planned_loss_usdt"] for v in self._pending.values())
         budget = min(equity * MAX_POSITION_RISK * control.size_factor,
                      max(0., equity * MAX_COMBINED_RISK-committed))
@@ -258,6 +268,8 @@ class PaperFastAuto(PaperTrialBase):
                 "entry_equity_usdt": equity, "reference_rate": float(current_rate),
                 "leverage": float(leverage), "decision_id": control.decision_id,
                 "side": side, "entry_tag": str(entry_tag), "strong": bool(row["fast_strong"])}
+        plan.update(entry_context)
+        plan.update(geometry)
         self._pending[key] = plan
         LOG.info("fast_entry_plan account=%s pair=%s plan=%s", self.account_key, pair,
                  json.dumps({k: str(v) if k == "at" else v for k,v in plan.items()}))
@@ -290,12 +302,18 @@ class PaperFastAuto(PaperTrialBase):
             raise RuntimeError("Fast entry fill has no approved sizing plan")
         atr = pending["entry_atr"]
         direction = -1 if trade.is_short else 1
-        plan = {k: v for k, v in pending.items() if k not in {"at", "confirmed"}}
-        plan.update(stop_price=trade.open_rate-direction*1.5*atr,
-                    target_price=trade.open_rate+direction*3*atr,
-                    open_rate=trade.open_rate,
-                    filled_at_utc=current_time.isoformat())
-        validate_fast_plan(plan)
+        filled_plan_builder = getattr(self, "_filled_plan_after_entry", None)
+        if callable(filled_plan_builder):
+            plan = filled_plan_builder(pending, trade, current_time)
+            from user_data.strategies.paper_swing_levels import validate_swing_plan
+            validate_swing_plan(plan, actual_leverage=float(trade.leverage))
+        else:
+            plan = {k: v for k, v in pending.items() if k not in {"at", "confirmed"}}
+            plan.update(stop_price=trade.open_rate-direction*1.5*atr,
+                        target_price=trade.open_rate+direction*3*atr,
+                        open_rate=trade.open_rate,
+                        filled_at_utc=current_time.isoformat())
+            validate_fast_plan(plan)
         trade.set_custom_data(key=PLAN_KEY, value=plan)
         trade.set_custom_data(key="paper_entry_atr", value=atr)
 
@@ -307,6 +325,11 @@ class PaperFastAuto(PaperTrialBase):
                                       is_short=trade.is_short, leverage=trade.leverage)
 
     def custom_exit(self, pair, trade, current_time, current_rate, current_profit, **kwargs):
+        force_close_reason = paper_user_force_close_reason(
+            self.config, self.__class__.__name__,
+        )
+        if force_close_reason:
+            return force_close_reason
         plan = trade.get_custom_data(PLAN_KEY)
         if not isinstance(plan, dict):
             raise ValueError("Fast position is missing its approved plan")

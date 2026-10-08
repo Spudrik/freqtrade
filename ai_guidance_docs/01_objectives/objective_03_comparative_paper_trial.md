@@ -189,8 +189,8 @@ automatically veto all setups. Do not
 NLP-infer hold reasons: retain a concise current reason/status when present,
 referencing its decision ID rather than repeating essays.
 
-After the reviewed registry migration, organize the 16 preserved identities by
-their actual learning role—not as 16 independent entries:
+Organize the identities in the reviewed registry by their actual learning role—
+not as independent entries:
 
 1. Four distinct Sieve3 entry mechanisms: `sieve_pivot_partial`,
    `sieve_d1_vp_bos_short`, `sieve_d1_support_break_long` and
@@ -209,11 +209,12 @@ their actual learning role—not as 16 independent entries:
 The four shared-entry accounts `auto`, `manual`, `v01` and `v10` are DRAINING
 overlapping modifier comparators, not four entry mechanisms. Preserve and report
 their histories; do not add entries or count them as four independent ideas after
-their drain boundary. This approved refresh has a capacity-limited target of 16
-registered identities, 9 ACTIVE and entry-capable plus 7 DRAINING/PARKED—not an
-arbitrary permanent bot cap. Future additions need distinct questions, reviewed
-configs and lifecycle pins, and measured RAM/CPU headroom while preserving the
-four-processor user reserve. No further bots are auto-launched by this amendment.
+their drain boundary. There is no numeric limit on the number of PAPER accounts.
+The exact currently registered and approved identities and their lifecycle pins
+come from the existing `run_record.json`; reporting and recovery use that recorded
+set, not a fixed account-count ceiling. Future additions need distinct questions,
+reviewed configs and lifecycle pins, and measured RAM/CPU headroom while preserving
+the four-processor user reserve. No further bots are auto-launched by this amendment.
 
 The four selected Sieve3 sources were traced to exact locked parameters and
 chronological BTC/ETH/SOL validation. Reported results below are aggregate
@@ -366,7 +367,7 @@ The F modifier is deliberately a **new live proxy**, not a claimed implementatio
 ## Fair review and stop points - current accounts
 
 1. First validate dry-run configuration, source clocks, exchange availability, and basic entry/exit behavior. Keep an exact run record: command, PID, worker, log, DB, check interval, and stop conditions.
-2. Perform bot-quality, comparative-performance and family assessments only when the user requests them; do not turn routine health checks into strategy scoring. Eight weeks is a reference horizon, not a minimum wait to report a defect or limited evidence. After the registry migration, nine identities remain ACTIVE/entry-capable (four selected Sieve accounts, `fast_pivot`, the two inverse accounts and the two discretionary accounts); seven older accounts are DRAINING/PARKED. Rules remain frozen except for the reviewed refresh wrappers and explicit defect repairs; a requested assessment does not authorize optimization. The two discretionary accounts may change trades and rational decision procedures within their approved remit, recording changes before use. A few wins/losses do not prove a new method.
+2. Perform bot-quality, comparative-performance and family assessments only when the user requests them; do not turn routine health checks into strategy scoring. Eight weeks is a reference horizon, not a minimum wait to report a defect or limited evidence. Current registered identities and each lifecycle come from the existing `run_record.json`; do not assume a fixed ACTIVE/DRAINING/PARKED composition from the migration snapshot. Its learning-role grouping (four selected Sieve accounts, `fast_pivot`, two inverse accounts and two discretionary accounts) is historical context only. Rules remain frozen except for the reviewed refresh wrappers and explicit defect repairs; a requested assessment does not authorize optimization. The two discretionary accounts may change trades and rational decision procedures within their approved remit, recording changes before use. A few wins/losses do not prove a new method.
 3. The shared-entry `auto`/`manual`/V01/V10 histories overlap and stop receiving entries at their drain boundary. `fast_pivot` is an alternate-exit comparator for the new pivot mechanism, not a distinct entry idea; compare only matched BTC/ETH/SOL opportunities and disclose its different risk/exits. Compare `leader_inverse` with `leader_impulse` only over their overlapping pre-drain history, and `fast_level_inverse` with the fast comparators only before their drain boundary. Compare the two discretionary accounts by idea, opportunity time, exposure and actual costs; opposite positions do not prove that an input caused an outcome. Retired A-F labels remain historical reference only.
 4. Report entry opportunities, actual filled trades, size differences, exits, net paper return and drawdown, but also abstentions, no-data decisions, and errors. Separate BTC/ETH, established coins, and DOGE; never infer meme-wide results from one coin.
 5. If bots crash, source timestamps are unsafe, account isolation fails, dry-run cannot be verified, or a control could affect live orders, stop only the exact affected trial process and report. Do not modify upstream Freqtrade core. A source outage is unknown data, not a neutral order book or quiet news state.
@@ -401,9 +402,9 @@ own scheduled chat, using the generated `account_table` from this already-routin
 snapshot (or `--account-table` when making a table-only snapshot). Group its tables
 as Active, Draining (new entries paused), and Parked (stopped), followed by an
 explicit Unknown lifecycle section when needed; sort each group by longest known
-elapsed runtime first, with unknown runtimes last. After the
-reviewed 16-identity registry migration, include one row per registered identity
-and a total: open/closed longs and shorts, completed-trade wins/losses, banked P/L,
+elapsed runtime first, with unknown runtimes last. Include one row per identity
+currently registered in the existing `run_record.json` and a total: open/closed longs and shorts,
+completed-trade wins/losses, banked P/L,
 estimated open P/L, lifecycle, UTC snapshot time, elapsed trial span, database
 trades opened per day, and closed-trade profit/loss ratio. The runtime is elapsed
 span including downtime, not measured uptime; use an account's recorded start, or
@@ -424,12 +425,12 @@ factual reporting, not a bot-quality review. Do not run `--learning-review`, add
 market scan, or create a file for the table. The main-agent chat does not repeat
 it automatically; provide it there only if the user explicitly requests it.
 
-`--review-context` extracts the recorded identities and their ACTIVE/DRAINING/
-PARKED lifecycle, effective schema-1 fast controls and approved check clocks from
-the existing run record. After migration it covers all 16 identities; before that,
-report the actual registered 12 and do not imply the new accounts were initialized.
-Normal agents read this packet instead of the whole record; expand the record only for
-an exact fault, watch approval/update or unresolved decision. Due-watch parsing
+`--review-context` extracts the exact identities currently recorded and their
+ACTIVE/DRAINING/PARKED lifecycle, effective schema-1 fast controls and approved
+check clocks from the existing run record. Use it as the source of truth for the
+registered set; there is no fixed expected identity count. Normal agents read this
+packet instead of the whole record; expand the record only for an exact fault, watch
+approval/update or unresolved decision. Due-watch parsing
 supports both check lists and the existing two-times-in-one-field format. It
 shows checks from the previous four hours and next eight hours, and flags invalid
 approved clocks rather than silently calling them absent.
@@ -554,8 +555,8 @@ original account's narrower fresh-consequential-news override procedure. The
 other accounts remain observational except for approved `fast_context` controls.
 No code/config/core edit, new research or invented recovery is authorized by a
 routine wake. Stay quiet unless a material decision, failure or user attention
-is warranted; a user-requested status uses the full table for the currently
-registered identities (all 16 after the reviewed migration).
+is warranted; a user-requested status uses the full table for all currently
+registered identities.
 
 For the matched fast pair, the main review may publish/renew the three approved
 context controls through `paper_fast_control` only while `fast_context` is ACTIVE;
@@ -585,20 +586,22 @@ At the beginning of each routine four-hour Luna run, execute exactly once:
 C:\FreqTradeStuff\.venv\Scripts\python.exe -B -m user_data.Custom_Launcher.research.paper_trial_runtime --apply
 ```
 
-The helper is the only approved automatic recovery path. After the reviewed
-registry migration it can start missing processes only for the fixed 16 account
-identities whose lifecycle is ACTIVE, using the pinned controller, base/overlay
-configuration and existing account database/log. It does not execute shell
+The helper is the only approved automatic recovery path. It can start missing
+processes only for identities currently registered and explicitly approved in the
+existing run record whose lifecycle is ACTIVE, using the pinned controller,
+base/overlay configuration and existing account database/log. It does not execute shell
 commands from the run record. A shared Windows lock and exact process-tree checks
 prevent concurrent/duplicate launches; normal venv parent/child processes are one
 job. Routine recovery does not restart or retune processes. Its sole stop exception
-is mechanical closeout for the exact seven approved DRAINING identities after a
-fresh PAUSED heartbeat from the matched tree and repeated DB checks confirm zero
-open positions and orders; it never force-closes a trade or force-kills a process.
+is mechanical closeout only for exact approved DRAINING identities in the current
+recorded recovery set, after a fresh PAUSED heartbeat from the matched tree and
+repeated DB checks confirm zero open positions and orders; it never force-closes a
+trade or force-kills a process.
 An attended, exact-list `--restart-draining` can move only a reviewed DRAINING
 identity onto its pinned PAUSED overlay, preserving its DB and verifying stored
-protection continuity. The attended `--initialize-new` path is only for the four
-new Sieve identities and validates source parameters before first launch. Routine
+protection continuity. The attended `--initialize-new` path is limited to exact
+reviewed new identities supported by the helper and registered in the existing
+run record; it validates approved source parameters before first launch. Routine
 scheduled agents never invoke either attended option.
 
 The helper validates config fingerprints, dry-run/no-exchange-credential settings,
@@ -613,9 +616,9 @@ reserve and one-thread worker settings.
 Recovery writes only process/recovery facts in the existing run record and uses
 existing bot logs. DRAINING accounts remain PAUSED while existing exits and stored
 protection operate; PARKED accounts stay unavailable and are never auto-restarted.
-The fixed lifecycle registry contains nine ACTIVE identities and seven DRAINING/PARKED
-identities after migration; never infer a new state from elapsed time alone. Retired
-A-F accounts and unrelated parked variants are never eligible.
+Read each identity's lifecycle from the existing run record; never infer a new state
+from elapsed time alone. Retired A-F accounts and unrelated parked variants are never
+eligible.
 Failed or unresolved starts require main-agent attention, not repeated retries,
 interpreter guessing, config/strategy fixes, risk retuning or changed fingerprints
 by Luna. The helper must not place/force orders. Restoring an automatic account
