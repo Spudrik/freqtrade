@@ -460,12 +460,6 @@ def _worker_log_health(spec, tree, now, lifecycle="ACTIVE"):
         "ambiguous_local_clock_in_tail":ambiguous,"tail_limit_bytes":65536,"path":str(path)}
 
 
-_FIRST_RECORDED_RUN_SPAN_ACCOUNTS = frozenset({
-    "fast_auto", "fast_context", "sieve_pivot_partial", "sieve_d1_vp_bos_short",
-    "sieve_d1_support_break_long", "sieve_h4_vp_lvn_long",
-})
-
-
 def _utc_datetime(value):
     if not isinstance(value, str) or not value.strip():
         return None
@@ -484,7 +478,7 @@ def _runtime_span(record, spec, now):
     start = _utc_datetime(recorded_start)
     start_source = "account_started_at_utc" if start else None
     events = record.get("process_recovery", {}).get("events", [])
-    if "started_at_utc" not in info and spec.key in _FIRST_RECORDED_RUN_SPAN_ACCOUNTS:
+    if "started_at_utc" not in info:
         first = [(_utc_datetime(event.get("at_utc")), event) for event in events
                  if isinstance(event, dict) and event.get("account") == spec.key
                  and event.get("status") == "running"]

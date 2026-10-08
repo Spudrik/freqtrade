@@ -499,7 +499,11 @@ def start_missing(record: dict, spec: Account, *, resource_prechecked: bool = Fa
                 row["last_recovery"]["status"] = "draining_paused" if lifecycle == "DRAINING" else "running"
                 db = REPORT / f"{spec.key}_trades.sqlite"
                 if db.is_file() and spec.new_identity and not row.get("database_initialized_at_utc"):
-                    row["database_initialized_at_utc"] = utc_now()
+                    initialized_at = utc_now()
+                    row["database_initialized_at_utc"] = initialized_at
+                    if (row["last_recovery"]["status"] == "running"
+                            and "started_at_utc" not in row):
+                        row["started_at_utc"] = initialized_at
                 break
             time.sleep(2.)
         else:

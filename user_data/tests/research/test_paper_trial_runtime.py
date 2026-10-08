@@ -143,6 +143,112 @@ def test_attended_initialization_accepts_existing16_and_optional17_registries(se
     assert launched == [sieve.key, fast.key, *(spec.key for spec in swing_specs)]
 
 
+def test_first_successful_initialization_stamps_start_once_and_restart_preserves_it(setup, monkeypatch):
+    _registry(setup, runtime.REVIEWED_16_ACCOUNT_KEYS)
+    spec = next(spec for spec in runtime.NEW_SIEVE_ACCOUNTS if spec.key == "sieve_pivot_partial")
+    db = runtime.REPORT / f"{spec.key}_trades.sqlite"
+    db.unlink()
+    row = runtime.account_record(setup, spec)
+    monkeypatch.setattr(runtime, "_preflight_write_environment", lambda: None)
+    monkeypatch.setattr(runtime, "_resource_reserve_available", lambda: True)
+    monkeypatch.setattr(runtime, "_validate_new_strategy_bootstrap", lambda *args: None)
+    clocks = iter(("2026-10-01T10:00:00+00:00", "2026-10-01T10:02:00+00:00",
+                   "2026-10-03T08:00:00+00:00"))
+    monkeypatch.setattr(runtime, "utc_now", lambda: next(clocks))
+    process_rows = []
+    launches = 0
+
+    def launch(command, **kwargs):
+        nonlocal launches
+        launches += 1
+        if launches == 1:
+            with closing(sqlite3.connect(db)) as connection, connection:
+                connection.executescript(
+                    "CREATE TABLE trades (id INTEGER, is_open INTEGER);"
+                    "CREATE TABLE trade_custom_data (ft_trade_id INTEGER, cd_key TEXT, cd_value TEXT);"
+                )
+        with (runtime.REPORT / f"{spec.key}.log").open("a", encoding="utf-8") as log:
+            log.write("Changing state to: RUNNING\n")
+        process_rows[:] = [process(spec, pid=100 + launches, parent=42)]
+        return SimpleNamespace(pid=100 + launches, poll=lambda: None)
+
+    monkeypatch.setattr(runtime.subprocess, "Popen", launch)
+    monkeypatch.setattr(runtime, "process_inventory", lambda: list(process_rows))
+    result = runtime.initialize_new_accounts(setup, [spec.key])[0]
+    assert result["status"] == "running"
+    original_start = row["started_at_utc"]
+    assert original_start == row["database_initialized_at_utc"] == "2026-10-01T10:02:00+00:00"
+
+    process_rows.clear()
+    result = runtime.start_missing(setup, spec)
+    assert result["status"] == "running"
+    assert launches == 2
+    assert row["started_at_utc"] == original_start
+
+
+def test_failed_first_initialization_does_not_stamp_original_start(setup, monkeypatch):
+    _registry(setup, runtime.REVIEWED_16_ACCOUNT_KEYS)
+    spec = next(spec for spec in runtime.NEW_SIEVE_ACCOUNTS if spec.key == "sieve_pivot_partial")
+    db = runtime.REPORT / f"{spec.key}_trades.sqlite"
+    db.unlink()
+    row = runtime.account_record(setup, spec)
+    monkeypatch.setattr(runtime, "_preflight_write_environment", lambda: None)
+    monkeypatch.setattr(runtime, "_resource_reserve_available", lambda: True)
+    monkeypatch.setattr(runtime, "_validate_new_strategy_bootstrap", lambda *args: None)
+    monkeypatch.setattr(runtime, "utc_now", lambda: "2026-10-01T10:00:00+00:00")
+    process_rows = []
+
+    def failed_launch(command, **kwargs):
+        with closing(sqlite3.connect(db)) as connection, connection:
+            connection.executescript(
+                "CREATE TABLE trades (id INTEGER, is_open INTEGER);"
+                "CREATE TABLE trade_custom_data (ft_trade_id INTEGER, cd_key TEXT, cd_value TEXT);"
+            )
+        (runtime.REPORT / f"{spec.key}.log").write_text(" - ERROR - startup failed\n", encoding="utf-8")
+        process_rows[:] = [process(spec, pid=100, parent=42)]
+        return SimpleNamespace(pid=100, poll=lambda: None)
+
+    monkeypatch.setattr(runtime.subprocess, "Popen", failed_launch)
+    monkeypatch.setattr(runtime, "process_inventory", lambda: list(process_rows))
+    with pytest.raises(RuntimeError, match="startup error"):
+        runtime.initialize_new_accounts(setup, [spec.key])
+    assert db.is_file()
+    assert "database_initialized_at_utc" not in row
+    assert "started_at_utc" not in row
+    assert row["last_recovery"]["status"] == "failed"
+
+
+def test_paused_first_database_initialization_does_not_claim_running_start(setup, monkeypatch):
+    spec = next(spec for spec in runtime.NEW_SIEVE_ACCOUNTS if spec.key == "sieve_pivot_partial")
+    db = runtime.REPORT / f"{spec.key}_trades.sqlite"
+    db.unlink()
+    row = runtime.account_record(setup, spec)
+    monkeypatch.setattr(runtime, "_preflight_write_environment", lambda: None)
+    monkeypatch.setattr(runtime, "_resource_reserve_available", lambda: True)
+    monkeypatch.setattr(runtime, "_validate_new_strategy_bootstrap", lambda *args: None)
+    monkeypatch.setattr(runtime, "validate_config", lambda *args: {})
+    monkeypatch.setattr(runtime, "lifecycle_for", lambda *_: "DRAINING")
+    monkeypatch.setattr(runtime, "utc_now", lambda: "2026-10-01T10:00:00+00:00")
+    process_rows = []
+
+    def launch(command, **kwargs):
+        with closing(sqlite3.connect(db)) as connection, connection:
+            connection.executescript(
+                "CREATE TABLE trades (id INTEGER, is_open INTEGER);"
+                "CREATE TABLE trade_custom_data (ft_trade_id INTEGER, cd_key TEXT, cd_value TEXT);"
+            )
+        (runtime.REPORT / f"{spec.key}.log").write_text("Changing state to: PAUSED\n", encoding="utf-8")
+        process_rows[:] = [process(spec, pid=100, parent=42)]
+        return SimpleNamespace(pid=100, poll=lambda: None)
+
+    monkeypatch.setattr(runtime.subprocess, "Popen", launch)
+    monkeypatch.setattr(runtime, "process_inventory", lambda: list(process_rows))
+    result = runtime.start_missing(setup, spec, allow_initial_new_identity=True)
+    assert result["status"] == "draining_paused"
+    assert row["database_initialized_at_utc"] == "2026-10-01T10:00:00+00:00"
+    assert "started_at_utc" not in row
+
+
 def test_explicit19_registry_preserves_17_active_inverse_and_requires_both_new_swing_accounts(setup):
     _registry(setup, runtime.ALL_ACCOUNT_KEYS)
     inverse = next(spec for spec in runtime.REVIEWED_17_ACCOUNTS if spec.key == "fast_level_inverse")

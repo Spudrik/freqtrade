@@ -407,11 +407,17 @@ currently registered in the existing `run_record.json` and a total: open/closed 
 completed-trade wins/losses, banked P/L,
 estimated open P/L, lifecycle, UTC snapshot time, elapsed trial span, database
 trades opened per day, and closed-trade profit/loss ratio. The runtime is elapsed
-span including downtime, not measured uptime; use an account's recorded start, or
-for `fast_auto`, `fast_context` and the four new Sieve identities only, the first
-recorded successful `running` event labelled as not guaranteed to be original
-start. Never substitute restart, first trade, database mtime or global trial start.
-For DRAINING accounts the endpoint is the first recorded `draining_paused`
+span including downtime, not measured uptime; use a valid recorded account start,
+or, only when `started_at_utc` is absent, the earliest valid recorded successful
+`running` event for that exact account, labelled as a first-recorded observation
+not guaranteed to be the original start. An explicitly invalid or future account
+start remains unknown and is not masked by an event. Never substitute restart,
+first trade, database mtime or global trial start. Every future account's first
+successful initialization must persist its original `started_at_utc` once, after
+successful RUNNING startup and database initialization are established. Root/Luna
+maintain this reporting contract when adding accounts. Paste the mechanically
+generated account table unchanged; do not rewrite it or drop columns. For DRAINING
+accounts the endpoint is the first recorded `draining_paused`
 confirmation at/after the lifecycle boundary (observed confirmation, not exact
 pause onset); for PARKED accounts use the verified `parked_flat` stop. Unknown or
 invalid clocks/rates remain unknown. The ratio is profit factor computed from

@@ -281,32 +281,94 @@ def test_parked_runtime_requires_valid_current_boundary(monkeypatch,boundary):
     assert snapshot._runtime_span(record,spec,now)["status"]=="unknown"
 
 
-def test_runtime_span_first_recorded_allowlist_and_restart_guard(monkeypatch):
+def test_runtime_span_first_recorded_event_is_generic_exact_and_earliest(monkeypatch):
     now=datetime(2026,10,5,12,tzinfo=timezone.utc)
-    def run(key, events, account=None):
-        spec=type("Spec",(),{"key":key})()
-        record={"row":account or {},"process_recovery":{"events":events}}
-        monkeypatch.setattr(snapshot,"account_record",lambda *_:record["row"])
-        monkeypatch.setattr(snapshot,"lifecycle_for",lambda *_:"ACTIVE")
-        return snapshot._runtime_span(record,spec,now)
-    events=[{"account":"fast_auto","status":"failed","at_utc":"2026-09-29T10:00:00Z"},
-            {"account":"fast_auto","status":"running","at_utc":"2026-09-29T10:05:00Z"}]
-    span=run("fast_auto",events)
-    assert span["started_at_utc"]=="2026-09-29T10:05:00+00:00"
+    key="swing_level_bounce"
+    spec=type("Spec",(),{"key":key})()
+    row={}
+    monkeypatch.setattr(snapshot,"account_record",lambda *_:row)
+    monkeypatch.setattr(snapshot,"lifecycle_for",lambda *_:"ACTIVE")
+    events=[{"account":key,"status":"failed","at_utc":"2026-10-05T09:00:00Z"},
+            {"account":"swing_level_bounce_extra","status":"running","at_utc":"2026-10-05T09:30:00Z"},
+            {"account":key,"status":"launching","at_utc":"2026-10-05T09:45:00Z"},
+            {"account":key,"status":"running","at_utc":"2026-10-05T10:05:00Z"},
+            {"account":key,"status":"running","at_utc":"invalid"},
+            {"account":key,"status":"running","at_utc":"2026-10-05T10:00:00Z"}]
+    record={"process_recovery":{"events":events}}
+    span=snapshot._runtime_span(record,spec,now)
+    assert span["started_at_utc"]=="2026-10-05T10:00:00+00:00"
     assert span["start_source"]=="first_recorded_running_event_not_guaranteed_original_start"
-    legacy_events=[{"account":"auto","status":"running","at_utc":"2026-10-04T20:57:45Z"}]
-    assert run("auto",legacy_events)["status"]=="unknown"
-    assert run("auto",legacy_events,{"started_at_utc":"bad","restarted_at_utc":"2026-10-04T20:57:45Z"})["status"]=="unknown"
+    assert span["elapsed_seconds"]==2*60*60
+
+    row["started_at_utc"]="2026-10-04T20:00:00Z"
+    span=snapshot._runtime_span(record,spec,now)
+    assert span["started_at_utc"]=="2026-10-04T20:00:00+00:00"
+    assert span["start_source"]=="account_started_at_utc"
+
+
+def test_runtime_span_failed_only_event_stays_unknown(monkeypatch):
+    now=datetime(2026,10,5,12,tzinfo=timezone.utc)
+    spec=type("Spec",(),{"key":"news_fast"})()
+    monkeypatch.setattr(snapshot,"account_record",lambda *_:{})
+    monkeypatch.setattr(snapshot,"lifecycle_for",lambda *_:"ACTIVE")
+    events=[{"account":"news_fast","status":"failed","at_utc":"2026-09-29T10:00:00Z"}]
+    span=snapshot._runtime_span({"process_recovery":{"events":events}},spec,now)
+    assert span["status"]=="unknown"
+
+
+@pytest.mark.parametrize("lifecycle,end_status,end_source",[
+    ("DRAINING","draining_paused","first_recorded_draining_paused_confirmation_observed_not_exact_onset"),
+    ("PARKED","parked_flat","recorded_parked_flat_stop")])
+def test_first_recorded_runtime_keeps_lifecycle_endpoint_and_trades_per_day(
+        monkeypatch,tmp_path,lifecycle,end_status,end_source):
+    now=datetime(2026,10,5,12,tzinfo=timezone.utc)
+    key="swing_level_bounce"
+    spec=SimpleNamespace(key=key,db=f"{key}_trades.sqlite",new_identity=True)
+    row={"db":spec.db,"database_initialized_at_utc":"2026-10-04T00:00:00Z",
+         "lifecycle_changed_at_utc":"2026-10-05T00:00:00Z"}
+    record={"process_recovery":{"events":[
+        {"account":key,"status":"running","at_utc":"2026-10-04T00:00:00Z"},
+        {"account":key,"status":end_status,"at_utc":"2026-10-05T01:00:00Z"}]}}
+    (tmp_path/spec.db).write_text("mock database path",encoding="utf-8")
+    trades=[SimpleNamespace(is_open=False,close_profit_abs=value,realized_profit=0.,is_short=False)
+            for value in (1.,-1.,1.)]
+
+    class ReadOnlySession:
+        def __enter__(self): return self
+        def __exit__(self,*args): return False
+        def scalars(self,*args): return trades
+        def scalar(self,*args): return 0
+
+    class Engine:
+        def dispose(self): pass
+
+    monkeypatch.setattr(snapshot,"read_json",lambda *_:record)
+    monkeypatch.setattr(snapshot,"account_specs_for_record",lambda *_:[spec])
+    monkeypatch.setattr(snapshot,"account_record",lambda *_:row)
+    monkeypatch.setattr(snapshot,"lifecycle_for",lambda *_:lifecycle)
+    monkeypatch.setattr(snapshot,"process_inventory",lambda:[])
+    monkeypatch.setattr(snapshot,"matching_processes",lambda *_:None)
+    monkeypatch.setattr(snapshot,"_worker_log_health",lambda *_:{"state":"missing_process_or_log"})
+    monkeypatch.setattr(snapshot,"REPORT",tmp_path)
+    monkeypatch.setattr(snapshot,"create_engine",lambda *_:Engine())
+    monkeypatch.setattr(snapshot,"Session",lambda *_:ReadOnlySession())
+
+    result=snapshot.account_snapshot(now=now)[0]
+    assert result["runtime_span"]["start_source"]=="first_recorded_running_event_not_guaranteed_original_start"
+    assert result["runtime_span"]["elapsed_seconds"]==25*60*60
+    assert result["runtime_span"]["end_source"]==end_source
+    assert result["trades_per_day"]==pytest.approx(2.88)
+    assert result["trades_per_day_status"]=="ok"
 
 
 @pytest.mark.parametrize("started",[None,"bad","2026-10-05 10:00:00","2026-10-06T00:00:00Z"])
 def test_explicit_bad_start_does_not_fall_back_to_running_event(monkeypatch,started):
     now=datetime(2026,10,5,12,tzinfo=timezone.utc)
-    spec=type("Spec",(),{"key":"fast_auto"})()
-    row={"started_at_utc":started}
+    spec=type("Spec",(),{"key":"news_fast"})()
+    row={"started_at_utc":started,"restarted_at_utc":"2026-10-04T19:00:00Z"}
     monkeypatch.setattr(snapshot,"account_record",lambda *_:row)
     monkeypatch.setattr(snapshot,"lifecycle_for",lambda *_:"ACTIVE")
-    event={"account":"fast_auto","status":"running","at_utc":"2026-10-04T20:00:00Z"}
+    event={"account":"news_fast","status":"running","at_utc":"2026-10-04T20:00:00Z"}
     assert snapshot._runtime_span({"process_recovery":{"events":[event]}},spec,now)["status"]=="unknown"
 
 
