@@ -52,17 +52,13 @@ Resolve important architectural or requirement ambiguity before dispatch rather 
 
 ### 1.3 Keep worker context narrow
 
-Fresh independent workers should not inherit the parent thread by default.
-
-Pass the minimum task-specific context required to do the job correctly. Include a small amount of recent context only when the task genuinely depends on those decisions.
-
-Do not send unrelated project instructions, historical chat, broad archives, large logs, or the complete instruction tree.
-
-Where practical, the root agent resolves instruction routing first and points the worker directly at the relevant guidance.
-
-Prefer search/grep followed by targeted reads over broad repository reading.
-
-Keep detailed evidence in existing task artifacts/files where appropriate and return only decision-relevant summaries to the root agent.
+Fresh independent workers should not inherit the full parent thread by default
+(`fork_turns=none`). The root's task contract names the exact files/sections,
+permitted inputs, outputs, actions/write scope, and exclusions; workers read
+only that allowlist. Root retains instruction routing and supplies applicable
+constraints. Read one extra targeted snippet only when a concrete need is
+demonstrated; do not broaden discovery or load unrelated files, archives, or
+parent history. Keep returned evidence concise and decision-relevant.
 
 ### 1.4 Model and reasoning selection
 
@@ -163,6 +159,14 @@ Sub-agents and local compute workers are separate concepts. Runtime/process limi
 Start from the user's latest explicit request.
 
 Do not read every guidance file. Route from the request through this file to the minimum relevant subsystem `AGENTS.md` and rule files.
+
+When the user authorizes it, a self-contained, root-approved narrow scheduled
+or leaf task with an explicit context/action contract may skip reading or
+rereading root/local `AGENTS.md` files and unrelated routers/objectives; use
+only its named task section and compact own memory. This does not bypass
+system/developer instructions, mandatory skills, permissions or safety, or
+suppress harness-injected context. Root retains routing and puts applicable
+constraints in the task contract.
 
 The user's latest explicit request defines the active task. Use programme/objective documents only when routed below or when programme-level context is explicitly required.
 

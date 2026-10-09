@@ -44,9 +44,13 @@ exposure, execution reliability and decision quality together. A high win rate
 alone is not success: several small wins can be wiped out by one larger loss.
 Keep failed trades and account resets visible in cumulative results.
 
-Review operational health every four hours and at approved announcements. Bot-
-quality, comparative strategy, performance, family-triage and learning-value
-assessments are user-requested only; do not run them weekly or on routine wakes.
+Root reviews operational health every four hours and at approved announcements.
+Root owns all account/bot health, recovery, reporting, journals, decisions and
+controls. Scheduled news-only work follows
+`ai_guidance_docs/02_rules/reference_paper_news_sentinel_trial.md` and must not
+read this objective or account/bot context. Bot-quality, comparative strategy,
+performance, family-triage and learning-value assessments are user-requested
+only; do not run them weekly or on routine wakes.
 When requested, assess actual opportunities, filled trades, costs, losses,
 decision quality and source/operation coverage. Eight weeks is a reference
 observation horizon, not a minimum wait before identifying a real defect or
@@ -157,14 +161,12 @@ live orders or changes to Freqtrade core are authorized.
 
 ### Active manual learning and family triage
 
-Luna's recurring role is current market, news and source reporting: preserve the
-bounded supporting and contrary facts, unknowns and their observation/publication
-clocks. It may run existing mechanical health, table and recovery checks and
-report actual faults confirmed by current evidence. A prior or parked fault is
-historical unless fresh evidence confirms it. Luna does not select bots/accounts,
-write per-account plans or holds, or choose trades. `brief.manual_candidates`
-remains an optional schema-1 field and may stay empty; no schema migration is
-needed. Root owns the manual decisions and any controller actions.
+Scheduled Luna tasks have only the news/market-input role defined in
+`ai_guidance_docs/02_rules/reference_paper_news_sentinel_trial.md`; they have
+no account/bot knowledge or health, recovery, table, reporting, journal,
+decision, control, or trading duties. Root owns all such duties, including
+manual decisions and controller actions. The existing
+`brief.manual_candidates` field remains empty; no schema migration is needed.
 
 The corrected aggressive-family premises are intentionally distinct: Vacuum
 allows weak directional anticipation before a thin-profile breakout is observed;
@@ -366,41 +368,43 @@ requests a quality/accounting assessment, never on a schedule or routine wake. I
 journals only; matched pair/side/open-minute entries are learning proxies, not
 proof of identical candidates or historical uptime.
 
-## Four-hour news brief and main-agent review
+## Four-hour market brief and main-agent review
 
-The Luna ingestion check is read-only except publishing its observation and the narrowly approved paper-process recovery below; it may use existing collectors and official/web sources. Report current bounded news, market and source facts, including collector freshness, US/EU/UK/Asia market context, major exchange incidents, BTC/ETH and broad-coin response, and relevant financial/economic/geopolitical stories. Preserve supporting and contrary evidence, unknowns and each available observation, publication or fetch clock. Do not equate article count or sentiment words with market causation. A prior or parked fault is not a current fault without fresh confirming evidence. Optional source gaps qualify only the affected evidence or thesis; they do not veto every setup. Luna may report faults from the existing mechanical health/table/recovery checks, but never selects bots/accounts or recommends per-account plans, holds or trades. Routine wakes do not assess bot quality or strategy performance.
+The scheduled news-only task follows the four-hour mode in
+`ai_guidance_docs/02_rules/reference_paper_news_sentinel_trial.md`; it does not
+read this objective or perform account/bot operations. Root owns the separate
+four-hour review: operational health, recovery, account projections, tables on
+user request, every ACTIVE news-input decision, journals, and control renewal.
+Preserve verified facts, contrary evidence, unknowns, and source/observation
+clocks. Do not equate article count or sentiment words with market causation.
+Routine wakes do not assess bot quality or strategy performance.
 
 ### Local-first coverage and token budget
 
-Use the existing read-only briefing command first:
+Root's numeric market projection uses only the existing flags below. The
+scheduled news-only task follows the filtered pipeline in its isolated
+instruction and must not see raw collector headlines:
 
 ```text
-C:\FreqTradeStuff\.venv\Scripts\python.exe -B -m user_data.Custom_Launcher.research.paper_trial_snapshot --sources --market --crypto --review-context --accounts --prices --higher
+C:\FreqTradeStuff\.venv\Scripts\python.exe -B -m user_data.Custom_Launcher.research.paper_trial_snapshot --sources --crypto --higher
 ```
 
-It prints one compact, read-only packet, without new files, orders, collector
-changes or historical scans. Retain its current bounded market/source observations
-and their clocks in the brief; do not replace missing current evidence with a prior
-fault. Headlines are deduplicated only by exact normalized title; additional
-source URLs and publication clocks remain visible. Account
-counts/costs include bounded worker-log heartbeat/error facts, open orders and
-stored-plan validation through existing strategy validators. Log/process presence
-and a stored valid stop are not proof that every trading operation works.
+For the news-only task, remove `sources.recent_unique_headlines` and unneeded
+`sources.news`/`sources.web` collector details before model-visible output.
+Retain only compact numeric market/source fields and clocks for root's review.
+The news-only task reads the five direct publishers in its isolated instruction,
+not bundled headline feeds.
 
-At each four-hour Luna check, post exactly one compact factual report in Luna's
-own scheduled chat. Include the current bounded market/source facts and clocks
-from this packet, plus its generated `account_table` (or `--account-table` for a
-table-only snapshot) as the only routine account report. The table contains
+Root reports an account table only when the user explicitly asks. No scheduled
+Luna task posts an account table or routine account report. The table contains
 `ACTIVE` accounts only, sorted by longest
 known elapsed runtime first with unknown runtimes last, and one TOTAL row computed
 only from those displayed accounts. If no accounts are `ACTIVE`, it says so and
 shows zero count/P&L totals with PF undefined. Do not include DRAINING, PARKED,
-unknown-lifecycle, retired, or historical accounts in a routine table; provide
-their account facts only on explicit user request, except a genuine current
-mechanical fault. Keep the UTC snapshot line and current bounded facts; do not
-carry forward an old fault as current without fresh evidence or add generic table
-footers. The main-agent chat provides the table only when the user explicitly
-asks.
+unknown-lifecycle, retired, or historical accounts in a table; provide their
+account facts only on explicit user request, except a genuine current mechanical
+fault. Keep the UTC snapshot line and current bounded facts; do not carry forward
+an old fault as current without fresh evidence or add generic table footers.
 
 The table is factual reporting, not a bot-quality review. Do not run
 `--learning-review` or create a file for it; the separate current bounded market
@@ -414,7 +418,7 @@ be the original start. An explicitly invalid or future account start remains
 unknown and is not masked by an event. Never substitute restart, first trade,
 database mtime, or global trial start. Every future account's first successful
 initialization must persist its original `started_at_utc` once, after successful
-RUNNING startup and database initialization are established. Root/Luna maintain
+RUNNING startup and database initialization are established. Root maintains
 this reporting contract when adding accounts. For DRAINING accounts, the runtime
 endpoint is the first recorded `draining_paused` confirmation at/after the
 lifecycle boundary (observed confirmation, not exact pause onset); for PARKED
@@ -430,9 +434,9 @@ unknown prices/P&L explicitly; do not infer them.
 `--review-context` extracts the exact identities currently recorded and their
 ACTIVE/DRAINING/PARKED lifecycle, effective schema-1 fast controls and approved
 check clocks from the existing run record. Use it as the source of truth for the
-registered set; there is no fixed expected identity count. Normal agents read this
-packet instead of the whole record; expand the record only for an exact fault, watch
-approval/update or unresolved decision. Due-watch parsing
+registered set; there is no fixed expected identity count. Root reads this
+packet instead of the whole record; expand the record only for an exact fault,
+watch approval/update or unresolved decision. Due-watch parsing
 supports both check lists and the existing two-times-in-one-field format. It
 shows checks from the previous four hours and next eight hours, and flags invalid
 approved clocks rather than silently calling them absent.
@@ -452,8 +456,10 @@ levels, not actual four-hour candles. `--higher` uses the existing four bounded
 public BTC/ETH requests for completed four-hour/daily candles, adding factual
 recent changes and range position from the same responses, with no extra calls
 or invented trend verdict. Retain this until the local API genuinely provides
-equivalent coverage. Read the preceding Luna brief once and concentrate on
-changes, not retelling the archive. Fetching stays outside strategy callbacks.
+equivalent coverage. The news-only task uses only its current brief and compact
+memory; it must not read prior shared context or old briefs that may contain
+account data. Root may inspect exact older evidence when needed for a review.
+Fetching stays outside strategy callbacks.
 
 Cover news/events/expectations, politics, regional equities, volatility,
 bonds/yields/USD/oil/gold, exchange incidents, BTC/ETH 1h/4h/daily context,
@@ -465,26 +471,23 @@ whole-market breadth; missing funding, dominance or regional feeds stay unknown.
 Book metrics disabled in one collector table do not prove that its completed
 minute-bar history is absent: use the existing coverage-aware pressure reader.
 
-Browse only for consequential gaps in this packet: normally no more than two
-search queries and six directly relevant primary pages per review, not a quota
-to consume. Do not repeat failed/blocked requests or do historical research here.
-If a gap remains, state it; do not buy data or invent market consensus. Keep the
-human-readable brief around 500 words or fewer, plus compact coverage/watch
-fields. Deduplicate underlying stories and distinguish expected announcements,
-observed surprises, price confirmation and interacting background conditions.
-Describe the market view and uncertainty without selecting an account or
-recommending a per-account trade, hold or control. Root separately decides any
-news-input account action using the current review projection and source clocks.
+The isolated news-only brief uses its stated two-query/four-page limit and fixed
+publisher allowlist; do not repeat blocked requests or do historical research.
+If coverage is unavailable, say so rather than inventing consensus. Keep the
+brief at 400 words or fewer, plus compact coverage/watch fields. Deduplicate
+underlying stories and distinguish expected announcements, observed surprises,
+price confirmation and interacting background conditions. The news-only task
+may express market opinion and conditional cases, but no account-level action,
+hold, trade, or control.
 
-For news ingestion, Luna publishes only `luna_context.json`, using
-`publish_luna_context` to validate the whole observation **before atomic
-replacement**. Preserve existing schema-1 fields used by automatic accounts and
-the existing `brief`, optional `brief.manual_candidates`, and `watch_proposals`
-fields. `manual_candidates` may remain empty; do not migrate the schema or use it
-to issue per-account advice.
-The routine brief validity may be up to five hours so the existing staggered
-four-hour observer/main schedule can overlap; choose a shorter expiry for a
-time-sensitive observation. The existing validator permits at most six hours.
+The news-only task publishes only the existing schema-1 `luna_context.json`
+through the publisher contract in the isolated reference. Preserve its schema
+and existing control fields; only news/market observations, the brief, source-
+only `main_review`, and `watch_proposals` are in scope. Never write account
+health, tables, journals, decisions, or controls.
+The routine news brief validity is at most four hours; choose a shorter expiry
+for a time-sensitive observation. The existing validator permits a longer
+maximum, but the scheduled news-only task must stay within four hours.
 This brief-validity envelope does not extend the freshness of any individual
 input: keep each metric's actual observation time and its own freshness
 assessment. Main
@@ -520,35 +523,47 @@ conditional leads parked rather than accumulating permanent schedules.
 
 ### Unattended Luna-to-main handoff
 
-Luna owns the routine four-hour mechanical recovery, account-health,
-source-freshness and market/news checks described above and below. Its existing `luna_context.json`
-is the handoff; do not create a second report. In `brief.main_review`, retain the
-compact schema (`required`, `reasons`, `health`, `changed_since_previous` and
-`decision_options`), but use it only to flag current market, source or operational
-exceptions for root review. Mark `required` for a material current market/news
-change, a position/protection concern, a freshly verified account/source/collector
-fault, an approved event watch due, a useful watch proposal, or a contextual
-control that needs a root decision. Report missing or unverified evidence as
-unknown, not healthy; a prior/parked fault is not current without fresh evidence.
-Optional source gaps qualify only the affected thesis, not every setup. Luna never
-selects accounts, supplies per-account plans or holds, chooses trades, or
-publishes controls.
+Root owns four-hour account-health, recovery, reporting, decision, journal, and
+control duties. The schema-1 `luna_context.json` is only the current news/market
+handoff; do not read prior content or create a second news report.
+`brief.main_review` retains its compact schema (`required`, `reasons`,
+`health`, `changed_since_previous` and `decision_options`) and flags only
+market/source exceptions. Its `health` describes news/source coverage, never
+bot/account health. The news-only task cannot report positions, protection,
+account or collector health, or publish controls.
+
+When a scheduled news task escalates a scan still unusable after the shared
+recovery ladder, root promptly checks news personally and owns a bounded
+resolution of the underlying coverage failure; acknowledgement alone is not
+resolution. Until usable coverage is restored, keep the result explicitly
+unknown. Do not restart, pause, or reconfigure collectors, or mutate process
+or collector state as part of this handoff.
+
+At each four-hour root wake, run the approved runtime helper exactly once,
+obtain a separate compact health/account projection, consider all ACTIVE
+news-input accounts, and journal each hold/no-trade/action and any control
+renewal with exact source clocks. Use `paper_trial_snapshot --review-context`
+and the existing manual review projection to determine the current account set;
+do not infer it from the news brief. Preserve account-specific authority, risk
+limits, stored protection, and source rules.
 Root owns every ACTIVE news-input account on each fresh handoff, using
 `paper_trial_snapshot --review-context`'s `news_input_reviews` and the existing
-manual review projection. Those projections determine the account list; Luna's
-`main_review` does not. Root records the considered hold/no-trade/action and any
+manual review projection. Those projections determine the account list; the
+news-only `main_review` does not. Root records the considered hold/no-trade/action and any
 control renewal through the existing journal/controller with the exact source
-clocks. Routine Luna account tables remain ACTIVE-only; DRAINING/PARKED accounts
-stay excluded except for a genuine current mechanical fault. A `fast_context`
+clocks. Scheduled news-only tasks never publish account tables. Root uses the
+ACTIVE-only table contract above only on user request. A `fast_context`
 control renewal is relevant only while that account is ACTIVE.
 
-The main-agent four-hour heartbeat is decision-only. Read this handoff contract,
-the current `luna_context.json` and `paper_trial_snapshot --review-context` for
-current approved watches/account identities/effective fast controls, not the
-whole run record. This lightweight record projection performs no health/network
-scan. Read the record only for an exact exceptional decision or authorized write.
+The main-agent four-hour heartbeat owns the bounded health, recovery, account
+review and decision work described here. Read this handoff contract, only a
+current newly published news-only observation, and
+`paper_trial_snapshot --review-context` for current approved watches/account
+identities/effective fast controls, not the whole run record. This lightweight
+record projection performs no health/network scan. Read the record only for an
+exact exceptional decision or authorized write.
 On every fresh handoff, root considers every currently ACTIVE account in
-`news_input_reviews`, not only accounts Luna flags. Journal each hold/no-trade/
+`news_input_reviews`, not only conditions flagged in the news-only brief. Journal each hold/no-trade/
 action and publish or explicitly renew any contextual judgement through its
 existing controller. Those controllers record the exact `luna_observed_at_utc`
 used, so each handoff needs a new consideration; an uncertain submission does
@@ -601,9 +616,11 @@ scheduled agents, including Luna, to restore the recorded paper bots when they
 wake. `Codex_OnLogon` starts the installed desktop package 30 seconds after this
 user signs in; it does not bypass sign-in, change power settings, resume a paused
 goal, or start trading processes by itself. The existing collector startup/hourly
-watchdog remains separate and unchanged.
+watchdog remains separate and unchanged. The 9 October role change assigns all
+current recovery to root; the news-only Luna task must not read this objective
+or perform recovery.
 
-At the beginning of each routine four-hour Luna run, execute exactly once:
+At the beginning of each routine four-hour root review, execute exactly once:
 
 ```text
 C:\FreqTradeStuff\.venv\Scripts\python.exe -B -m user_data.Custom_Launcher.research.paper_trial_runtime --apply
@@ -644,14 +661,15 @@ from elapsed time alone. Retired A-F accounts and unrelated parked variants are 
 eligible.
 Failed or unresolved starts require main-agent attention, not repeated retries,
 interpreter guessing, config/strategy fixes, risk retuning or changed fingerprints
-by Luna. The helper must not place/force orders. Restoring an automatic account
+by root. The helper must not place/force orders. Restoring an automatic account
 resumes its already-approved automated rules; restoring a manual-only account
 does not create an entry. Trade authority remains unchanged.
 
-Luna then checks actual worker logs/state, distinct databases, open paper
+Root then checks actual worker logs/state, distinct databases, open paper
 orders and retained position protection before treating the account as healthy;
 `already_running` reports process presence, not successful trading logic. Record
 the reboot/execution gap and do not invent fills or assume stops executed while
 the PC/bot was off. Report a restoration or blocker when material, otherwise stay
-quiet. Recovery happens on a scheduled wake, potentially up to four hours after
-sign-in; the PC and app still need to be awake, available and online.
+quiet. Recovery happens on the root-owned scheduled review, potentially up to
+four hours after sign-in; the PC and app still need to be awake, available and
+online.
