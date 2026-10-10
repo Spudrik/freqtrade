@@ -28,6 +28,14 @@ CLASSES = {
     "auction": PaperAggressiveAuction,
     "rotation": PaperAggressiveRotation,
 }
+OBSERVED_ROUTE_CASES = (
+    ("vacuum", "profile_acceptance", "long", "vah_1h"),
+    ("vacuum", "profile_acceptance", "short", "val_1h"),
+    ("auction", "accepted_value_escape", "long", "vah_4h"),
+    ("auction", "accepted_value_escape", "short", "val_4h"),
+    ("auction", "value_edge_rotation", "long", "val_4h"),
+    ("auction", "value_edge_rotation", "short", "vah_4h"),
+)
 
 
 def config(account="aggressive_vacuum"):
@@ -131,6 +139,28 @@ def test_reclaim_refuses_both_sides_when_no_boundary_survives():
     assert not row["ag_signal"] and row["enter_long"]==row["enter_short"]==0
 
 
+@pytest.mark.parametrize("side,open_,high,low,close,change,expected_anchor", [
+    ("short", 105., 109.75, 89.5, 109.5, .22, 110.),
+    ("long", 95., 110.5, 90.25, 90.5, -.22, 90.),
+])
+def test_reclaim_opposite_side_primary_does_not_change_exploratory_route_geometry(
+        side, open_, high, low, close, change, expected_anchor):
+    frame = signal_frame("reclaim")
+    frame.loc[1, ["open_15m", "high_15m", "low_15m", "close_15m", "ag_atr_15m",
+                  "ag_pressure_change_15m", "ag_prior_high_15m", "ag_prior_low_15m",
+                  "ag_day_range_high_1d", "ag_day_range_low_1d"]] = [
+                      open_, high, low, close, 2., change, 110., 90., 110., 90.]
+    strategy = PaperAggressiveReclaim(config("aggressive_reclaim"))
+    row, _ = decision(strategy, frame)
+
+    assert row["ag_decision_side"] == side
+    assert row["ag_mode"] == "exploratory"
+    assert row["ag_route"] == "best_guess"
+    assert "best-guess" in row["ag_reason"]
+    _, _, anchor, _ = strategy._geometry(row, side, close)
+    assert anchor == expected_anchor
+
+
 @pytest.mark.parametrize("family,side", [(family, side) for family in CLASSES for side in ("long", "short")])
 def test_each_family_has_primary_two_sided_route(family, side):
     row, _ = decision(CLASSES[family](config(f"aggressive_{family}")), signal_frame(family, side=side, primary=True))
@@ -140,6 +170,9 @@ def test_each_family_has_primary_two_sided_route(family, side):
     if family == "auction":
         assert row["ag_route"] == "accepted_value_escape"
         assert "escape" in row["ag_reason"]
+    elif family == "vacuum":
+        assert "historical traded-volume estimate" in row["ag_reason"]
+        assert "candle-derived pressure" in row["ag_reason"]
 
 
 @pytest.mark.parametrize("family,side", [(family, side) for family in CLASSES for side in ("long", "short")])
@@ -149,6 +182,10 @@ def test_family_best_guess_stays_active_without_primary_setup(family, side):
     assert row["ag_mode"] == "exploratory"
     assert row["ag_decision_side"] == side
     assert row["ag_score"] > 0
+    if family in {"vacuum", "auction"}:
+        assert row["ag_route"] == "best_guess"
+    if family == "vacuum":
+        assert "candle-derived pressure estimate" in row["ag_reason"]
 
 
 @pytest.mark.parametrize("family,side,frozen,current,close,pressure", [
@@ -822,6 +859,125 @@ def _reclaim_pending_entry(monkeypatch, side):
     stake = strategy.custom_stake_amount(PAIRS[0], NOW, reference_rate, 1500., 1., 1500., 3., entry_tag, side)
     assert stake > 0
     return strategy, row, control, boundary, reference_rate, entry_tag, stake, stake * 3. / reference_rate
+
+
+def _route_boundary_pending(family, route, side, *, features, provenance="automatic_signal"):
+    strategy = CLASSES[family](config(f"aggressive_{family}"))
+    control = context.AggressiveControl("observed", "route-boundary-control", 0,
+                                        "both", 7., 7., "normal")
+    strategy._control = lambda _now: control
+    strategy._top_rank_allows = lambda *args, **kwargs: True
+    pending = _pending_fill(side)
+    mode = "manual" if provenance == "main_agent_force_entry" else (
+        "exploratory" if route == "best_guess" else "primary")
+    entry_tag = ("aggressive_manual:route-boundary" if mode == "manual" else
+                 f"aggressive:{family}:{mode}:{route}:{side}")
+    pending.update(at=NOW, family=family, route=route, mode=mode, pair=PAIRS[0], side=side,
+        entry_tag=entry_tag, provenance=provenance, reason="route boundary callback test",
+        features=dict(features), confirmed=False, control_decision_id=control.decision_id,
+        technical_only=control.technical_only)
+    strategy._pending[(PAIRS[0], side, entry_tag)] = pending
+    amount = pending["stake_usdt"] * pending["requested_leverage"] / pending["reference_rate"]
+    return strategy, pending, amount, entry_tag
+
+
+def _boundary_test_trade(*, side, entry_tag, rate, amount):
+    stored = {}
+    trade = SimpleNamespace(pair=PAIRS[0], is_short=side == "short",
+        entry_side="sell" if side == "short" else "buy", enter_tag=entry_tag,
+        open_rate=rate, amount=amount, stake_amount=amount * rate / 5., leverage=5.,
+        contract_size=1., id=790, get_custom_data=lambda key: stored.get(key),
+        set_custom_data=lambda key, value: stored.__setitem__(key, deepcopy(value)))
+    order = SimpleNamespace(ft_order_side=trade.entry_side)
+    return trade, order, stored
+
+
+@pytest.mark.parametrize("family,route,side,feature", OBSERVED_ROUTE_CASES)
+def test_observed_route_confirmation_requires_strict_frozen_boundary_side(
+        family, route, side, feature):
+    boundary = 100.
+    strategy, pending, amount, entry_tag = _route_boundary_pending(
+        family, route, side, features={feature: boundary})
+    valid = boundary + .001 if side == "long" else boundary - .001
+    crossed = boundary - .001 if side == "long" else boundary + .001
+    for rate, accepted in ((crossed, False), (boundary, False), (valid, True)):
+        pending["confirmed"] = False
+        assert strategy.confirm_trade_entry(PAIRS[0], "market", amount, rate, "gtc",
+                                             NOW, entry_tag, side) is accepted
+
+
+@pytest.mark.parametrize("family,route,side,feature", OBSERVED_ROUTE_CASES)
+def test_observed_route_crossed_market_fill_uses_existing_emergency_protection(
+        family, route, side, feature, caplog):
+    boundary = 100.
+    strategy, _, amount, entry_tag = _route_boundary_pending(
+        family, route, side, features={feature: boundary})
+    valid = boundary + .001 if side == "long" else boundary - .001
+    crossed = boundary - .001 if side == "long" else boundary + .001
+    assert strategy.confirm_trade_entry(PAIRS[0], "market", amount, valid, "gtc",
+                                         NOW, entry_tag, side)
+    trade, order, stored = _boundary_test_trade(
+        side=side, entry_tag=entry_tag, rate=crossed, amount=amount)
+
+    with pytest.raises(ValueError, match="crossed its frozen entry boundary"):
+        strategy.order_filled(PAIRS[0], trade, order, NOW)
+    assert context.PLAN_KEY not in stored
+    assert "aggressive_entry_fill_protection_fault" in caplog.text
+    assert "follow_up=emergency_stop_and_exit" in caplog.text
+    assert strategy.custom_stoploss(PAIRS[0], trade, NOW, crossed, 0., after_fill=False) is not None
+    assert strategy.custom_exit(PAIRS[0], trade, NOW, crossed, 0.) == \
+        "aggressive_missing_or_invalid_protection_emergency_exit"
+
+
+def test_observed_route_missing_frozen_boundary_refuses_and_logs_at_confirmation_and_fill(caplog):
+    strategy, pending, amount, entry_tag = _route_boundary_pending(
+        "vacuum", "profile_acceptance", "long", features={})
+    valid = 100.001
+    assert not strategy.confirm_trade_entry(PAIRS[0], "market", amount, valid, "gtc",
+                                             NOW, entry_tag, "long")
+    assert "Missing frozen vah_1h" in caplog.text
+    pending["confirmed"] = True
+    trade, order, stored = _boundary_test_trade(
+        side="long", entry_tag=entry_tag, rate=valid, amount=amount)
+    with pytest.raises(ValueError, match="Missing frozen vah_1h"):
+        strategy.order_filled(PAIRS[0], trade, order, NOW)
+    assert context.PLAN_KEY not in stored
+    assert "aggressive_entry_fill_protection_fault" in caplog.text
+
+
+@pytest.mark.parametrize("family,side,feature", [
+    ("vacuum", "long", "vah_1h"), ("vacuum", "short", "val_1h"),
+    ("auction", "long", "vah_4h"), ("auction", "short", "val_4h"),
+])
+def test_automatic_best_guess_stays_allowed_and_is_not_relabelled(family, side, feature):
+    boundary = 100.
+    strategy, _, amount, entry_tag = _route_boundary_pending(
+        family, "best_guess", side, features={feature: boundary})
+    crossed = boundary - .001 if side == "long" else boundary + .001
+    assert strategy.confirm_trade_entry(PAIRS[0], "market", amount, crossed, "gtc",
+                                         NOW, entry_tag, side)
+    trade, order, stored = _boundary_test_trade(
+        side=side, entry_tag=entry_tag, rate=crossed, amount=amount)
+    strategy.order_filled(PAIRS[0], trade, order, NOW)
+    assert stored[context.PLAN_KEY]["route"] == "best_guess"
+
+
+@pytest.mark.parametrize("family,route,side,feature", [
+    OBSERVED_ROUTE_CASES[0], OBSERVED_ROUTE_CASES[3],
+])
+def test_manual_observed_route_force_entry_is_exempt_at_confirmation_and_fill(
+        family, route, side, feature):
+    boundary = 100.
+    strategy, _, amount, entry_tag = _route_boundary_pending(
+        family, route, side, features={feature: boundary}, provenance="main_agent_force_entry")
+    crossed = boundary - .001 if side == "long" else boundary + .001
+    assert strategy.confirm_trade_entry(PAIRS[0], "market", amount, crossed, "gtc",
+                                         NOW, entry_tag, side)
+    trade, order, stored = _boundary_test_trade(
+        side=side, entry_tag=entry_tag, rate=crossed, amount=amount)
+    strategy.order_filled(PAIRS[0], trade, order, NOW)
+    assert stored[context.PLAN_KEY]["route"] == route
+    assert stored[context.PLAN_KEY]["provenance"] == "main_agent_force_entry"
 
 
 @pytest.mark.parametrize("side", ["long", "short"])

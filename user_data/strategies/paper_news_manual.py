@@ -39,7 +39,7 @@ MANUAL_ACCOUNT_PAIRS = {
 }
 MANUAL_ACCOUNT_CAPS = {
     "paper_news_manual": {"max_stake_pct": 0.25, "max_leverage": 5.0},
-    "paper_news_lab": {"max_stake_pct": 0.25, "max_leverage": 5.0},
+    "paper_news_lab": {"max_stake_pct": 0.25, "max_leverage": 10.0},
     "paper_news_fast": {"max_stake_pct": 0.15, "max_leverage": 10.0},
 }
 PLAN_KEY = "paper_news_manual_plan"

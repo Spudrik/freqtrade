@@ -18,6 +18,6 @@
   },
   "paper_manual_limits": {
     "max_stake_pct": 0.25,
-    "max_leverage": 5
+    "max_leverage": 10
   }
 }

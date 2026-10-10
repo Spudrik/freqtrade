@@ -264,6 +264,8 @@ class _PaperAggressiveAlt(PaperTrialBase):
             thin_l = frame["ag_thin_above_1h"].fillna(0.0).clip(0, 1)
             thin_s = frame["ag_thin_below_1h"].fillna(0.0).clip(0, 1)
             above, below = close.gt(vah), close.lt(val)
+            # Thinness estimates low historical traded volume, not order-book
+            # liquidity; pressure is candle-derived, not measured buy/sell flow.
             primary_l = above & pressure.gt(.22) & thin_l.ge(.5) & relvol.ge(.9)
             primary_s = below & pressure.lt(-.22) & thin_s.ge(.5) & relvol.ge(.9)
             loc = ((close - val) / (vah - val).replace(0, np.nan)).clip(0, 1).fillna(.5)
@@ -272,7 +274,8 @@ class _PaperAggressiveAlt(PaperTrialBase):
             # Vacuum edges take priority, but non-ideal thinness stays exploratory.
             score_l = score_l.where(~above | pressure.le(0), score_l + .05)
             score_s = score_s.where(~below | pressure.ge(0), score_s + .05)
-            reason[:] = "best-guess from local profile pressure, thinness and value location"
+            reason[:] = ("best-guess from value location, historical traded-volume thinness estimate "
+                         "and candle-derived pressure estimate")
         elif family == "reclaim":
             prior_high, prior_low = frame["ag_prior_high_15m"], frame["ag_prior_low_15m"]
             valid &= prior_high.notna() & prior_low.notna()
@@ -296,8 +299,6 @@ class _PaperAggressiveAlt(PaperTrialBase):
             score_l += (.08 * (swept_low & reclaimed)).astype(float)
             score_s += (.08 * (swept_high & rejected)).astype(float)
             reason[:] = "best-guess from failed-extreme proximity and pressure change"
-            reason[primary_l | primary_s] = "failed extreme reclaimed with changing candle pressure"
-            route[primary_l | primary_s] = "sweep_reclaim"
         elif family == "auction":
             vah, val, poc = frame["ag_vah_4h"], frame["ag_val_4h"], frame["ag_poc_4h"]
             valid &= vah.notna() & val.notna() & poc.notna()
@@ -377,11 +378,17 @@ class _PaperAggressiveAlt(PaperTrialBase):
             observed_short = short_route & primary_s
             route.loc[observed_long | observed_short] = "profile_acceptance"
             reason.loc[long_route & ~primary_l] = (
-                "weak exploratory long anticipation from profile location and pressure; breakout not observed")
+                "weak exploratory long anticipation from profile location and candle-derived pressure estimate; "
+                "breakout not observed")
             reason.loc[short_route & ~primary_s] = (
-                "weak exploratory short anticipation from profile location and pressure; breakout not observed")
-            reason.loc[observed_long] = "observed upside thin-profile breakout acceptance with signed pressure"
-            reason.loc[observed_short] = "observed downside thin-profile breakout acceptance with signed pressure"
+                "weak exploratory short anticipation from profile location and candle-derived pressure estimate; "
+                "breakout not observed")
+            reason.loc[observed_long] = (
+                "observed upside breakout accepted through a low historical traded-volume estimate "
+                "with positive candle-derived pressure")
+            reason.loc[observed_short] = (
+                "observed downside breakout accepted through a low historical traded-volume estimate "
+                "with negative candle-derived pressure")
         elif family == "auction":
             observed_escape_long = long_route & escape_l
             observed_escape_short = short_route & escape_s
@@ -397,6 +404,12 @@ class _PaperAggressiveAlt(PaperTrialBase):
             reason.loc[observed_reject_short] = "observed upper value-edge rejection supports rotation toward the point of control"
             reason.loc[observed_escape_long] = "established upside value-area escape; rotation thesis invalidated"
             reason.loc[observed_escape_short] = "established downside value-area escape; rotation thesis invalidated"
+        elif family == "reclaim":
+            observed_long = long_route & primary_l
+            observed_short = short_route & primary_s
+            route.loc[observed_long | observed_short] = "sweep_reclaim"
+            reason.loc[observed_long | observed_short] = (
+                "failed extreme reclaimed with changing candle pressure")
         elif family == "rotation":
             observed_long = long_route & primary_l
             observed_short = short_route & primary_s
@@ -925,11 +938,9 @@ class _PaperAggressiveAlt(PaperTrialBase):
             amount = _finite(amount, "entry confirmation amount", positive=True)
             if abs(rate - pending["reference_rate"]) > maximum_deviation:
                 return False
-            if self.family == "reclaim" and not manual:
-                boundary = pending["entry_reclaim_boundary"]
-                if ((side == "long" and rate <= boundary)
-                        or (side == "short" and rate >= boundary)):
-                    return False
+            boundary = self._automatic_entry_boundary(pending, side)
+            if boundary is not None and not self._entry_price_is_on_valid_side(side, rate, boundary):
+                return False
             upper_margin = amount * upper_fill_rate / pending["requested_leverage"]
             if upper_margin > pending["entry_equity_usdt"] * AGGRESSIVE_LIMITS["max_margin_pct"] + 1e-5:
                 return False
@@ -950,6 +961,35 @@ class _PaperAggressiveAlt(PaperTrialBase):
                       self.account_key, pair, side, error)
             return False
 
+    def _automatic_entry_boundary(self, pending: dict, side: str) -> float | None:
+        if pending["provenance"] != "automatic_signal":
+            return None
+        if pending["family"] == "reclaim":
+            return _finite(pending["entry_reclaim_boundary"],
+                           "frozen Reclaim entry boundary", positive=True)
+        feature = {
+            ("vacuum", "profile_acceptance", "long"): "vah_1h",
+            ("vacuum", "profile_acceptance", "short"): "val_1h",
+            ("auction", "accepted_value_escape", "long"): "vah_4h",
+            ("auction", "accepted_value_escape", "short"): "val_4h",
+            ("auction", "value_edge_rotation", "long"): "val_4h",
+            ("auction", "value_edge_rotation", "short"): "vah_4h",
+        }.get((pending["family"], pending["route"], side))
+        if feature is None:
+            return None
+        features = pending.get("features")
+        if not isinstance(features, dict) or feature not in features:
+            raise ValueError(f"Missing frozen {feature} for {pending['family']} {pending['route']} entry boundary")
+        return _finite(features[feature], f"frozen {feature} entry boundary", positive=True)
+
+    @staticmethod
+    def _entry_price_is_on_valid_side(side: str, rate: float, boundary: float) -> bool:
+        if side == "long":
+            return rate > boundary
+        if side == "short":
+            return rate < boundary
+        raise ValueError(f"Invalid aggressive entry side for boundary check: {side}")
+
     def order_filled(self, pair, trade, order, current_time, **kwargs):
         if order.ft_order_side != trade.entry_side or trade.get_custom_data(PLAN_KEY) is not None:
             return
@@ -959,11 +999,10 @@ class _PaperAggressiveAlt(PaperTrialBase):
         try:
             if pending is None or not pending.get("confirmed"):
                 raise RuntimeError("Aggressive fill lacks a confirmed durable risk reservation")
-            if self.family == "reclaim" and pending["provenance"] == "automatic_signal":
-                boundary = pending["entry_reclaim_boundary"]
-                if ((side == "long" and trade.open_rate <= boundary)
-                        or (side == "short" and trade.open_rate >= boundary)):
-                    raise ValueError("Reclaim market fill crossed its frozen entry boundary")
+            boundary = self._automatic_entry_boundary(pending, side)
+            if boundary is not None and not self._entry_price_is_on_valid_side(side, trade.open_rate, boundary):
+                family_label = "Reclaim" if pending["family"] == "reclaim" else "Observed-route"
+                raise ValueError(f"{family_label} market fill crossed its frozen entry boundary")
             contract_size = _finite(trade.contract_size, "actual contract size", positive=True)
             plan = build_aggressive_filled_plan(pending, pair=pair, side=side,
                 open_rate=float(trade.open_rate), quantity=float(trade.amount),

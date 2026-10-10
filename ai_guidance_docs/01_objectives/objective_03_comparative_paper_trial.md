@@ -105,24 +105,39 @@ automatic accounts. These descriptions explain preserved history; they do not
 override the reviewed target lifecycle above.
 
 On 28 September the user approved two additional, genuinely manual-only PAPER
-accounts: `paper_news_manual` (news-led combined judgement) and `paper_news_lab`
-(alternative, potentially conflicting ideas and risk-management comparisons).
-Both use `PaperNewsManual`, which emits no entry signals. Only an explicit,
-journalled main-agent decision through `paper_trial_control --account news_manual`
-or `--account news_lab` may open a position. They have separate virtual balances,
-databases, local API ports and decision journals. Luna never places orders.
-Approved protective stops and optional price targets execute unattended; these are
+accounts: `paper_news_manual` (displayed as **News manual slow**) and
+`paper_news_lab` (now displayed as **News manual slow adventurous**). Both use
+`PaperNewsManual`, which emits no entry signals. Only an explicit, journalled
+main-agent decision through `paper_trial_control --account news_manual` or
+`--account news_lab` may open a position. They have separate virtual balances,
+databases, local API ports and decision journals. Luna never places orders. The
+separate `news_fast` account remains the best-guess manual account under its
+existing rules; this change does not alter its behavior or limits. Approved
+protective stops and optional price targets execute unattended; these are
 execution of a prior manual decision, not independent news-driven entry rules.
 
-The user delegates risk selection and encourages bold paper experiments. Initial
-implementation reuses the 10,000 USDT virtual balance and three-position limit;
-the discretionary execution envelope is up to 25% of current paper equity per
-position and up to 5x leverage, with lower exposure whenever the rationale is weaker.
-The existing paper broker's 25% **position** emergency stop remains a backstop;
-every entry needs a tighter explicit, side-correct price stop. These limits are
-paper-only implementation choices under the user's delegated discretion, not
-approved live-trading settings. Changes to the envelope must be deliberate and
-recorded before use, not implicit in a Luna opinion.
+The user delegates risk selection and encourages bold paper experiments. These
+manual accounts retain the 10,000 USDT starting virtual balance, a three-position
+maximum, and a maximum 25% of current paper equity as margin per position. Slow
+remains selective, with its existing 5x leverage ceiling. Adventurous shares the
+same margin and position ceilings, but its leverage ceiling is now 10x; 3–10x is
+typically available for per-trade selection when the rationale supports it. It
+should actively consider plausible uncertain setups that Slow declines, but
+remains manual-only: no automatic entries or invented trades. For Adventurous,
+stops may be wider when anchored to meaningful 1h/4h/daily levels, with leverage
+and/or size reduced so planned stop loss remains strictly inside the existing
+25% margin-loss emergency floor. The wider-stop choice applies to a new entry
+only; the existing controller permits open-position protection to tighten, not
+widen. Targets may be farther away when the thesis warrants it, but this does
+not require stacking higher leverage, size, or stop distance. These are paper-only
+limits, not approved live-trading settings, and must never be inferred from a Luna opinion.
+
+The already-approved one-time `news_lab` statistics/runtime reset creates a new
+attempt. When executed, preserve its prior database, decision journal and log
+together in one offline recovery copy; exclude that copy from current totals and
+never present the reset balance as recovered losses. No other account is included
+in this reset. The one-time reset and activation completed on 10 October 2026;
+the new attempt is tracked in `run_record.json`.
 
 Each of the four new Sieve accounts is separately isolated, PAPER-only, restricted
 to BTC/ETH/SOL, at most three positions, 1x leverage and a 2%-of-equity stake.
@@ -133,12 +148,13 @@ Sieve3 aggregate results are evidence for selection, not a direct promise of
 identical paper execution or future net returns. The archived Sieve2 parent is
 read-only lineage evidence; it is not restarted or promoted.
 
-Normally keep a considered position open, but allow flat periods after safety
-stops, unusable information or no defensible trade. Uncertainty alone does not
-justify increasing frequency. Local high/low trades need recognizable boundaries,
-invalidation and costs considered; four-hour decisions are not continuous scalping.
-The second account need not oppose the first: align when justified, contrast only
-genuinely useful alternatives, and avoid manufacturing trades to fill a comparison.
+Review the two slow accounts independently on the existing four-hour cadence:
+Slow remains selective, while Adventurous considers plausible setups and may take
+uncertain entries Slow declines. A trade is not guaranteed at every review; a flat
+decision needs a concrete reason. Local high/low entries need recognizable
+boundaries, invalidation and costs considered; this is not continuous scalping.
+Adventurous need not oppose Slow: same-direction choices are welcome, and no trade
+should be manufactured merely to fill a comparison.
 
 For each decision record the account, UTC time, source, main-agent reasoning,
 supporting and contradicting facts, unavailable inputs, proposed size/leverage,
@@ -193,8 +209,12 @@ not as independent entries:
    that account's preserved drain boundary.
 4. `fast_level_inverse` remains a separate reversal hypothesis; `fast_auto` and
    `fast_context` are DRAINING comparators, not an expanding family.
-5. `news_manual` is the combined sourced market view; `news_lab` is a plausible
-   alternative. Align when justified; do not manufacture opposition.
+5. `news_manual` is the selective combined sourced market view; `news_lab` is the
+   more adventurous slow alternative. It independently considers plausible
+   uncertain entries even when `news_manual` stays flat; same-direction choices
+   are welcome and no unique third hypothesis is required. Align when justified;
+   do not manufacture opposition. `news_fast` remains the distinct best-guess
+   account.
 
 The four shared-entry accounts `auto`, `manual`, `v01` and `v10` are DRAINING
 overlapping modifier comparators, not four entry mechanisms. Preserve and report
@@ -575,7 +595,17 @@ existing controller. Those controllers record the exact `luna_observed_at_utc`
 used, so each handoff needs a new consideration; an uncertain submission does
 not count as completed. Consideration does not force a trade or direction change.
 Preserve the account-specific authority, risk limits, stored protection and
-source rules. When `main_review.required` is false, only after the brief is fresh
+source rules. At each fresh four-hour review, `news_manual` remains selective;
+`news_lab` (News manual slow adventurous) must actively consider plausible
+uncertain setups, including ones Slow declines, even while Slow is flat. They may
+choose the same direction, and Adventurous does not need to invent a distinct
+third hypothesis. Mixed information or another account already trading is not,
+by itself, a no-trade veto. An unavailable essential live price, execution path,
+or valid side-correct protection can justify staying flat, but a flat decision
+must name its concrete, specific reason; a trade is not required at every wake.
+`news_fast` remains the separate best-guess account. Every entry remains a
+root-journalled decision through the existing manual controller using fresh Luna
+sources; Luna stays news-only and receives no account context. When `main_review.required` is false, only after the brief is fresh
 and validated, **all ACTIVE news-input accounts have been considered for that
 handoff**, and there is no already-approved timed watch due may root take the
 quiet/no-change shortcut, perform no duplicate process, log, account, market or

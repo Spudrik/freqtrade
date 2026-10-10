@@ -102,18 +102,18 @@ def test_explicit_size_leverage_and_stop_limits(journals):
     with pytest.raises(ValueError):broker.validate_manual_plan(bad,100.)
 
 
-@pytest.mark.parametrize("account", ["news_manual", "news_lab"])
-def test_existing_manual_account_caps_remain_five_x(account):
+@pytest.mark.parametrize(("account", "cap"), [("news_manual", 5.), ("news_lab", 10.)])
+def test_manual_account_caps_are_account_scoped(account, cap):
     strategy=broker.PaperNewsManual(config(account))
     strategy.bot_start()
     old_plan=plan()
-    old_plan.update(stake_pct=.25,leverage=5.,stop_price=98.)
+    old_plan.update(stake_pct=.25,leverage=cap,stop_price=98.)
     broker.validate_manual_plan(old_plan,100.,f"paper_{account}")
-    old_plan["leverage"]=5.01
+    old_plan["leverage"]=cap+.01
     with pytest.raises(ValueError,match="risk envelope"):
         broker.validate_manual_plan(old_plan,100.,f"paper_{account}")
     changed=config(account)
-    changed["paper_manual_limits"]["max_leverage"]=10
+    changed["paper_manual_limits"]["max_leverage"]=cap+1
     with pytest.raises(RuntimeError,match="risk envelope"):
         broker.PaperNewsManual(changed).bot_start()
 
