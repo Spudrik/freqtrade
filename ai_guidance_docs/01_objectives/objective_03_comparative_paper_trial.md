@@ -546,6 +546,12 @@ renewal with exact source clocks. Use `paper_trial_snapshot --review-context`
 and the existing manual review projection to determine the current account set;
 do not infer it from the news brief. Preserve account-specific authority, risk
 limits, stored protection, and source rules.
+During that same review, use `paper_trial_snapshot --accounts --prices --record-daily`
+for the account projection. This saves only the first actual observation per ACTIVE
+account attempt and UTC date, with its actual clock, estimated equity and BTC
+perpetual-price reference. Resets remain separate; missing values stay unknown.
+Ordinary reporting without `--record-daily` remains read-only. Do not add a schedule
+or publish a table unless requested.
 Root owns every ACTIVE news-input account on each fresh handoff, using
 `paper_trial_snapshot --review-context`'s `news_input_reviews` and the existing
 manual review projection. Those projections determine the account list; the

@@ -1,4 +1,4 @@
-"""Small read-only paper/source snapshot for scheduled reviews; writes no files.
+"""Small read-only paper/source snapshot; --record-daily explicitly writes one daily history file.
 
 Reads bounded local rows and existing account helpers, not historical research
 exports. Optional public price lookup is only for estimated current open P/L.
@@ -8,6 +8,7 @@ import argparse
 from collections import Counter, defaultdict
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 from math import isclose, isfinite
 from pathlib import Path
@@ -19,9 +20,11 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.orm import Session, selectinload
+from freqtrade.enums import TradingMode
 from freqtrade.persistence import Order, Trade
-from user_data.Custom_Launcher.research.paper_trial_runtime import ROOT, REPORT, RECORD, ACCOUNTS, account_record, account_specs_for_record, lifecycle_for, process_inventory, matching_processes, worker_heartbeat_state
+from user_data.Custom_Launcher.research.paper_trial_runtime import ROOT, REPORT, RECORD, BASE, ACCOUNTS, account_record, account_specs_for_record, lifecycle_for, process_inventory, matching_processes, worker_heartbeat_state
 from user_data.Custom_Launcher.research.paper_trial_control import _configs, _api, _journal, _verify_running_account
+from freqtrade.configuration.load_config import load_from_files
 from user_data.Custom_Launcher.research.crypto_derivatives_snapshot import collect_crypto_derivatives_snapshot
 from user_data.strategies.integrated_paper_context import _utc, load_luna_context
 from user_data.strategies.paper_fast_context import CONTROL_FILE, load_fast_control
@@ -43,6 +46,9 @@ GLOBAL_CONTEXT_METRIC_LIMITS = {
     "bybit_btc_wallet": 5,
 }
 GLOBAL_CONTEXT_DEFAULT_METRIC_LIMIT = 20
+PAPER_DAILY_HISTORY = REPORT / "paper_account_daily.json"
+BTC_PERPETUAL_SOURCE = "Binance USD-M BTCUSDT perpetual price proxy; not spot buy-and-hold"
+PAPER_DAILY_OBSERVATION_POLICY = "first actual report observation per UTC date; timestamp is not exact midnight or a full 24-hour observation"
 
 
 def read_json(path):
@@ -665,14 +671,122 @@ def _finite_sum(values):
     return total if isfinite(total) else None
 
 
-def account_snapshot(prices=False, now=None):
+def _positive_price(value):
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if isfinite(number) and number > 0 else None
+
+
+def _strict_pnl_sum(trades, field):
+    values = []
+    for trade in trades:
+        value = getattr(trade, field, None)
+        if value is None:
+            return None
+        try:
+            number = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if not isfinite(number):
+            return None
+        values.append(number)
+    return _finite_sum(values)
+
+
+def _public_json(url, timeout):
+    try:
+        with urlopen(url, timeout=timeout) as response:
+            return json.load(response)
+    except (OSError, ValueError):
+        return None
+
+
+def _ticker_prices(payload):
+    if not isinstance(payload, list):
+        return {}
+    prices = {}
+    for row in payload:
+        if not isinstance(row, dict) or not isinstance(row.get("symbol"), str):
+            continue
+        price = _positive_price(row.get("price"))
+        if price is not None:
+            prices[row["symbol"]] = price
+    return prices
+
+
+def _settled_partial_exit_funding(trade):
+    """Funding already included in realized partial exits, using the Trade order stream."""
+    if getattr(trade, "trading_mode", None) != TradingMode.FUTURES:
+        return 0.0, "ok"
+    filled_orders = [order for order in trade.orders if not order.ft_is_open and order.filled]
+    last_exit = next((index for index in range(len(filled_orders) - 1, -1, -1)
+                      if filled_orders[index].ft_order_side != trade.entry_side), None)
+    if last_exit is None:
+        return 0.0, "ok"
+
+    settled_funding = 0.0
+    current_funding = 0.0
+    for order in filled_orders[:last_exit + 1]:
+        funding = order.funding_fee
+        if funding is None or isinstance(funding, bool):
+            return None, "settled_funding_unknown"
+        try:
+            funding = float(funding)
+        except (TypeError, ValueError, OverflowError):
+            return None, "settled_funding_unknown"
+        if not isfinite(funding):
+            return None, "settled_funding_unknown"
+        current_funding += funding
+        if not isfinite(current_funding):
+            return None, "settled_funding_unknown"
+        if order.ft_order_side != trade.entry_side:
+            settled_funding += current_funding
+            if not isfinite(settled_funding):
+                return None, "settled_funding_unknown"
+            current_funding = 0.0
+    return settled_funding, "ok"
+
+
+def _open_pnl(opened, quotes, prices_requested):
+    if not opened:
+        return 0.0, "no_open_positions"
+    if not prices_requested:
+        return None, "prices_not_requested"
+    values = []
+    for trade in opened:
+        symbol = trade.pair.split(":")[0].replace("/", "")
+        price = _positive_price(quotes.get(symbol))
+        if price is None:
+            return None, "missing_or_invalid_quote"
+        settled_funding, funding_status = _settled_partial_exit_funding(trade)
+        if funding_status != "ok":
+            return None, funding_status
+        try:
+            value = float(trade.calculate_profit(price).profit_abs) - settled_funding
+        except (KeyError, TypeError, ValueError, OverflowError):
+            return None, "invalid_trade_pnl"
+        if not isfinite(value):
+            return None, "invalid_trade_pnl"
+        values.append(value)
+    total = _finite_sum(values)
+    return (total, "ok") if total is not None else (None, "invalid_trade_pnl")
+
+
+def account_snapshot(prices=False, now=None, price_context=None):
     now = now or datetime.now(timezone.utc)
     if now.tzinfo is None:
         raise ValueError("Account snapshot requires a timezone-aware clock")
-    record=read_json(RECORD); processes=process_inventory(); quotes={}
+    record=read_json(RECORD); processes=process_inventory(); quotes={}; price_status="not_requested"
     if prices:
-        with urlopen("https://fapi.binance.com/fapi/v1/ticker/price",timeout=12) as response:
-            quotes={row["symbol"]:float(row["price"]) for row in json.load(response)}
+        payload=_public_json("https://fapi.binance.com/fapi/v1/ticker/price",timeout=8)
+        quotes=_ticker_prices(payload)
+        price_status="ok" if quotes else ("fetch_failed" if payload is None else "invalid_ticker_payload")
+    if price_context is not None:
+        price_context.update({"quotes":quotes,"status":price_status})
     output=[]
     for spec in account_specs_for_record(record):
         row=account_record(record,spec); path=(REPORT/row["db"]).resolve()
@@ -683,6 +797,7 @@ def account_snapshot(prices=False, now=None):
                 "running_exact_tree":tree is not None,"worker_log":_worker_log_health(spec,tree,now,lifecycle),
                 "open_longs":None,"open_shorts":None,"closed_longs":None,"closed_shorts":None,
                 "wins":None,"losses":None,"banked_pnl_usdt":None,"estimated_open_pnl_usdt":None,
+                "banked_pnl_status":"database_not_initialized","estimated_open_pnl_status":"database_not_initialized",
                 "open_order_count":None,"protection_issue_count":None,"open_positions":None,
                 "database_trade_count":None,"trades_per_day":None,"trades_per_day_status":"database_not_initialized",
                 "profit_factor":{"value":None,"status":"database_not_initialized"},
@@ -693,8 +808,11 @@ def account_snapshot(prices=False, now=None):
         engine=create_engine("sqlite:///file:"+path.as_posix()+"?mode=ro&uri=true")
         with Session(engine) as session:
             trades=list(session.scalars(select(Trade))); opened=[t for t in trades if t.is_open]; closed=[t for t in trades if not t.is_open]
-            banked=sum(float(t.close_profit_abs or 0) for t in closed)+sum(float(t.realized_profit or 0) for t in opened)
-            if not isfinite(banked): banked=None
+            closed_banked=_strict_pnl_sum(closed,"close_profit_abs")
+            open_banked=_strict_pnl_sum(opened,"realized_profit")
+            banked=(closed_banked+open_banked
+                    if closed_banked is not None and open_banked is not None
+                    and isfinite(closed_banked+open_banked) else None)
             closed_profit_values=[]; invalid_closed_profit=None
             for trade in closed:
                 value=trade.close_profit_abs
@@ -715,8 +833,7 @@ def account_snapshot(prices=False, now=None):
             span=_runtime_span(record,spec,now)
             trades_per_day=(len(trades)/(span["elapsed_seconds"]/86400)
                             if span["status"]=="known" and span["elapsed_seconds"] and span["elapsed_seconds"]>0 else None)
-            unrealized=sum(t.calculate_profit(quotes[t.pair.split(':')[0].replace('/','')]).profit_abs for t in opened) if prices else (0. if not opened else None)
-            if unrealized is not None and not isfinite(unrealized): unrealized=None
+            unrealized,open_pnl_status=_open_pnl(opened,quotes,prices)
             positions=[{"pair":t.pair,"short":t.is_short,"leverage":t.leverage,"stop_price":t.stop_loss,
                 "margin":t.stake_amount,"protection_state":_protection_state(t,session,spec.bot_name)} for t in opened]
             open_order_count=session.scalar(select(func.count(Order.id)).where(Order.ft_is_open.is_(True)))
@@ -726,7 +843,8 @@ def account_snapshot(prices=False, now=None):
                 "open_longs":sum(not t.is_short for t in opened),"open_shorts":sum(t.is_short for t in opened),
                 "closed_longs":sum(not t.is_short for t in closed),"closed_shorts":sum(t.is_short for t in closed),
                 "wins":sum(float(t.close_profit_abs or 0)>0 for t in closed),"losses":sum(float(t.close_profit_abs or 0)<0 for t in closed),
-                "banked_pnl_usdt":banked,"estimated_open_pnl_usdt":unrealized,
+                "banked_pnl_usdt":banked,"banked_pnl_status":"ok" if banked is not None else "invalid_or_missing_pnl",
+                "estimated_open_pnl_usdt":unrealized,"estimated_open_pnl_status":open_pnl_status,
                 "database_trade_count":len(trades),"trades_per_day":trades_per_day,
                 "trades_per_day_status":"ok" if trades_per_day is not None else "unknown_runtime_or_zero_duration",
                 "closed_profit_positive_usdt":positive if not invalid_closed_profit else None,
@@ -775,13 +893,256 @@ def _pooled_factor(accounts):
     return _profit_factor(positive, negative, closed)
 
 
+def _configured_starting_capital(spec):
+    try:
+        config = load_from_files([str(ROOT / BASE), str(ROOT / spec.config)])
+    except (OSError, ValueError, TypeError, KeyError):
+        return None, "invalid_registered_config"
+    value = _positive_price(config.get("dry_run_wallet"))
+    return (value, "ok") if value is not None else (None, "missing_or_invalid_dry_run_wallet")
+
+
+def _account_attempt(record, spec, now, starting_capital):
+    info = account_record(record, spec)
+    runtime = _runtime_span(record, spec, now)
+    start = _utc_datetime(info.get("started_at_utc"))
+    source = "account_started_at_utc" if start else None
+    if start is None:
+        start = _utc_datetime(info.get("database_initialized_at_utc"))
+        if start is not None:
+            source = "database_initialized_at_utc_approximation"
+    if start is None:
+        start = _utc_datetime(runtime.get("started_at_utc"))
+        source = runtime.get("start_source") if start is not None else None
+    boundary_known = source in {"account_started_at_utc", "database_initialized_at_utc_approximation"}
+    identity = {
+        "account": spec.key,
+        "bot_name": spec.bot_name,
+        "database": info.get("db"),
+        "started_at_utc": None if start is None else start.isoformat(),
+        "recorded_started_at_utc": info.get("started_at_utc"),
+        "database_initialized_at_utc": info.get("database_initialized_at_utc"),
+        "starting_capital_usdt": starting_capital,
+    }
+    attempt_key = hashlib.sha256(
+        json.dumps(identity, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    ).hexdigest()[:24]
+    return {"key": attempt_key, "identity": identity,
+            "start_at": start, "start_source": source,
+            "start_status": ("known" if source == "account_started_at_utc"
+                             else "approximate_database_initialization" if boundary_known
+                             else "unverified_start" if start else "missing_start"),
+            "benchmark_start_known": boundary_known}
+
+
+def _load_daily_history():
+    if not PAPER_DAILY_HISTORY.exists():
+        return {"schema_version": 1, "benchmark_source": BTC_PERPETUAL_SOURCE,
+                "observation_policy": PAPER_DAILY_OBSERVATION_POLICY, "attempts": {}}
+    history = read_json(PAPER_DAILY_HISTORY)
+    if (not isinstance(history, dict) or history.get("schema_version") != 1
+            or not isinstance(history.get("attempts"), dict)):
+        raise ValueError(f"Refusing to use malformed daily paper history: {PAPER_DAILY_HISTORY}")
+    for entry in history["attempts"].values():
+        if not isinstance(entry, dict) or not isinstance(entry.get("daily", {}), dict):
+            raise ValueError(f"Refusing to replace malformed daily paper history: {PAPER_DAILY_HISTORY}")
+        baseline = entry.get("btc_baseline")
+        if baseline is not None and not isinstance(baseline, dict):
+            raise ValueError(f"Refusing to replace malformed daily paper history: {PAPER_DAILY_HISTORY}")
+        if (isinstance(baseline, dict) and baseline.get("status") == "ok"
+                and (_positive_price(baseline.get("price_usdt")) is None
+                     or _utc_datetime(baseline.get("candle_open_at_utc")) is None)):
+            raise ValueError(f"Refusing to replace malformed daily paper history: {PAPER_DAILY_HISTORY}")
+    return history
+
+
+def _fetch_btc_baseline(start, now):
+    if start is None:
+        return {"status": "missing_attempt_start"}
+    if start > now:
+        return {"status": "future_attempt_start"}
+    start_ms = int(start.timestamp() * 1000)
+    url = "https://fapi.binance.com/fapi/v1/klines?" + urlencode({
+        "symbol": "BTCUSDT", "interval": "1m", "startTime": start_ms, "limit": 2,
+    })
+    payload = _public_json(url, timeout=3)
+    if not isinstance(payload, list):
+        return {"status": "fetch_failed" if payload is None else "invalid_candle_payload"}
+    candidates = []
+    for candle in payload:
+        if not isinstance(candle, list) or len(candle) < 2:
+            continue
+        try:
+            opened_ms = int(candle[0])
+        except (TypeError, ValueError, OverflowError):
+            continue
+        price = _positive_price(candle[1])
+        if start_ms <= opened_ms <= start_ms + 60_000 and price is not None:
+            candidates.append((opened_ms, price))
+    if not candidates:
+        return {"status": "no_valid_candle_within_60s"}
+    opened_ms, price = min(candidates)
+    return {"status": "ok", "price_usdt": price,
+            "candle_open_at_utc": datetime.fromtimestamp(opened_ms / 1000, timezone.utc).isoformat(),
+            "start_at_utc": start.isoformat(), "interval": "1m", "price_field": "open"}
+
+
+def _return_fields(row, starting_capital, capital_status, attempt, baseline, current_btc):
+    banked = None
+    if row.get("banked_pnl_usdt") is not None:
+        try:
+            banked = float(row["banked_pnl_usdt"])
+        except (TypeError, ValueError, OverflowError):
+            banked = None
+        if banked is not None and not isfinite(banked):
+            banked = None
+    open_pnl = row.get("estimated_open_pnl_usdt")
+    try:
+        open_pnl = float(open_pnl) if open_pnl is not None else None
+    except (TypeError, ValueError, OverflowError):
+        open_pnl = None
+    if open_pnl is not None and not isfinite(open_pnl):
+        open_pnl = None
+    equity = (starting_capital + banked + open_pnl
+              if starting_capital is not None and banked is not None and open_pnl is not None else None)
+    if equity is not None and not isfinite(equity):
+        equity = None
+    if capital_status != "ok":
+        bot_status = capital_status
+    elif banked is None or open_pnl is None or equity is None:
+        bot_status = "pnl_unknown"
+    else:
+        bot_status = "ok"
+    bot_return = ((equity / starting_capital) - 1) * 100 if bot_status == "ok" else None
+    if bot_return is not None and not isfinite(bot_return):
+        bot_return, bot_status = None, "invalid_return"
+
+    baseline_price = _positive_price(baseline.get("price_usdt")) if baseline.get("status") == "ok" else None
+    current_price = _positive_price(current_btc)
+    if not attempt["benchmark_start_known"]:
+        btc_status = "attempt_start_unknown"
+    elif baseline_price is None:
+        btc_status = baseline.get("status", "baseline_unknown")
+    elif current_price is None:
+        btc_status = "current_quote_unknown"
+    else:
+        btc_status = "ok"
+        if attempt["start_status"] != "known":
+            btc_status = "ok_approximate_start"
+    btc_return = ((current_price / baseline_price) - 1) * 100 \
+        if btc_status in {"ok", "ok_approximate_start"} else None
+    if btc_return is not None and not isfinite(btc_return):
+        btc_return, btc_status = None, "invalid_return"
+    delta = bot_return - btc_return if bot_return is not None and btc_return is not None else None
+    if baseline.get("status") == "ok":
+        baseline = {**baseline, "start_source": attempt["start_source"],
+                    "start_status": attempt["start_status"]}
+    row.update({
+        "starting_capital_usdt": starting_capital,
+        "starting_capital_status": capital_status,
+        "equity_usdt": equity,
+        "equity_status": "ok" if equity is not None else "pnl_or_capital_unknown",
+        "attempt_key": attempt["key"],
+        "attempt_start_at_utc": None if attempt["start_at"] is None else attempt["start_at"].isoformat(),
+        "attempt_start_source": attempt["start_source"],
+        "attempt_start_status": attempt["start_status"],
+        "bot_return_pct": bot_return,
+        "bot_return_status": bot_status,
+        "btc_baseline": baseline,
+        "btc_return_pct": btc_return,
+        "btc_return_status": btc_status,
+        "bot_btc_delta_pp": delta,
+    })
+
+
+def enrich_account_returns(accounts, now, price_context, *, record_daily=False):
+    now = now.astimezone(timezone.utc)
+    record = read_json(RECORD)
+    history = _load_daily_history() if record_daily or price_context is not None else None
+    current_btc = (price_context or {}).get("quotes", {}).get("BTCUSDT")
+    specs = {spec.key: spec for spec in account_specs_for_record(record)}
+    history_changed = False
+    if record_daily and "observation_policy" not in history:
+        history["observation_policy"] = PAPER_DAILY_OBSERVATION_POLICY
+        history_changed = True
+    for row in accounts:
+        if row.get("lifecycle") != "ACTIVE":
+            continue
+        spec = specs.get(row.get("account"))
+        if spec is None:
+            continue
+        starting_capital, capital_status = _configured_starting_capital(spec)
+        attempt = _account_attempt(record, spec, now, starting_capital)
+        cached_attempt = (history or {}).get("attempts", {}).get(attempt["key"], {})
+        baseline = cached_attempt.get("btc_baseline")
+        if not (isinstance(baseline, dict) and baseline.get("status") == "ok"):
+            if attempt["benchmark_start_known"]:
+                baseline = _fetch_btc_baseline(attempt["start_at"], now)
+            else:
+                baseline = {"status": attempt["start_status"]}
+        if baseline.get("status") == "ok":
+            baseline = {**baseline, "start_source": attempt["start_source"],
+                        "start_status": attempt["start_status"]}
+        _return_fields(row, starting_capital, capital_status, attempt, baseline, current_btc)
+
+        if record_daily:
+            entry = history["attempts"].setdefault(attempt["key"], {
+                "account": spec.key, "bot_name": spec.bot_name,
+                "identity": attempt["identity"], "daily": {},
+            })
+            old_baseline = entry.get("btc_baseline")
+            if not (isinstance(old_baseline, dict) and old_baseline.get("status") == "ok"):
+                entry["btc_baseline"] = baseline
+                history_changed = True
+            daily = entry.setdefault("daily", {})
+            date_key = now.date().isoformat()
+            if date_key not in daily:
+                closed_longs, closed_shorts = row.get("closed_longs"), row.get("closed_shorts")
+                closed_count = (closed_longs + closed_shorts
+                                if isinstance(closed_longs, int) and isinstance(closed_shorts, int) else None)
+                daily[date_key] = {
+                    "observed_at_utc": now.isoformat(),
+                    "equity_usdt": row.get("equity_usdt"),
+                    "btc_quote_usdt": _positive_price(current_btc),
+                    "btc_quote_status": "ok" if _positive_price(current_btc) is not None else "current_quote_unknown",
+                    "cumulative_entries": row.get("database_trade_count"),
+                    "cumulative_closed": closed_count,
+                    "open_longs": row.get("open_longs"),
+                    "open_shorts": row.get("open_shorts"),
+                    "equity_status": row.get("equity_status"),
+                }
+                row["daily_record_status"] = "recorded_first_observation_for_utc_date"
+                history_changed = True
+            else:
+                row["daily_record_status"] = "already_recorded_for_utc_date"
+
+    if record_daily and history_changed:
+        from user_data.Custom_Launcher.research.context_features.global_context_source_preflight import write_text_atomic
+        write_text_atomic(PAPER_DAILY_HISTORY,
+                          json.dumps(history, separators=(",", ":"), allow_nan=False) + "\n")
+    return accounts
+
+
+ACCOUNT_DISPLAY_NAMES = {
+    "news_manual": "News manual slow",
+    "news_fast": "News manual fast",
+    "news_lab": "News manual slow adventurous",
+    "swing_level_bounce": "Level bounce — auto",
+    "swing_level_break_hold": "Level breakout — auto",
+    "aggressive_reclaim": "Sweep recovery — news-assisted auto",
+    "aggressive_vacuum": "Thin-volume breakout — news-assisted auto",
+    "aggressive_auction": "Value-zone reaction — news-assisted auto",
+    "aggressive_rotation": "Relative strength — news-assisted auto",
+}
+
+
 def format_account_table(accounts, observed_at_utc):
     """Pure formatter: no disk, network, process, or database reads."""
     count_fields = ("open_longs", "open_shorts", "closed_longs", "closed_shorts", "wins", "losses")
     pnl_fields = ("banked_pnl_usdt", "estimated_open_pnl_usdt")
     header = ("| Account | Runtime† | Trades/day | PF (closed) | Open L/S | Closed L/S | W/L | "
-              "Banked USDT | Open P/L USDT | Lifecycle |")
-    separator = "|---|---:|---:|---:|---:|---:|---:|---:|---:|---|"
+              "Banked USDT | Open P/L USDT | Lifecycle | Bot % | BTC % (perp proxy) | Delta pp |")
+    separator = "|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|---:|"
 
     def render_row(row):
         pf = row.get("profit_factor", {})
@@ -791,10 +1152,11 @@ def format_account_table(accounts, observed_at_utc):
         runtime = _runtime_label(span)
         if span.get("status") == "known" and span.get("start_source") == "first_recorded_running_event_not_guaranteed_original_start":
             runtime += "†"
-        account = row.get("account", "?")
+        account_key = row.get("account", "?")
+        account = ACCOUNT_DISPLAY_NAMES.get(account_key, account_key)
         if row.get("database_state") == "not_initialized":
             account += " (DB not initialized)"
-        return "| {account} | {runtime} | {rate} | {factor} | {ol}/{os} | {cl}/{cs} | {wins}/{losses} | {banked} | {open_pnl} | {lifecycle} |".format(
+        return "| {account} | {runtime} | {rate} | {factor} | {ol}/{os} | {cl}/{cs} | {wins}/{losses} | {banked} | {open_pnl} | {lifecycle} | {bot_return} | {btc_return} | {delta} |".format(
             account=account, runtime=runtime,
             rate=_table_number(row.get("trades_per_day")), factor=factor,
             ol=row.get("open_longs") if row.get("open_longs") is not None else "—",
@@ -804,7 +1166,10 @@ def format_account_table(accounts, observed_at_utc):
             wins=row.get("wins") if row.get("wins") is not None else "—",
             losses=row.get("losses") if row.get("losses") is not None else "—",
             banked=_table_number(row.get("banked_pnl_usdt")),
-            open_pnl=_table_number(row.get("estimated_open_pnl_usdt")), lifecycle=row.get("lifecycle", "unknown"))
+            open_pnl=_table_number(row.get("estimated_open_pnl_usdt")), lifecycle=row.get("lifecycle", "unknown"),
+            bot_return=_table_number(row.get("bot_return_pct")),
+            btc_return=_table_number(row.get("btc_return_pct")),
+            delta=_table_number(row.get("bot_btc_delta_pp")))
 
     def runtime_sort_key(row):
         span = row.get("runtime_span", {})
@@ -829,17 +1194,30 @@ def format_account_table(accounts, observed_at_utc):
             total[field] = sum(values) if all(value is not None for value in values) else None
     total.update({"account": "TOTAL", "lifecycle": "—", "runtime_span": {"status": "unknown"},
                   "trades_per_day": None, "profit_factor": _pooled_factor(active)})
+    capital_values = [row.get("starting_capital_usdt") for row in active]
+    equity_values = [row.get("equity_usdt") for row in active]
+    total_bot_return = None
+    if (active and all(isinstance(value, (int, float)) and isfinite(value) and value > 0
+                       for value in capital_values)
+            and all(isinstance(value, (int, float)) and isfinite(value) for value in equity_values)):
+        total_capital = _finite_sum(capital_values)
+        total_equity = _finite_sum(equity_values)
+        if total_capital is not None and total_capital > 0 and total_equity is not None:
+            total_bot_return = ((total_equity / total_capital) - 1) * 100
+            if not isfinite(total_bot_return):
+                total_bot_return = None
     pf = total["profit_factor"]
     factor = _table_number(pf.get("value"), 3) if pf.get("status") == "ok" else "—"
     if pf.get("status") == "no_loss_trades": factor = "no losses"
-    lines.append("| TOTAL | — | — | {factor} | {ol}/{os} | {cl}/{cs} | {wins}/{losses} | {banked} | {open_pnl} | — |".format(
+    lines.append("| TOTAL | — | — | {factor} | {ol}/{os} | {cl}/{cs} | {wins}/{losses} | {banked} | {open_pnl} | — | {bot_return} | — | — |".format(
         factor=factor, ol=total["open_longs"] if total["open_longs"] is not None else "—",
         os=total["open_shorts"] if total["open_shorts"] is not None else "—",
         cl=total["closed_longs"] if total["closed_longs"] is not None else "—",
         cs=total["closed_shorts"] if total["closed_shorts"] is not None else "—",
         wins=total["wins"] if total["wins"] is not None else "—",
         losses=total["losses"] if total["losses"] is not None else "—",
-        banked=_table_number(total["banked_pnl_usdt"]), open_pnl=_table_number(total["estimated_open_pnl_usdt"])))
+        banked=_table_number(total["banked_pnl_usdt"]), open_pnl=_table_number(total["estimated_open_pnl_usdt"]),
+        bot_return=_table_number(total_bot_return)))
     return "\n".join(lines)
 
 
@@ -1198,6 +1576,8 @@ def main():
     parser.add_argument("--higher",action="store_true",help="Only if local BTC/ETH 4h/daily candles are unavailable: four public requests")
     parser.add_argument("--accounts",action="store_true")
     parser.add_argument("--prices",action="store_true")
+    parser.add_argument("--record-daily",action="store_true",
+        help="Persist each account's first observed equity/BTC quote for this UTC date; implies priced accounts")
     parser.add_argument("--account-table",action="store_true",help="Print the account table as Markdown; optionally include --prices")
     parser.add_argument("--learning-review",action="store_true",help="User-requested read-only manual learning/accounting review; local databases and journals only")
     args=parser.parse_args();now=datetime.now(timezone.utc)
@@ -1207,12 +1587,27 @@ def main():
     if args.crypto:result["crypto_derivatives"]=collect_crypto_derivatives_snapshot(now)
     if args.review_context:result["review_context"]=review_context_snapshot(now)
     if args.higher:result["higher_timeframes"]=higher_snapshot(now)
-    if args.accounts or args.prices or args.account_table:
-        accounts=account_snapshot(args.prices,now)
+    if args.accounts or args.prices or args.account_table or args.record_daily:
+        priced=args.prices or args.record_daily
+        if priced:
+            price_context={}
+            accounts=account_snapshot(True,now,price_context)
+            accounts=enrich_account_returns(accounts,now,price_context,record_daily=args.record_daily)
+            result["paper_return_basis"]={
+                "equity":"configured dry_run_wallet + recorded net banked P/L + estimated remaining open P/L",
+                "btc_benchmark":BTC_PERPETUAL_SOURCE,
+                "baseline":"open price of earliest BTCUSDT 1m futures candle at/after the recorded attempt start, within 60s",
+                "daily_observation":"first actual --record-daily observation per attempt/UTC date; not exact midnight or a full 24-hour observation",
+            }
+            if args.record_daily:
+                result["daily_record"]={"path":str(PAPER_DAILY_HISTORY),"status":"saved_or_already_recorded",
+                    "observation_date_utc":now.date().isoformat()}
+        else:
+            accounts=account_snapshot(False,now)
         result["accounts"]=accounts
         result["account_table"]=format_account_table(accounts,now.isoformat())
     if args.learning_review:result["learning_review"]=learning_review_snapshot(now)
-    if args.account_table and not (args.sources or args.market or args.crypto or args.review_context or args.higher or args.accounts or args.learning_review):
+    if args.account_table and not (args.sources or args.market or args.crypto or args.review_context or args.higher or args.accounts or args.learning_review or args.record_daily):
         print(result["account_table"])
         return
     print(json.dumps(result,separators=(",",":"),allow_nan=False))
