@@ -460,12 +460,14 @@ pipeline and must not see unfiltered/bulk collector payloads or account data:
 C:\FreqTradeStuff\.venv\Scripts\python.exe -B -m user_data.Custom_Launcher.research.paper_trial_snapshot --sources --crypto --higher
 ```
 
-The news-only task uses the filtered `paper_news_packet headlines` and compact
-`paper_news_packet market` outputs. Collector headlines are leads only; the task
-must still read the article body or relevant liveblog entry. The market command
-retains only the approved numeric/source-coverage projection and clocks. The
-news-only task also searches and reads the five direct publishers in its
-isolated instruction.
+The news-only coordinator uses `paper_news_packet prepare` once per run, then
+hands each of three scoped reporters only its matching `paper_news_packet
+section <news|global|crypto> --observed-at-utc <clock>` output. Collector
+headlines are leads only; the news reporter must still read the article body or
+relevant liveblog entry. The prepared slices retain only the approved numeric
+source-coverage projection and clocks. The news reporter searches and reads the
+five direct publishers under the shared recovery and article-verification
+rules; the global and crypto reporters normally do not browse.
 
 Root reports an account table only when the user explicitly asks. No scheduled
 Luna task posts an account table or routine account report. The table contains
@@ -606,6 +608,21 @@ review. Until the first brief with this new shape is published, root may read a
 legacy `brief.main_review` as a transitional signal; Luna does not generate or
 preserve that field in new briefs. The news-only task cannot report positions,
 protection, account or bot health, or publish controls.
+
+The four-hour timing intent is UTC: start assessment at 23:50, 03:50, 07:50,
+11:50, 15:50, and 19:50 UTC, ten minutes before each four-hour close. Return
+the handoff as soon as ready, intended before the root's `:58` decision in
+those same UTC hours. `:50` is the assessment start, not a target handoff
+publication time or guaranteed completion clock.
+The separate headlines watch remains every 30 minutes at `:00` and `:30` UTC.
+London-local scheduler times must be checked against the current offset; during
+BST, four-hour `:50` starts are 00:50, 04:50, 08:50, 12:50, 16:50, and 20:50
+local, while under GMT they are 23:50, 03:50, 07:50, 11:50, 15:50, and 19:50.
+This is timing intent only, not a completion guarantee or an automation change.
+A report may finish after the close; late or incomplete results are not pre-close
+evidence. Root may maintain existing schedules while checking the local UTC
+offset; no new task or scheduling framework is implied. Root owns all actual
+automation, health, review, and decision work.
 
 When a scheduled news task escalates a scan still unusable after the shared
 recovery ladder, root promptly checks news personally and owns a bounded

@@ -2771,7 +2771,7 @@
       "validation": "Task registration/target/principal/trigger verified. No reboot or forced application relaunch performed."
     },
     "recovery_delay": "At next existing four-hour scheduled agent wake after Windows sign-in/app availability; not immediate reboot recovery.",
-    "last_check_at_utc": "2026-10-11T10:06:19.524992+00:00",
+    "last_check_at_utc": "2026-10-11T14:16:28.149213+00:00",
     "last_results": [
       {
         "account": "auto",
@@ -2862,20 +2862,18 @@
       {
         "account": "swing_level_bounce",
         "status": "already_running",
-        "parent_pid": 32732,
-        "worker_pid": 49412
+        "parent_pid": 54492,
+        "worker_pid": 80544
       },
       {
         "account": "swing_level_break_hold",
         "status": "already_running",
-        "parent_pid": 31104,
-        "worker_pid": 22496
+        "parent_pid": 55980,
+        "worker_pid": 2884
       },
       {
         "account": "aggressive_vacuum",
-        "status": "already_running",
-        "parent_pid": 78816,
-        "worker_pid": 40156
+        "status": "paused_do_not_restart"
       },
       {
         "account": "aggressive_reclaim",
@@ -2891,9 +2889,19 @@
       },
       {
         "account": "aggressive_rotation",
+        "status": "paused_do_not_restart"
+      },
+      {
+        "account": "swing_level_bounce_context",
         "status": "already_running",
-        "parent_pid": 28612,
-        "worker_pid": 14956
+        "parent_pid": 81784,
+        "worker_pid": 3240
+      },
+      {
+        "account": "swing_level_break_hold_context",
+        "status": "already_running",
+        "parent_pid": 70568,
+        "worker_pid": 47300
       }
     ],
     "account_lifecycle": {
