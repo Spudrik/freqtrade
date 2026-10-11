@@ -61,6 +61,32 @@ in the requested assessment.
 The long-term aim may continue, but neither profit nor completion is guaranteed
 by a calendar date. Live trading remains a separate user decision.
 
+### Root-owned news interpretation follow-up
+
+For each meaningful sourced news interpretation, root records the prospective
+assessment before later price outcomes are known, including trade, hold, decline,
+and observe decisions. Use a stable underlying-event key, record the intended
+30/60/240-minute horizon and reasoning-version tag, and provide separate event,
+publication, and first-seen clocks; use explicit `unknown` when any clock is not
+reliably known. The recorder stamps its actual decision and ticker-baseline
+receipt clocks. Never substitute first-seen, publication, or page-update time
+for event time, or reconstruct a forecast from a prior decision after its result
+is known. Repeated alerts with the same event key append evidence only: they do
+not reset the baseline, replace the original assessment, or count as another
+event. Same-key assessment revisions are not supported by this small ledger.
+
+Use `python -m user_data.Custom_Launcher.research.paper_news_followup register`
+for a new interpretation. At the existing four-hour root review, run the normal
+account projection with `--record-news-followups` to update only due closed-candle
+windows; no schedule or extra wake is added. The report is descriptive: BTC is
+primary, other coins and horizons remain separate, a raw sign match is not
+profit/usefulness/causation, and a tiny correct-sign move is not a useful result.
+Review repeated errors across events and conditions, distinguishing unavailable
+data, no response, correct direction but late/small, genuine missed opportunity,
+and competing background factors. Never infer causation or create a new trading
+eligibility/pass-fail rule from this ledger. Keep routine output quiet; include
+its compact section only in user-requested account-table or follow-up reports.
+
 This document is the maintained programme objective; the existing run record
 holds changing accounts, process identities and approved event watches. Keep the
 goal-mode description aligned with this scope when the app permits replacement;
@@ -566,12 +592,20 @@ renewal with exact source clocks. Use `paper_trial_snapshot --review-context`
 and the existing manual review projection to determine the current account set;
 do not infer it from the news brief. Preserve account-specific authority, risk
 limits, stored protection, and source rules.
-During that same review, use `paper_trial_snapshot --accounts --prices --record-daily`
+Before taking the quiet/no-change shortcut, root also follows the
+`Root-owned news interpretation follow-up` subsection above for every meaningful
+new or repeated alert, including a decline: register a prospective interpretation
+before later price outcomes are known, or attach same-key evidence without
+resetting its forecast/baseline. Use explicit unknown clocks when needed. Luna
+remains news-only and never receives bot/account context or writes this ledger.
+During that same review, use `paper_trial_snapshot --accounts --prices --record-daily --record-news-followups`
 for the account projection. This saves only the first actual observation per ACTIVE
 account attempt and UTC date, with its actual clock, estimated equity and BTC
-perpetual-price reference. Resets remain separate; missing values stay unknown.
-Ordinary reporting without `--record-daily` remains read-only. Do not add a schedule
-or publish a table unless requested.
+perpetual-price reference, and updates due news follow-ups within the same existing
+four-hour review. Resets remain separate; missing values stay unknown. Ordinary
+reporting without an explicit recording flag remains read-only; `--news-followups`
+and `--account-table` are read-only. Do not add a schedule or publish a table
+unless requested.
 Root owns every ACTIVE news-input account on each fresh handoff, using
 `paper_trial_snapshot --review-context`'s `news_input_reviews` and the existing
 manual review projection. Those projections determine the account list; the

@@ -1579,8 +1579,16 @@ def main():
     parser.add_argument("--record-daily",action="store_true",
         help="Persist each account's first observed equity/BTC quote for this UTC date; implies priced accounts")
     parser.add_argument("--account-table",action="store_true",help="Print the account table as Markdown; optionally include --prices")
+    parser.add_argument("--news-followups",action="store_true",
+        help="Include the read-only root news-interpretation follow-up report; no network or writes")
+    parser.add_argument("--record-news-followups",action="store_true",
+        help="At the four-hour root review, update due news follow-ups; requires --accounts --prices --record-daily")
     parser.add_argument("--learning-review",action="store_true",help="User-requested read-only manual learning/accounting review; local databases and journals only")
     args=parser.parse_args();now=datetime.now(timezone.utc)
+    if args.record_news_followups and not (args.accounts and args.prices and args.record_daily):
+        parser.error("--record-news-followups requires --accounts --prices --record-daily")
+    if args.news_followups and args.record_news_followups:
+        parser.error("Use either read-only --news-followups or opt-in --record-news-followups, not both")
     result={"observed_at_utc":now.isoformat()}
     if args.sources:result["sources"]=source_snapshot(now)
     if args.market:result["market"]=market_snapshot()
@@ -1606,6 +1614,17 @@ def main():
             accounts=account_snapshot(False,now)
         result["accounts"]=accounts
         result["account_table"]=format_account_table(accounts,now.isoformat())
+    if args.record_news_followups:
+        from user_data.Custom_Launcher.research.paper_news_followup import update_followups
+        result["news_followup_update"]=update_followups()
+    if args.news_followups or args.record_news_followups or args.account_table:
+        from user_data.Custom_Launcher.research.paper_news_followup import (
+            format_news_followup_report, news_followup_report,
+        )
+        followups=news_followup_report()
+        result["news_followups"]=followups
+        if "account_table" in result:
+            result["account_table"] += "\n\n" + format_news_followup_report(followups)
     if args.learning_review:result["learning_review"]=learning_review_snapshot(now)
     if args.account_table and not (args.sources or args.market or args.crypto or args.review_context or args.higher or args.accounts or args.learning_review or args.record_daily):
         print(result["account_table"])

@@ -61,8 +61,14 @@ new.
 Deduplicate the underlying event, not the publication date or headline text.
 An old/repeated story is not new; alert on a materially verified update only.
 An early warning does not require price confirmation. Separate verified facts
-from claims, state unknowns, and keep event/publication clocks and direct
-source URLs. Mention a possible market channel without claiming causation.
+from claims, state unknowns, and keep a stable underlying-event key, separate
+event and publication UTC clocks (or explicit `unknown`), the first-seen clock
+(or explicit `unknown` if the original alert/receipt clock is not reliable), and
+direct source URLs. Never use first-seen, publication, crawl, or page-update
+time as a substitute for actual event time. Mention a possible market channel
+without claiming causation. Keep these fields within the existing alert/brief
+budget; do not add bot/account context or publish the root's interpretation
+ledger.
 
 Send one concise message to root thread
 `019fa5f9-8d1b-7fc1-a725-94799d33d9f7` only for a meaningful new event or
@@ -84,6 +90,10 @@ this section, and this automation's own compact memory; do not read Objective 03
 five-publisher allowlist and do not retry blocked publishers. Normal budget:
 at most two queries and four specific pages. Publisher availability must be
 reported as observed or unknown; repeated old coverage is not a new event.
+Deduplicate by a stable underlying-event key, not headline or publication date;
+record event, publication, and first-seen clocks separately in UTC or explicitly
+as `unknown`, with direct URLs, and never substitute publication/first-seen time
+for event time.
 
 An existing numeric market projection is allowed, but it must contain no bot
 or account data. Use only this existing numeric projection:
