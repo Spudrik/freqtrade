@@ -207,8 +207,10 @@ Scheduled Luna tasks have only the news/market-input role defined in
 `ai_guidance_docs/02_rules/reference_paper_news_sentinel_trial.md`; they have
 no account/bot knowledge or health, recovery, table, reporting, journal,
 decision, control, or trading duties. Root owns all such duties, including
-manual decisions and controller actions. The existing
-`brief.manual_candidates` field remains empty; no schema migration is needed.
+manual decisions and controller actions. The four-hour news handoff uses
+`brief.update.material_change`, `brief.update.changes`, and
+`brief.update.coverage`; Luna does not generate `brief.main_review`,
+`decision_options`, or `manual_candidates`.
 
 The corrected aggressive-family premises are intentionally distinct: Vacuum
 allows weak directional anticipation before a thin-profile breakout is observed;
@@ -358,6 +360,29 @@ weeks is a reference horizon, not a minimum wait to report a real defect or
 limited evidence. Keep strategy-quality comparisons separate from routine control
 decisions.
 
+## Swing-level PAPER context pair approved 11 October
+
+`swing_level_bounce` and `swing_level_break_hold` remain the matched technical
+baselines; `swing_level_bounce_context` and `swing_level_break_hold_context` are
+separate 10,000 USDT, six-pair PAPER accounts using the same signals, fixed 3x
+leverage, three-position limit, risk caps, and stored exits/stops. The originals
+and their histories are preserved. All four may enter only from the confirming
+completed H1 signal during the next five minutes, while price stays beyond the
+signal's exact confirmation buffer (bounce: 0.25 signal ATR; break/hold: 0.25 of
+the frozen ATR from two H1 candles earlier) and within 0.25 signal ATR of the
+signal close. Both stake planning and final entry confirmation enforce these
+conditions. Existing stored protection plans remain valid without migration.
+
+Context changes stake only: bias 0 is neutral; bias ±1 sizes the favored side at
+1.0 and the other at 0.75; bias ±2 uses 1.0 and 0.5. Reduced exposure multiplies
+either by 0.5. No setting increases baseline stake, risk, or leverage; both sides
+remain eligible unless an existing entry permission or blackout blocks them.
+Main-agent controls use the existing `paper_fast_control` schema/publisher with
+separate per-account files and journals, fresh Luna sources, and the existing
+four-hour expiry ceiling. Missing, stale, or malformed controls block new
+contextual entries, not protection on open trades. This is a prospective sizing
+comparison, not evidence of a directional edge.
+
 ## Inverse-signal paper pair approved 1 October
 
 The user approved two additional, isolated PAPER comparisons after weak results
@@ -427,19 +452,20 @@ Routine wakes do not assess bot quality or strategy performance.
 
 ### Local-first coverage and token budget
 
-Root's numeric market projection uses only the existing flags below. The
-scheduled news-only task follows the filtered pipeline in its isolated
-instruction and must not see raw collector headlines:
+Root's numeric market projection uses only the existing flags below; this
+command remains root-only. The scheduled news-only task follows its filtered
+pipeline and must not see unfiltered/bulk collector payloads or account data:
 
 ```text
 C:\FreqTradeStuff\.venv\Scripts\python.exe -B -m user_data.Custom_Launcher.research.paper_trial_snapshot --sources --crypto --higher
 ```
 
-For the news-only task, remove `sources.recent_unique_headlines` and unneeded
-`sources.news`/`sources.web` collector details before model-visible output.
-Retain only compact numeric market/source fields and clocks for root's review.
-The news-only task reads the five direct publishers in its isolated instruction,
-not bundled headline feeds.
+The news-only task uses the filtered `paper_news_packet headlines` and compact
+`paper_news_packet market` outputs. Collector headlines are leads only; the task
+must still read the article body or relevant liveblog entry. The market command
+retains only the approved numeric/source-coverage projection and clocks. The
+news-only task also searches and reads the five direct publishers in its
+isolated instruction.
 
 Root reports an account table only when the user explicitly asks. No scheduled
 Luna task posts an account table or routine account report. The table contains
@@ -517,20 +543,21 @@ whole-market breadth; missing funding, dominance or regional feeds stay unknown.
 Book metrics disabled in one collector table do not prove that its completed
 minute-bar history is absent: use the existing coverage-aware pressure reader.
 
-The isolated news-only brief uses its stated two-query/four-page limit and fixed
-publisher allowlist; do not repeat blocked requests or do historical research.
-If coverage is unavailable, say so rather than inventing consensus. Keep the
-brief at 400 words or fewer, plus compact coverage/watch fields. Deduplicate
-underlying stories and distinguish expected announcements, observed surprises,
-price confirmation and interacting background conditions. The news-only task
-may express market opinion and conditional cases, but no account-level action,
-hold, trade, or control.
+The isolated news-only brief uses its stated search/page budgets, recovery
+allowance, and fixed publisher allowlist; do not retry a blocked page or do
+historical research. If coverage is unavailable, say so rather than inventing
+consensus. Keep the brief at 400 words or fewer with compact update/coverage and
+watch fields. Deduplicate underlying events and distinguish expected
+announcements, observed surprises, price confirmation and interacting
+background conditions. The news-only task may express market opinion and
+conditional cases, but no account-level action, hold, trade, or control.
 
 The news-only task publishes only the existing schema-1 `luna_context.json`
 through the publisher contract in the isolated reference. Preserve its schema
-and existing control fields; only news/market observations, the brief, source-
-only `main_review`, and `watch_proposals` are in scope. Never write account
-health, tables, journals, decisions, or controls.
+and existing control fields; only news/market observations, the brief (including
+its news-only `update` object), sources, and `watch_proposals` are in scope. Do
+not generate `main_review`, `decision_options`, or `manual_candidates`. Never
+write account health, tables, journals, decisions, or controls.
 The routine news brief validity is at most four hours; choose a shorter expiry
 for a time-sensitive observation. The existing validator permits a longer
 maximum, but the scheduled news-only task must stay within four hours.
@@ -572,11 +599,13 @@ conditional leads parked rather than accumulating permanent schedules.
 Root owns four-hour account-health, recovery, reporting, decision, journal, and
 control duties. The schema-1 `luna_context.json` is only the current news/market
 handoff; do not read prior content or create a second news report.
-`brief.main_review` retains its compact schema (`required`, `reasons`,
-`health`, `changed_since_previous` and `decision_options`) and flags only
-market/source exceptions. Its `health` describes news/source coverage, never
-bot/account health. The news-only task cannot report positions, protection,
-account or collector health, or publish controls.
+`brief.update` carries only news/market handoff state: boolean
+`material_change`, concise `changes`, and a `coverage` string. Root uses those
+fields for the current news-only handoff and separately owns all account/bot
+review. Until the first brief with this new shape is published, root may read a
+legacy `brief.main_review` as a transitional signal; Luna does not generate or
+preserve that field in new briefs. The news-only task cannot report positions,
+protection, account or bot health, or publish controls.
 
 When a scheduled news task escalates a scan still unusable after the shared
 recovery ladder, root promptly checks news personally and owns a bounded
@@ -609,11 +638,16 @@ unless requested.
 Root owns every ACTIVE news-input account on each fresh handoff, using
 `paper_trial_snapshot --review-context`'s `news_input_reviews` and the existing
 manual review projection. Those projections determine the account list; the
-news-only `main_review` does not. Root records the considered hold/no-trade/action and any
+news-only `brief.update` does not. Root records the considered hold/no-trade/action and any
 control renewal through the existing journal/controller with the exact source
 clocks. Scheduled news-only tasks never publish account tables. Root uses the
 ACTIVE-only table contract above only on user request. A `fast_context`
-control renewal is relevant only while that account is ACTIVE.
+control renewal is relevant only while that account is ACTIVE. Each ACTIVE
+`swing_level_*_context` identity is also reviewed on every fresh handoff through
+its `news_input_reviews` row; publish or renew its own `paper_fast_control
+--account <exact-account>` decision using that account's control file and journal.
+The same current Luna observation must support the control, and renewal is not
+needed once the account is DRAINING or PARKED.
 
 The main-agent four-hour heartbeat owns the bounded health, recovery, account
 review and decision work described here. Read this handoff contract, only a
@@ -639,15 +673,17 @@ or valid side-correct protection can justify staying flat, but a flat decision
 must name its concrete, specific reason; a trade is not required at every wake.
 `news_fast` remains the separate best-guess account. Every entry remains a
 root-journalled decision through the existing manual controller using fresh Luna
-sources; Luna stays news-only and receives no account context. When `main_review.required` is false, only after the brief is fresh
-and validated, **all ACTIVE news-input accounts have been considered for that
+sources; Luna stays news-only and receives no account context. When
+`brief.update.material_change` is false, only after the brief is fresh
+and validated, its `coverage` is usable and understood, **all ACTIVE news-input accounts have been considered for that
 handoff**, and there is no already-approved timed watch due may root take the
 quiet/no-change shortcut, perform no duplicate process, log, account, market or
 web inspection, and stay quiet. A
-missing/stale/malformed brief, missing `main_review`, or unverified health is an
-exception to flag for attention, not permission to assume that all is well or
-to place a trade. For a flagged decision, inspect only the relevant evidence;
-accept sensible sourced Luna analysis unless consequentially contradicted.
+missing/stale/malformed brief, missing or malformed `brief.update`, unusable
+coverage, or unknown source state is an exception to flag for attention, not
+permission to assume that all is well or to place a trade. For a flagged
+decision, inspect only the relevant evidence; accept sensible sourced Luna
+analysis unless consequentially contradicted.
 The main agent alone chooses any holds, trades and controls within the existing
 account-specific authority, journals decisions, and verifies any write read-only
 before another action. It retains the original account's narrower

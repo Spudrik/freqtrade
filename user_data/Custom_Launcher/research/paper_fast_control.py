@@ -10,13 +10,17 @@ from user_data.strategies.paper_aggressive_context import (
     AGGRESSIVE_ACCOUNT_KEYS, AGGRESSIVE_ACCOUNTS, CONTROL_FILES,
     load_aggressive_control, publish_aggressive_control,
 )
+from user_data.strategies.paper_swing_levels import (
+    SWING_CONTEXT_ACCOUNT_KEYS, SWING_CONTEXT_CONTROL_FILES,
+    SWING_CONTEXT_CONTROL_JOURNALS,
+)
 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("status", "publish"))
-    parser.add_argument("--account", choices=AGGRESSIVE_ACCOUNT_KEYS,
-                        help="Use one exact aggressive PAPER account instead of legacy fast_context")
+    parser.add_argument("--account", choices=(*AGGRESSIVE_ACCOUNT_KEYS, *SWING_CONTEXT_ACCOUNT_KEYS),
+                        help="Use one exact account-specific PAPER control instead of legacy fast_context")
     parser.add_argument("--decision-id")
     parser.add_argument("--bias", type=int, choices=range(-2, 3))
     parser.add_argument("--exposure", choices=("normal", "reduced"), default="normal")
@@ -31,7 +35,7 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     now = datetime.now(timezone.utc)
     if args.action == "status":
-        if args.account:
+        if args.account in AGGRESSIVE_ACCOUNT_KEYS:
             control = load_aggressive_control(args.account, now)
             print(json.dumps({"account": AGGRESSIVE_ACCOUNTS[args.account]["bot_name"],
                 "status": control.status, "technical_only": control.technical_only,
@@ -40,6 +44,13 @@ def main(argv=None) -> int:
                 "long_leverage_cap": control.long_leverage_cap,
                 "short_leverage_cap": control.short_leverage_cap,
                 "exposure": control.exposure, "control_file": str(CONTROL_FILES[args.account])}))
+            return 0
+        if args.account in SWING_CONTEXT_ACCOUNT_KEYS:
+            control = load_fast_control(now, path=SWING_CONTEXT_CONTROL_FILES[args.account])
+            print(json.dumps({"account": f"paper_{args.account}", "status": control.status,
+                "decision_id": control.decision_id, "bias": control.bias,
+                "exposure": control.exposure, "entry_permission": control.entry_permission,
+                "fixed_leverage": 3, "control_file": str(SWING_CONTEXT_CONTROL_FILES[args.account])}))
             return 0
         control = load_fast_control(now)
         print(json.dumps({"status": control.status, "decision_id": control.decision_id,
@@ -53,7 +64,7 @@ def main(argv=None) -> int:
     if luna.status != "observed":
         raise ValueError("A fresh Luna observation is required")
     expires = min(now + timedelta(hours=4), _utc(json.loads(CONTEXT_FILE.read_text(encoding="utf-8"))["valid_until_utc"]))
-    if args.account:
+    if args.account in AGGRESSIVE_ACCOUNT_KEYS:
         if (args.bias is None or args.side_permission is None
                 or args.long_leverage_cap is None or args.short_leverage_cap is None):
             parser.error("aggressive publish requires bias, side-permission and both leverage caps")
@@ -70,6 +81,23 @@ def main(argv=None) -> int:
         print(json.dumps({"published": True, "account": row["account"],
                           "decision_id": row["decision_id"],
                           "valid_until_utc": expires.isoformat()}))
+        return 0
+    if args.account in SWING_CONTEXT_ACCOUNT_KEYS:
+        if (args.side_permission is not None or args.long_leverage_cap is not None
+                or args.short_leverage_cap is not None):
+            parser.error("swing-context controls use stake-only bias; side permissions and leverage caps are unsupported")
+        row = {"schema_version": 1, "author": "main_agent", "decision_id": args.decision_id,
+               "observed_at_utc": now.isoformat(), "valid_until_utc": expires.isoformat(),
+               "luna_observed_at_utc": luna.observed_at.isoformat(),
+               "bias": 0 if args.bias is None else args.bias,
+               "exposure": args.exposure, "entry_permission": args.entry_permission,
+               "reason": args.reason, "sources": args.source,
+               "unavailable_inputs": args.missing,
+               "blackouts": [{"start_utc": start, "end_utc": end} for start, end in args.blackout]}
+        publish_fast_control(row, path=SWING_CONTEXT_CONTROL_FILES[args.account],
+                             journal=SWING_CONTEXT_CONTROL_JOURNALS[args.account], now=now)
+        print(json.dumps({"published": True, "account": f"paper_{args.account}",
+                          "decision_id": args.decision_id, "valid_until_utc": expires.isoformat()}))
         return 0
     row = {"schema_version": 1, "author": "main_agent", "decision_id": args.decision_id,
            "observed_at_utc": now.isoformat(), "valid_until_utc": expires.isoformat(),

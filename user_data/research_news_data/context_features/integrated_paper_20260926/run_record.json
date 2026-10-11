@@ -713,6 +713,10 @@
     "enabled": true,
     "authorized_at_utc": "2026-09-28T12:36:27Z",
     "allowed_accounts": [
+      "aggressive_auction",
+      "aggressive_reclaim",
+      "aggressive_rotation",
+      "aggressive_vacuum",
       "auto",
       "fast_auto",
       "fast_context",
@@ -721,23 +725,23 @@
       "leader_impulse",
       "leader_inverse",
       "manual",
+      "news_fast",
       "news_lab",
       "news_manual",
       "sieve_d1_support_break_long",
       "sieve_d1_vp_bos_short",
       "sieve_h4_vp_lvn_long",
       "sieve_pivot_partial",
-      "v01",
-      "v10",
-      "news_fast",
       "swing_level_bounce",
+      "swing_level_bounce_context",
       "swing_level_break_hold",
-      "aggressive_vacuum",
-      "aggressive_reclaim",
-      "aggressive_auction",
-      "aggressive_rotation"
+      "swing_level_break_hold_context",
+      "v01",
+      "v10"
     ],
     "paused_accounts": [
+      "aggressive_rotation",
+      "aggressive_vacuum",
       "auto",
       "fast_auto",
       "fast_context",
@@ -773,7 +777,9 @@
       "user_data/configs/paper_aggressive_vacuum.json": "bd4be41e9522a4b408b01540ab61d29eee492fe84867ae1fbc5942d942bd3293",
       "user_data/configs/paper_aggressive_reclaim.json": "de5dda1843465f1c802ad8f7f6c4bd122434c3b6f4ca0ca6c7bcb275cfc32af1",
       "user_data/configs/paper_aggressive_auction.json": "1462abf63a8127f3d16b56e240244af3241e4672dea59e32b205d9dd1be5bbaf",
-      "user_data/configs/paper_aggressive_rotation.json": "722b26fbd0d561ef3df8b6d326fc284a02af5019cf35fbbd1bd6a5e1b4fc3ede"
+      "user_data/configs/paper_aggressive_rotation.json": "722b26fbd0d561ef3df8b6d326fc284a02af5019cf35fbbd1bd6a5e1b4fc3ede",
+      "user_data/configs/paper_swing_level_bounce_context.json": "6d9e109150996f4617c5b24b3e1ec4f5fd8993a3d8c737b1a565c98aa7b339df",
+      "user_data/configs/paper_swing_level_break_hold_context.json": "1bf3787eee3b1fe2fa791362cc2356221677be29077808893a38c01f520e3cf0"
     },
     "authority": "Luna and main scheduled reviews may restore missing exact current PAPER bots only. No strategy/config/core/risk changes, orders, process kills, parked/retired accounts, database resets or retry of failed/unresolved launches.",
     "events": [
@@ -2606,6 +2612,153 @@
         "log_offset": 8688520,
         "parent_pid": 28612,
         "worker_pid": 14956
+      },
+      {
+        "account": "aggressive_vacuum",
+        "status": "parked_flat",
+        "at_utc": "2026-10-11T12:01:35.296628+00:00",
+        "open_trades": 0,
+        "open_orders": 0
+      },
+      {
+        "account": "aggressive_rotation",
+        "status": "parked_flat",
+        "at_utc": "2026-10-11T12:01:35.980354+00:00",
+        "open_trades": 0,
+        "open_orders": 0
+      },
+      {
+        "account": "swing_level_bounce",
+        "preserved_database": "swing_level_bounce_trades.sqlite",
+        "open_trade_ids_before": [
+          10,
+          11
+        ],
+        "prior_worker_state": "RUNNING",
+        "repair_reason": "User-approved entry-confirmation correction activation; restart only the exact original swing accounts and preserve databases and stored protection.",
+        "before_at_utc": "2026-10-11T12:14:22.388747+00:00",
+        "prior_parent_pid": 32732,
+        "prior_worker_pid": 49412,
+        "gap_fill_assumption": "none; no fills or protection during downtime are imputed",
+        "reviewed_strategy": "user_data/strategies/paper_swing_levels.py",
+        "reviewed_strategy_sha256": "f19f35e95613361c4b9d2e3419a36a312954863318c1c23bdc81f1467c574e46",
+        "shutdown_started_at_utc": "2026-10-11T12:14:22.389747+00:00",
+        "status": "active_restart_requested",
+        "at_utc": "2026-10-11T12:14:22.389747+00:00"
+      },
+      {
+        "account": "swing_level_bounce",
+        "status": "running",
+        "at_utc": "2026-10-11T12:14:22.876269+00:00",
+        "log_offset": 723636,
+        "parent_pid": 54492,
+        "worker_pid": 80544
+      },
+      {
+        "account": "swing_level_bounce",
+        "preserved_database": "swing_level_bounce_trades.sqlite",
+        "open_trade_ids_before": [
+          10,
+          11
+        ],
+        "prior_worker_state": "RUNNING",
+        "repair_reason": "User-approved entry-confirmation correction activation; restart only the exact original swing accounts and preserve databases and stored protection.",
+        "before_at_utc": "2026-10-11T12:14:22.388747+00:00",
+        "prior_parent_pid": 32732,
+        "prior_worker_pid": 49412,
+        "gap_fill_assumption": "none; no fills or protection during downtime are imputed",
+        "reviewed_strategy": "user_data/strategies/paper_swing_levels.py",
+        "reviewed_strategy_sha256": "f19f35e95613361c4b9d2e3419a36a312954863318c1c23bdc81f1467c574e46",
+        "shutdown_started_at_utc": "2026-10-11T12:14:22.389747+00:00",
+        "status": "active_restart_completed",
+        "at_utc": "2026-10-11T12:14:34.261682+00:00",
+        "shutdown_confirmed_at_utc": "2026-10-11T12:14:22.796277+00:00",
+        "start_requested_at_utc": "2026-10-11T12:14:22.809275+00:00",
+        "start_attempted_at_utc": "2026-10-11T12:14:22.876269+00:00",
+        "protection_gap_to_heartbeat_seconds": 10.513253,
+        "issues": [],
+        "open_trade_ids_after": [
+          10,
+          11
+        ],
+        "closed_ids_during_restart": [],
+        "startup": {
+          "account": "swing_level_bounce",
+          "status": "running",
+          "parent_pid": 54492,
+          "worker_pid": 80544
+        },
+        "startup_heartbeat_at_utc": "2026-10-11T12:14:32.903000+00:00"
+      },
+      {
+        "account": "swing_level_break_hold",
+        "preserved_database": "swing_level_break_hold_trades.sqlite",
+        "open_trade_ids_before": [],
+        "prior_worker_state": "RUNNING",
+        "repair_reason": "User-approved entry-confirmation correction activation; restart only the exact original swing accounts and preserve databases and stored protection.",
+        "before_at_utc": "2026-10-11T12:14:36.515996+00:00",
+        "prior_parent_pid": 31104,
+        "prior_worker_pid": 22496,
+        "gap_fill_assumption": "none; no fills or protection during downtime are imputed",
+        "reviewed_strategy": "user_data/strategies/paper_swing_levels.py",
+        "reviewed_strategy_sha256": "f19f35e95613361c4b9d2e3419a36a312954863318c1c23bdc81f1467c574e46",
+        "shutdown_started_at_utc": "2026-10-11T12:14:36.516995+00:00",
+        "status": "active_restart_requested",
+        "at_utc": "2026-10-11T12:14:36.516995+00:00"
+      },
+      {
+        "account": "swing_level_break_hold",
+        "status": "running",
+        "at_utc": "2026-10-11T12:14:37.032443+00:00",
+        "log_offset": 670415,
+        "parent_pid": 55980,
+        "worker_pid": 2884
+      },
+      {
+        "account": "swing_level_break_hold",
+        "preserved_database": "swing_level_break_hold_trades.sqlite",
+        "open_trade_ids_before": [],
+        "prior_worker_state": "RUNNING",
+        "repair_reason": "User-approved entry-confirmation correction activation; restart only the exact original swing accounts and preserve databases and stored protection.",
+        "before_at_utc": "2026-10-11T12:14:36.515996+00:00",
+        "prior_parent_pid": 31104,
+        "prior_worker_pid": 22496,
+        "gap_fill_assumption": "none; no fills or protection during downtime are imputed",
+        "reviewed_strategy": "user_data/strategies/paper_swing_levels.py",
+        "reviewed_strategy_sha256": "f19f35e95613361c4b9d2e3419a36a312954863318c1c23bdc81f1467c574e46",
+        "shutdown_started_at_utc": "2026-10-11T12:14:36.516995+00:00",
+        "status": "active_restart_completed",
+        "at_utc": "2026-10-11T12:14:46.259609+00:00",
+        "shutdown_confirmed_at_utc": "2026-10-11T12:14:36.959827+00:00",
+        "start_requested_at_utc": "2026-10-11T12:14:36.967827+00:00",
+        "start_attempted_at_utc": "2026-10-11T12:14:37.032443+00:00",
+        "protection_gap_to_heartbeat_seconds": 9.635005,
+        "issues": [],
+        "open_trade_ids_after": [],
+        "closed_ids_during_restart": [],
+        "startup": {
+          "account": "swing_level_break_hold",
+          "status": "running",
+          "parent_pid": 55980,
+          "worker_pid": 2884
+        },
+        "startup_heartbeat_at_utc": "2026-10-11T12:14:46.152000+00:00"
+      },
+      {
+        "account": "swing_level_bounce_context",
+        "status": "running",
+        "at_utc": "2026-10-11T12:16:07.759526+00:00",
+        "log_offset": 0,
+        "parent_pid": 81784,
+        "worker_pid": 3240
+      },
+      {
+        "account": "swing_level_break_hold_context",
+        "status": "running",
+        "at_utc": "2026-10-11T12:16:16.111826+00:00",
+        "log_offset": 0,
+        "parent_pid": 70568,
+        "worker_pid": 47300
       }
     ],
     "codex_startup": {
@@ -2763,10 +2916,12 @@
       "news_fast": "ACTIVE",
       "swing_level_bounce": "ACTIVE",
       "swing_level_break_hold": "ACTIVE",
-      "aggressive_vacuum": "ACTIVE",
+      "aggressive_vacuum": "PARKED",
       "aggressive_reclaim": "ACTIVE",
       "aggressive_auction": "ACTIVE",
-      "aggressive_rotation": "ACTIVE"
+      "aggressive_rotation": "PARKED",
+      "swing_level_bounce_context": "ACTIVE",
+      "swing_level_break_hold_context": "ACTIVE"
     }
   },
   "entry_refresh": {
@@ -3076,13 +3231,13 @@
       "database_create_attempted_at_utc": "2026-10-07T23:12:50.593940+00:00",
       "last_recovery": {
         "status": "running",
-        "at_utc": "2026-10-09T20:20:09.807897+00:00",
-        "log_offset": 406951
+        "at_utc": "2026-10-11T12:14:22.876269+00:00",
+        "log_offset": 723636
       },
-      "parent_pid": 32732,
-      "worker_pid": 49412,
-      "restarted_at_utc": "2026-10-09T20:20:09.807897+00:00",
-      "parent_created_at_utc": "2026-10-09T20:20:09.823745+00:00",
+      "parent_pid": 54492,
+      "worker_pid": 80544,
+      "restarted_at_utc": "2026-10-11T12:14:22.876269+00:00",
+      "parent_created_at_utc": "2026-10-11T12:14:22.893806+00:00",
       "database_initialized_at_utc": "2026-10-07T23:12:59.707840+00:00"
     },
     "break_hold": {
@@ -3115,14 +3270,141 @@
       "database_create_attempted_at_utc": "2026-10-07T23:13:00.927557+00:00",
       "last_recovery": {
         "status": "running",
-        "at_utc": "2026-10-09T20:20:19.623608+00:00",
-        "log_offset": 374380
+        "at_utc": "2026-10-11T12:14:37.032443+00:00",
+        "log_offset": 670415
       },
-      "parent_pid": 31104,
-      "worker_pid": 22496,
-      "restarted_at_utc": "2026-10-09T20:20:19.623608+00:00",
-      "parent_created_at_utc": "2026-10-09T20:20:19.640402+00:00",
+      "parent_pid": 55980,
+      "worker_pid": 2884,
+      "restarted_at_utc": "2026-10-11T12:14:37.032443+00:00",
+      "parent_created_at_utc": "2026-10-11T12:14:37.048728+00:00",
       "database_initialized_at_utc": "2026-10-07T23:13:07.782530+00:00"
+    },
+    "bounce_context": {
+      "bot_name": "paper_swing_level_bounce_context",
+      "strategy": "PaperSwingLevelBounceContext",
+      "config": "user_data/configs/paper_swing_level_bounce_context.json",
+      "db": "swing_level_bounce_context_trades.sqlite",
+      "log": "swing_level_bounce_context.log",
+      "manual_api": "disabled",
+      "entry_mode": "bounce_context",
+      "initial_virtual_balance_usdt": 10000,
+      "risk_envelope": {
+        "starting_virtual_balance_usdt": 10000,
+        "max_positions": 3,
+        "max_leverage": 3,
+        "max_margin_pct_equity_per_position": 25,
+        "max_planned_loss_pct_equity_per_trade": 2,
+        "max_combined_planned_loss_pct_equity": 4,
+        "emergency_loss_pct_margin": 20,
+        "explicit_protection_required": true,
+        "no_exchange_credentials": true,
+        "order_api_enabled": false
+      },
+      "purpose": "Prospective context-sizing comparison using the same H1 bounce/rejection entries; context changes stake only.",
+      "authorization_basis": "User-approved 2026-10-11 swing-level context-pair activation; separate isolated PAPER identity.",
+      "user_approved_at_utc": "2026-10-11T12:04:05.441517+00:00",
+      "registered_at_utc": "2026-10-11T12:04:05.441517+00:00",
+      "lifecycle_changed_at_utc": "2026-10-11T12:04:05.441517+00:00",
+      "initial_database_state": "uninitialized at registration: no database/log file, no prior trades or orders; balance is initialized only by the approved first-launch helper.",
+      "control_file": "user_data\\research_news_data\\context_features\\integrated_paper_20260926\\swing_level_bounce_context_control.json",
+      "control_journal": "user_data\\research_news_data\\context_features\\integrated_paper_20260926\\swing_level_bounce_context_control_decisions.jsonl",
+      "initial_control_decision_id": "swing-bounce-context-20261011-initial",
+      "database_create_attempted_at_utc": "2026-10-11T12:16:07.759526+00:00",
+      "last_recovery": {
+        "status": "running",
+        "at_utc": "2026-10-11T12:16:07.759526+00:00",
+        "log_offset": 0
+      },
+      "parent_pid": 81784,
+      "worker_pid": 3240,
+      "restarted_at_utc": "2026-10-11T12:16:07.759526+00:00",
+      "command": "C:\\FreqTradeStuff\\.venv\\Scripts\\python.exe -m freqtrade trade --config C:\\FreqTradeStuff\\user_data\\configs\\integrated_paper_20260926_base.json --config C:\\FreqTradeStuff\\user_data\\configs\\paper_swing_level_bounce_context.json --strategy-path C:\\FreqTradeStuff\\user_data\\strategies --strategy PaperSwingLevelBounceContext --logfile C:\\FreqTradeStuff\\user_data\\research_news_data\\context_features\\integrated_paper_20260926\\swing_level_bounce_context.log",
+      "parent_created_at_utc": "2026-10-11T12:16:07.843353+00:00",
+      "database_initialized_at_utc": "2026-10-11T12:16:14.870185+00:00",
+      "started_at_utc": "2026-10-11T12:16:14.870185+00:00"
+    },
+    "break_hold_context": {
+      "bot_name": "paper_swing_level_break_hold_context",
+      "strategy": "PaperSwingLevelBreakHoldContext",
+      "config": "user_data/configs/paper_swing_level_break_hold_context.json",
+      "db": "swing_level_break_hold_context_trades.sqlite",
+      "log": "swing_level_break_hold_context.log",
+      "manual_api": "disabled",
+      "entry_mode": "break_hold_context",
+      "initial_virtual_balance_usdt": 10000,
+      "risk_envelope": {
+        "starting_virtual_balance_usdt": 10000,
+        "max_positions": 3,
+        "max_leverage": 3,
+        "max_margin_pct_equity_per_position": 25,
+        "max_planned_loss_pct_equity_per_trade": 2,
+        "max_combined_planned_loss_pct_equity": 4,
+        "emergency_loss_pct_margin": 20,
+        "explicit_protection_required": true,
+        "no_exchange_credentials": true,
+        "order_api_enabled": false
+      },
+      "purpose": "Prospective context-sizing comparison using the same H1 break-and-hold entries; context changes stake only.",
+      "authorization_basis": "User-approved 2026-10-11 swing-level context-pair activation; separate isolated PAPER identity.",
+      "user_approved_at_utc": "2026-10-11T12:04:05.441517+00:00",
+      "registered_at_utc": "2026-10-11T12:04:05.441517+00:00",
+      "lifecycle_changed_at_utc": "2026-10-11T12:04:05.441517+00:00",
+      "initial_database_state": "uninitialized at registration: no database/log file, no prior trades or orders; balance is initialized only by the approved first-launch helper.",
+      "control_file": "user_data\\research_news_data\\context_features\\integrated_paper_20260926\\swing_level_break_hold_context_control.json",
+      "control_journal": "user_data\\research_news_data\\context_features\\integrated_paper_20260926\\swing_level_break_hold_context_control_decisions.jsonl",
+      "initial_control_decision_id": "swing-break-context-20261011-initial",
+      "database_create_attempted_at_utc": "2026-10-11T12:16:16.111826+00:00",
+      "last_recovery": {
+        "status": "running",
+        "at_utc": "2026-10-11T12:16:16.111826+00:00",
+        "log_offset": 0
+      },
+      "parent_pid": 70568,
+      "worker_pid": 47300,
+      "restarted_at_utc": "2026-10-11T12:16:16.111826+00:00",
+      "command": "C:\\FreqTradeStuff\\.venv\\Scripts\\python.exe -m freqtrade trade --config C:\\FreqTradeStuff\\user_data\\configs\\integrated_paper_20260926_base.json --config C:\\FreqTradeStuff\\user_data\\configs\\paper_swing_level_break_hold_context.json --strategy-path C:\\FreqTradeStuff\\user_data\\strategies --strategy PaperSwingLevelBreakHoldContext --logfile C:\\FreqTradeStuff\\user_data\\research_news_data\\context_features\\integrated_paper_20260926\\swing_level_break_hold_context.log",
+      "parent_created_at_utc": "2026-10-11T12:16:16.129779+00:00",
+      "database_initialized_at_utc": "2026-10-11T12:16:20.863807+00:00",
+      "started_at_utc": "2026-10-11T12:16:20.863807+00:00"
+    },
+    "context_pair": {
+      "approved_at_utc": "2026-10-11T12:04:05.441517+00:00",
+      "registry_changed_at_utc": "2026-10-11T12:04:05.441517+00:00",
+      "context_change_at_utc": "2026-10-11T12:04:05.441517+00:00",
+      "comparison_start_at_utc": "2026-10-11T12:17:53.033304+00:00",
+      "comparison_start_definition": "Set only after both context accounts and both original baselines have fresh RUNNING heartbeats following the attended entry-correction restart; comparisons begin at the latest successful activation clock among the four.",
+      "compared_originals": [
+        "swing_level_bounce",
+        "swing_level_break_hold"
+      ],
+      "entry_confirmation_change": "All four may enter only from the confirming completed H1 signal during the next five minutes, while price stays beyond the exact 0.25-signal-ATR confirmation buffer and within 0.25 signal ATR of the signal close; bounce uses signal ATR and break/hold uses the frozen ATR from two H1 candles earlier.",
+      "context_sizing_only": "bias 0 neutral; bias \u00b11 sizes favored side 1.0 and other side 0.75; bias \u00b12 sizes favored side 1.0 and other side 0.5; reduced exposure multiplies either side by 0.5. Fixed 3x leverage; both sides remain eligible unless existing permission/blackout blocks them. Missing/stale/malformed control blocks new contextual entries, not persisted protection.",
+      "controls": [
+        {
+          "account": "swing_level_bounce_context",
+          "control_file": "user_data\\research_news_data\\context_features\\integrated_paper_20260926\\swing_level_bounce_context_control.json",
+          "control_journal": "user_data\\research_news_data\\context_features\\integrated_paper_20260926\\swing_level_bounce_context_control_decisions.jsonl",
+          "initial_decision_id": "swing-bounce-context-20261011-initial"
+        },
+        {
+          "account": "swing_level_break_hold_context",
+          "control_file": "user_data\\research_news_data\\context_features\\integrated_paper_20260926\\swing_level_break_hold_context_control.json",
+          "control_journal": "user_data\\research_news_data\\context_features\\integrated_paper_20260926\\swing_level_break_hold_context_control_decisions.jsonl",
+          "initial_decision_id": "swing-break-context-20261011-initial"
+        }
+      ],
+      "reviewed_strategy_sha256": "f19f35e95613361c4b9d2e3419a36a312954863318c1c23bdc81f1467c574e46",
+      "originals_entry_confirmation_activated_at_utc": {
+        "swing_level_bounce": "2026-10-11T12:14:32.903000+00:00",
+        "swing_level_break_hold": "2026-10-11T12:14:46.152000+00:00"
+      },
+      "context_accounts_started_at_utc": {
+        "swing_level_bounce_context": "2026-10-11T12:16:14.870185+00:00",
+        "swing_level_break_hold_context": "2026-10-11T12:16:20.863807+00:00"
+      },
+      "all_four_running_verified_at_utc": "2026-10-11T12:17:53.033304+00:00",
+      "comparison_start_basis": "Actual UTC verification after all four exact workers had fresh RUNNING heartbeats, valid isolated PAPER configs, and persisted DB/protection checks; no pre-start context history or fills are imputed.",
+      "initial_controls_verified_at_utc": "2026-10-11T12:17:53.033304+00:00"
     }
   },
   "aggressive_accounts": {
@@ -3256,7 +3538,7 @@
       "control_journal": "user_data/research_news_data/context_features/integrated_paper_20260926/aggressive_vacuum_control_decisions.jsonl",
       "decision_log": "user_data/research_news_data/context_features/integrated_paper_20260926/aggressive_vacuum_decisions.jsonl",
       "registered_at_utc": "2026-10-08T07:49:27.039983+00:00",
-      "lifecycle_changed_at_utc": "2026-10-08T07:49:27.039983+00:00",
+      "lifecycle_changed_at_utc": "2026-10-11T12:01:35.296628+00:00",
       "purpose": "Does directional volume pressure carry a break or pullback through a thin profile region toward the next substantial volume or structure level?",
       "exit_contract": "Freeze structural invalidation and ATR at entry; target the next useful profile or structure level, or a labelled volatility objective; tighten after meaningful cost-adjusted progress and allow strong continuation.",
       "entry_mode": "automatic family-specific primary plus labelled exploratory long/short ranking",
@@ -3285,9 +3567,10 @@
       "manual_authority_ref": "aggressive_accounts.operating_contract.main_agent_manual_authority",
       "database_create_attempted_at_utc": "2026-10-08T22:40:58.858077+00:00",
       "last_recovery": {
-        "status": "running",
-        "at_utc": "2026-10-09T20:20:29.390010+00:00",
-        "log_offset": 4588476
+        "status": "parked_flat",
+        "at_utc": "2026-10-11T12:01:35.296628+00:00",
+        "open_trades": 0,
+        "open_orders": 0
       },
       "parent_pid": 78816,
       "worker_pid": 40156,
@@ -3421,7 +3704,7 @@
       "control_journal": "user_data/research_news_data/context_features/integrated_paper_20260926/aggressive_rotation_control_decisions.jsonl",
       "decision_log": "user_data/research_news_data/context_features/integrated_paper_20260926/aggressive_rotation_decisions.jsonl",
       "registered_at_utc": "2026-10-08T07:49:27.039983+00:00",
-      "lifecycle_changed_at_utc": "2026-10-08T07:49:27.039983+00:00",
+      "lifecycle_changed_at_utc": "2026-10-11T12:01:35.980354+00:00",
       "purpose": "Which liquid alt is strengthening/weakening relative to its cohort and BTC/ETH background, and does local structure allow joining that move?",
       "exit_contract": "Use a local pullback/structure stop; follow continuing relative momentum; exit when the meaningful relative/pressure advantage or protected price boundary fails.",
       "entry_mode": "automatic family-specific primary plus labelled exploratory long/short ranking",
@@ -3450,9 +3733,10 @@
       "manual_authority_ref": "aggressive_accounts.operating_contract.main_agent_manual_authority",
       "database_create_attempted_at_utc": "2026-10-08T22:42:04.501981+00:00",
       "last_recovery": {
-        "status": "running",
-        "at_utc": "2026-10-11T02:07:12.856939+00:00",
-        "log_offset": 8688520
+        "status": "parked_flat",
+        "at_utc": "2026-10-11T12:01:35.980354+00:00",
+        "open_trades": 0,
+        "open_orders": 0
       },
       "parent_pid": 28612,
       "worker_pid": 14956,

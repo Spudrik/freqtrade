@@ -35,6 +35,9 @@ from user_data.strategies.paper_aggressive_context import (
     AGGRESSIVE_ACCOUNT_KEYS, AGGRESSIVE_ACCOUNTS, CONTROL_FILES,
     load_aggressive_control, validate_aggressive_filled_plan,
 )
+from user_data.strategies.paper_swing_levels import (
+    SWING_CONTEXT_ACCOUNT_KEYS, SWING_CONTEXT_CONTROL_FILES,
+)
 
 
 GLOBAL_CONTEXT_SOURCE_LIMIT = 40
@@ -299,7 +302,8 @@ def _news_fast_review_snapshot(record, now):
     return _manual_news_review_snapshot(record, now, "news_fast")
 
 
-def _news_input_reviews(record, now, aggressive_controls, fast_context, manual_reviews):
+def _news_input_reviews(record, now, aggressive_controls, fast_context,
+                        swing_context_controls, manual_reviews):
     """Explicit per-handoff decision coverage, independent of narrative change."""
     issues = []
     try:
@@ -337,6 +341,19 @@ def _news_input_reviews(record, now, aggressive_controls, fast_context, manual_r
             nearing_expiry = True
         reviews.append({"account": "fast_context", "kind": "context_control",
                         "considered_for_current_luna": reviewed, "required": not reviewed or nearing_expiry})
+    for review in swing_context_controls:
+        if review["lifecycle"] != "ACTIVE":
+            continue
+        reviewed = (clock is not None and review.get("luna_observed_at_utc") == clock
+                    and review["status"] == "observed")
+        expires = review.get("valid_until_utc")
+        try:
+            nearing_expiry = expires is None or _utc(expires) <= now + timedelta(minutes=30)
+        except (TypeError, ValueError, OverflowError):
+            nearing_expiry = True
+        reviews.append({"account": review["account"], "kind": "context_control",
+                        "considered_for_current_luna": reviewed,
+                        "required": not reviewed or nearing_expiry})
     # The original auto-with-overrides account keeps its narrower authority.
     original = next(spec for spec in account_specs_for_record(record) if spec.key == "manual")
     if lifecycle_for(record, original) == "ACTIVE":
@@ -394,6 +411,43 @@ def review_context_snapshot(now, record=None):
             **control_times} if control is not None else {
             "status":"not_needed_for_lifecycle","lifecycle":fast_context_lifecycle,
             "renewal_required":False,"stored_control_not_read":True})
+    swing_context_controls = []
+    for key in SWING_CONTEXT_ACCOUNT_KEYS:
+        spec = next((item for item in account_specs_for_record(record) if item.key == key), None)
+        if spec is None:
+            continue
+        lifecycle = lifecycle_for(record, spec)
+        if lifecycle != "ACTIVE":
+            swing_context_controls.append({"account": key, "lifecycle": lifecycle,
+                "status": "not_needed_for_lifecycle", "renewal_required": False,
+                "stored_control_not_read": True})
+            continue
+        path = SWING_CONTEXT_CONTROL_FILES[key]
+        control = load_fast_control(now, path=path)
+        expires = None
+        luna_clock = None
+        if path.is_file():
+            try:
+                encoded = read_json(path)
+                if isinstance(encoded, dict):
+                    expires = encoded.get("valid_until_utc")
+                    luna_clock = encoded.get("luna_observed_at_utc")
+                else:
+                    issues.append(f"{key}: control is not an object; preserve malformed-control entry block")
+            except (ValueError, TypeError, OSError):
+                issues.append(f"{key}: control clock unavailable; preserve malformed-control entry block")
+        renewal = control.status != "observed"
+        if expires:
+            try:
+                renewal = renewal or _utc(expires) <= now + timedelta(minutes=30)
+            except (TypeError, ValueError, OverflowError):
+                renewal = True
+        swing_context_controls.append({"account": key, "lifecycle": lifecycle,
+            "status": control.status, "renewal_required": renewal,
+            "decision_id": control.decision_id, "bias": control.bias,
+            "exposure": control.exposure, "entry_permission": control.entry_permission,
+            "fixed_leverage": 3, "valid_until_utc": expires,
+            "luna_observed_at_utc": luna_clock})
     aggressive_controls = []
     for key in AGGRESSIVE_ACCOUNT_KEYS:
         spec = next((item for item in account_specs_for_record(record) if item.key == key), None)
@@ -433,7 +487,8 @@ def review_context_snapshot(now, record=None):
     news_fast = _news_fast_review_snapshot(record, now)
     if news_fast is not None:
         manual_reviews.append(news_fast)
-    news_input_reviews = _news_input_reviews(record, now, aggressive_controls, fast_context, manual_reviews)
+    news_input_reviews = _news_input_reviews(record, now, aggressive_controls, fast_context,
+                                             swing_context_controls, manual_reviews)
     issues.extend({"news_input_review": issue} for issue in news_input_reviews["issues"])
     return {"trial":record.get("trial"),"run_record_status":record.get("status"),
         "accounts":[{"account":spec.key,"lifecycle":lifecycle_for(record,spec),"strategy":spec.strategy,"config":spec.config,
@@ -441,6 +496,7 @@ def review_context_snapshot(now, record=None):
             "api_port":spec.port} for spec in account_specs_for_record(record)],
         "approved_watches":approved,"due_watches":due,"issues":issues,
         "fast_context":fast_context,"aggressive_controls":aggressive_controls,
+        "swing_context_controls":swing_context_controls,
         "manual_news_reviews": manual_reviews,
         "news_input_reviews": news_input_reviews,
         "news_fast_review":news_fast}
@@ -497,7 +553,8 @@ def _protection_state(trade, session, account=None):
             encoded = session.execute(text("SELECT cd_value FROM trade_custom_data WHERE ft_trade_id=:trade_id AND cd_key=:key"),
                 {"trade_id":trade.id,"key":"paper_fast_plan"}).scalar_one_or_none()
             validate_fast_plan(json.loads(encoded) if encoded is not None else None)
-        elif trade.strategy in {"PaperSwingLevelBounce", "PaperSwingLevelBreakHold"}:
+        elif trade.strategy in {"PaperSwingLevelBounce", "PaperSwingLevelBreakHold",
+                                "PaperSwingLevelBounceContext", "PaperSwingLevelBreakHoldContext"}:
             from user_data.strategies.paper_swing_levels import validate_swing_plan
             encoded = session.execute(text("SELECT cd_value FROM trade_custom_data WHERE ft_trade_id=:trade_id AND cd_key=:key"),
                 {"trade_id":trade.id,"key":"paper_fast_plan"}).scalar_one_or_none()
@@ -1129,6 +1186,8 @@ ACCOUNT_DISPLAY_NAMES = {
     "news_lab": "News manual slow adventurous",
     "swing_level_bounce": "Level bounce — auto",
     "swing_level_break_hold": "Level breakout — auto",
+    "swing_level_bounce_context": "Level bounce — context-sized",
+    "swing_level_break_hold_context": "Level breakout — context-sized",
     "aggressive_reclaim": "Sweep recovery — news-assisted auto",
     "aggressive_vacuum": "Thin-volume breakout — news-assisted auto",
     "aggressive_auction": "Value-zone reaction — news-assisted auto",

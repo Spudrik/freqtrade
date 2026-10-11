@@ -90,6 +90,14 @@ NEW_SWING_ACCOUNTS = (
             "PaperSwingLevelBreakHold", "paper_swing_level_break_hold",
             ("swing_level_pair", "break_hold"), new_identity=True),
 )
+NEW_SWING_CONTEXT_ACCOUNTS = (
+    Account("swing_level_bounce_context", "user_data/configs/paper_swing_level_bounce_context.json",
+            "PaperSwingLevelBounceContext", "paper_swing_level_bounce_context",
+            ("swing_level_pair", "bounce_context"), new_identity=True),
+    Account("swing_level_break_hold_context", "user_data/configs/paper_swing_level_break_hold_context.json",
+            "PaperSwingLevelBreakHoldContext", "paper_swing_level_break_hold_context",
+            ("swing_level_pair", "break_hold_context"), new_identity=True),
+)
 NEW_AGGRESSIVE_ACCOUNTS = tuple(
     Account(key, AGGRESSIVE_ACCOUNTS[key]["config"], AGGRESSIVE_ACCOUNTS[key]["strategy"],
             AGGRESSIVE_ACCOUNTS[key]["bot_name"], ("aggressive_accounts", AGGRESSIVE_ACCOUNTS[key]["family"]),
@@ -100,23 +108,30 @@ REVIEWED_16_ACCOUNTS = LEGACY_ACCOUNTS + NEW_SIEVE_ACCOUNTS
 REVIEWED_17_ACCOUNTS = REVIEWED_16_ACCOUNTS + NEW_MANUAL_ACCOUNTS
 REVIEWED_19_ACCOUNTS = REVIEWED_17_ACCOUNTS + NEW_SWING_ACCOUNTS
 REVIEWED_23_ACCOUNTS = REVIEWED_19_ACCOUNTS + NEW_AGGRESSIVE_ACCOUNTS
-ACCOUNTS = REVIEWED_23_ACCOUNTS
+REVIEWED_SWING_CONTEXT_ACCOUNTS = REVIEWED_23_ACCOUNTS + NEW_SWING_CONTEXT_ACCOUNTS
+ACCOUNTS = REVIEWED_SWING_CONTEXT_ACCOUNTS
 LEGACY_ACCOUNT_KEYS = frozenset(spec.key for spec in LEGACY_ACCOUNTS)
 REVIEWED_16_ACCOUNT_KEYS = frozenset(spec.key for spec in REVIEWED_16_ACCOUNTS)
 REVIEWED_17_ACCOUNT_KEYS = frozenset(spec.key for spec in REVIEWED_17_ACCOUNTS)
 REVIEWED_19_ACCOUNT_KEYS = frozenset(spec.key for spec in REVIEWED_19_ACCOUNTS)
 REVIEWED_23_ACCOUNT_KEYS = frozenset(spec.key for spec in REVIEWED_23_ACCOUNTS)
+REVIEWED_SWING_CONTEXT_ACCOUNT_KEYS = frozenset(spec.key for spec in REVIEWED_SWING_CONTEXT_ACCOUNTS)
 # Keep the historical name as the exact 17-account registry for callers and
 # tests that need to construct/recognize that optional compatibility state.
 ALL_ACCOUNT_KEYS = REVIEWED_17_ACCOUNT_KEYS
-KNOWN_ACCOUNT_KEYS = REVIEWED_23_ACCOUNT_KEYS
+KNOWN_ACCOUNT_KEYS = REVIEWED_SWING_CONTEXT_ACCOUNT_KEYS
 REVIEWED_REGISTRIES = frozenset({REVIEWED_16_ACCOUNT_KEYS, REVIEWED_17_ACCOUNT_KEYS,
-                                 REVIEWED_19_ACCOUNT_KEYS, REVIEWED_23_ACCOUNT_KEYS})
+                                 REVIEWED_19_ACCOUNT_KEYS, REVIEWED_23_ACCOUNT_KEYS,
+                                 REVIEWED_SWING_CONTEXT_ACCOUNT_KEYS})
 DRAINING_ACCOUNT_KEYS = frozenset({"auto", "manual", "v01", "v10", "leader_impulse", "fast_auto", "fast_context"})
-DRAIN_RESTART_ACCOUNT_KEYS = DRAINING_ACCOUNT_KEYS | {"fast_level_inverse"}
+DRAIN_RESTART_ACCOUNT_KEYS = DRAINING_ACCOUNT_KEYS | {
+    "fast_level_inverse", "aggressive_vacuum", "aggressive_rotation",
+}
 ACTIVE_REPAIR_ACCOUNT_KEYS = frozenset({"sieve_pivot_partial", "sieve_d1_support_break_long", "sieve_d1_vp_bos_short"})
 ACTIVE_REPAIR_STRATEGY = "user_data/strategies/paper_sieve_refresh.py"
 ACTIVE_REPAIR_SHA256 = "a3e0cff0baac3db408971a6d06f948488e1454fce389fd4aed85e4dd23a6b342"
+SWING_RESTART_ACCOUNT_KEYS = frozenset({"swing_level_bounce", "swing_level_break_hold"})
+SWING_RESTART_STRATEGY = "user_data/strategies/paper_swing_levels.py"
 ACTIVE_RESTART_UNRESOLVED = frozenset({"active_restart_in_progress", "active_restart_pending", "active_restart_continuity_review"})
 _ACTIVE_RESTART_OWNER = object()
 
@@ -133,7 +148,7 @@ def account_record(record: dict, spec: Account) -> dict:
 
 
 def account_specs_for_record(record: dict) -> tuple[Account, ...]:
-    """Accept only exact legacy12 or explicitly reviewed16/17/19/23 registries."""
+    """Accept only exact legacy12 or explicitly reviewed account registries."""
     allowed = frozenset(record["process_recovery"]["allowed_accounts"])
     if allowed == LEGACY_ACCOUNT_KEYS:
         return LEGACY_ACCOUNTS
@@ -145,15 +160,17 @@ def account_specs_for_record(record: dict) -> tuple[Account, ...]:
         specs = REVIEWED_19_ACCOUNTS
     elif allowed == REVIEWED_23_ACCOUNT_KEYS:
         specs = REVIEWED_23_ACCOUNTS
+    elif allowed == REVIEWED_SWING_CONTEXT_ACCOUNT_KEYS:
+        specs = REVIEWED_SWING_CONTEXT_ACCOUNTS
     else:
-        raise RuntimeError("Recorded account allowlist is neither exact legacy12 nor a reviewed16/17/19/23 registry")
+        raise RuntimeError("Recorded account allowlist is neither exact legacy12 nor an approved reviewed registry")
     lifecycle = record["process_recovery"].get("account_lifecycle")
     if not isinstance(lifecycle, dict) or set(lifecycle) != allowed:
         raise RuntimeError("Reviewed account lifecycle map must cover the exact recorded identity set")
     if set(lifecycle.values()) - {"ACTIVE", "DRAINING", "PARKED"}:
         raise RuntimeError("Unknown account lifecycle state")
     if any(lifecycle[key] not in {"DRAINING", "PARKED"} for key in DRAINING_ACCOUNT_KEYS):
-        raise RuntimeError("Only the seven reviewed legacy identities may be draining or parked")
+        raise RuntimeError("All mandatory reviewed legacy drain identities must be DRAINING or PARKED")
     if any(lifecycle[key] != "ACTIVE" for key in allowed - DRAIN_RESTART_ACCOUNT_KEYS):
         raise RuntimeError("New and retained paper identities must remain active")
     for spec in specs:
@@ -366,7 +383,8 @@ def validate_config(record: dict, spec: Account) -> dict:
                 if encoded is None:
                     raise RuntimeError(f"{spec.key}: open trade {trade_id} has no persisted protection")
                 validate_fast_plan(json.loads(encoded))
-        if spec.key in {"swing_level_bounce", "swing_level_break_hold"}:
+        if spec.key in {"swing_level_bounce", "swing_level_break_hold",
+                        "swing_level_bounce_context", "swing_level_break_hold_context"}:
             from user_data.strategies.paper_swing_levels import validate_swing_plan
             plans = connection.execute("SELECT t.id, t.leverage, c.cd_value FROM trades t LEFT JOIN trade_custom_data c ON c.ft_trade_id=t.id AND c.cd_key='paper_fast_plan' WHERE t.is_open=1").fetchall()
             for trade_id, actual_leverage, encoded in plans:
@@ -594,6 +612,24 @@ def _focused_frozen_state(position: dict) -> dict:
     return result
 
 
+def _active_restart_frozen_state(spec: Account, position: dict) -> dict:
+    """Select the persisted immutable plan contract for this exact restart family."""
+    if spec.key in ACTIVE_REPAIR_ACCOUNT_KEYS:
+        return _focused_frozen_state(position)
+    if spec.key in SWING_RESTART_ACCOUNT_KEYS:
+        encoded = position.get("custom_data", {}).get("paper_fast_plan")
+        if encoded is None:
+            raise ValueError(f"{spec.key}: open swing position has no persisted paper_fast_plan")
+        from user_data.strategies.paper_swing_levels import validate_swing_plan
+        plan = json.loads(encoded)
+        if not isinstance(plan, dict):
+            raise ValueError(f"{spec.key}: malformed persisted swing paper_fast_plan")
+        validate_swing_plan(plan, actual_leverage=float(position["leverage"]))
+        # Keep the serialized value so continuity requires exact plan preservation.
+        return {"paper_fast_plan": encoded}
+    raise ValueError(f"{spec.key}: unsupported attended restart plan family")
+
+
 def _stop_exact_tree(spec: Account, tree: tuple[dict, dict | None]) -> None:
     """Target only the exact matched parent/worker pair; never force-kill or claim graceful shutdown."""
     current = matching_processes(spec, process_inventory())
@@ -679,7 +715,8 @@ def _restart_event(record: dict, spec: Account, event: dict) -> dict:
 
 
 def _restart_exact_account(record: dict, spec: Account, tree: tuple[dict, dict | None] | None,
-                           before: dict[int, dict], observed: dict, *, repair_reason: str | None = None) -> dict:
+                           before: dict[int, dict], observed: dict, *, repair_reason: str | None = None,
+                           reviewed_strategy: tuple[str, str] | None = None) -> dict:
     """Shared bounded stop/start/continuity path; ACTIVE repair is attended only."""
     key = spec.key
     active = repair_reason is not None
@@ -687,10 +724,13 @@ def _restart_exact_account(record: dict, spec: Account, tree: tuple[dict, dict |
     facts = {"account": key, "preserved_database": f"{key}_trades.sqlite",
              "open_trade_ids_before": sorted(before), "prior_worker_state": observed["state"]}
     if active:
-        facts.update(repair_reason=repair_reason, reviewed_strategy_sha256=ACTIVE_REPAIR_SHA256,
+        facts.update(repair_reason=repair_reason,
                      before_at_utc=utc_now(), prior_parent_pid=tree[0]["pid"],
                      prior_worker_pid=None if tree[1] is None else tree[1]["pid"],
                      gap_fill_assumption="none; no fills or protection during downtime are imputed")
+        if reviewed_strategy is not None:
+            facts.update(reviewed_strategy=reviewed_strategy[0],
+                         reviewed_strategy_sha256=reviewed_strategy[1])
     if tree is not None:
         if not _resource_reserve_available():
             return {"account": key, "status": "deferred_resource_reserve_before_restart",
@@ -706,7 +746,9 @@ def _restart_exact_account(record: dict, spec: Account, tree: tuple[dict, dict |
             return {"account": key, "status": "blocked_open_orders_before_stop", "open_orders": orders_before_stop}
         if active:
             # Recheck every safety pin immediately before the first mutation.
-            current_tree, latest, observed = _active_restart_preflight(record, spec)
+            current_tree, latest, observed = _active_restart_preflight(
+                record, spec, reviewed_strategy=reviewed_strategy,
+            )
             if current_tree != tree or set(latest) - set(before):
                 return {"account": key, "status": "blocked_worker_or_positions_changed_before_stop",
                         "worker_left_untouched": True}
@@ -732,8 +774,10 @@ def _restart_exact_account(record: dict, spec: Account, tree: tuple[dict, dict |
             if _database_activity(spec)[1] or _unprotected_open_trade(spec) is not None:
                 raise RuntimeError("Order/protection state changed during shutdown; attended inspection required")
             validate_config(record, spec)
-            if hashlib.sha256((ROOT / ACTIVE_REPAIR_STRATEGY).read_bytes()).hexdigest() != ACTIVE_REPAIR_SHA256:
-                raise RuntimeError("Reviewed repaired wrapper changed during shutdown")
+            if reviewed_strategy is not None:
+                strategy_path, expected_sha256 = reviewed_strategy
+                if hashlib.sha256((ROOT / strategy_path).read_bytes()).hexdigest() != expected_sha256:
+                    raise RuntimeError("Reviewed strategy changed during shutdown")
             facts["start_requested_at_utc"] = utc_now()
             # Preserve shutdown/gap facts even if the controller dies inside launch.
             row = account_record(record, spec)
@@ -791,8 +835,11 @@ def _restart_exact_account(record: dict, spec: Account, tree: tuple[dict, dict |
         if unexpected_ids:
             issues.append("new_automated_positions_during_startup; not verified continuity")
         for trade_id in set(before) & set(after):
-            if _focused_frozen_state(before[trade_id]) != _focused_frozen_state(after[trade_id]):
-                issues.append(f"frozen_focused_state_changed:{trade_id}")
+            if (_active_restart_frozen_state(spec, before[trade_id])
+                    != _active_restart_frozen_state(spec, after[trade_id])):
+                changed_state = ("frozen_focused_state_changed" if spec.key in ACTIVE_REPAIR_ACCOUNT_KEYS
+                                 else "frozen_swing_plan_changed")
+                issues.append(f"{changed_state}:{trade_id}")
             if any(before[trade_id][field] != after[trade_id][field] for field in ("amount", "stake_amount")):
                 issues.append(f"position_quantity_changed_during_restart:{trade_id}; recorded fills require inspection")
         if _unprotected_open_trade(spec) is not None:
@@ -821,7 +868,7 @@ def restart_draining(record: dict, account_keys: list[str]) -> list[dict]:
         raise ValueError("Drain restart is limited to named reviewed DRAINING accounts in a reviewed registry")
     results = []
     for key in account_keys:
-        spec = next(spec for spec in LEGACY_ACCOUNTS if spec.key == key)
+        spec = next(spec for spec in specs if spec.key == key)
         if lifecycle_for(record, spec) != "DRAINING":
             raise RuntimeError(f"{key}: only the exact DRAINING lifecycle may be restarted paused")
         validate_config(record, spec)
@@ -847,7 +894,8 @@ def restart_draining(record: dict, account_keys: list[str]) -> list[dict]:
     return results
 
 
-def _active_restart_preflight(record: dict, spec: Account) -> tuple[tuple[dict, dict | None], dict, dict]:
+def _active_restart_preflight(record: dict, spec: Account, *,
+                             reviewed_strategy: tuple[str, str] | None = None) -> tuple[tuple[dict, dict | None], dict, dict]:
     if lifecycle_for(record, spec) != "ACTIVE":
         raise RuntimeError(f"{spec.key}: restart requires the exact ACTIVE lifecycle")
     row = account_record(record, spec)
@@ -858,8 +906,10 @@ def _active_restart_preflight(record: dict, spec: Account) -> tuple[tuple[dict, 
             or row.get("last_recovery", {}).get("status") in {"launching", "failed", "starting"} | ACTIVE_RESTART_UNRESOLVED):
         raise RuntimeError(f"{spec.key}: prior launch/restart unresolved; no retry")
     config = validate_config(record, spec)
-    if hashlib.sha256((ROOT / ACTIVE_REPAIR_STRATEGY).read_bytes()).hexdigest() != ACTIVE_REPAIR_SHA256:
-        raise RuntimeError(f"{spec.key}: repaired wrapper is not the user-approved SHA256")
+    if reviewed_strategy is not None:
+        strategy_path, expected_sha256 = reviewed_strategy
+        if hashlib.sha256((ROOT / strategy_path).read_bytes()).hexdigest() != expected_sha256:
+            raise RuntimeError(f"{spec.key}: reviewed strategy changed during restart preflight")
     _validate_new_strategy_bootstrap(record, spec, config)
     tree = matching_processes(spec, process_inventory())
     if tree is None:
@@ -875,7 +925,7 @@ def _active_restart_preflight(record: dict, spec: Account) -> tuple[tuple[dict, 
         raise RuntimeError(f"{spec.key}: four-processor reserve unavailable; worker left untouched")
     before = _open_position_snapshot(spec)
     for position in before.values():
-        _focused_frozen_state(position)
+        _active_restart_frozen_state(spec, position)
     return tree, before, observed
 
 
@@ -896,13 +946,16 @@ def restart_active(record: dict, account_keys: list[str], *, apply: bool, repair
             or set(policy.get("allowed_accounts", [])) != {spec.key for spec in specs}
             or set(policy.get("paused_accounts", [])) !=
                 {key for key, state in policy["account_lifecycle"].items() if state == "PARKED"}):
-        raise RuntimeError("Active restart requires an enabled reviewed 16/17/19/23-account lifecycle registry")
+        raise RuntimeError("Active restart requires an enabled reviewed account lifecycle registry")
     prepared, results = [], []
+    reviewed_strategy = (ACTIVE_REPAIR_STRATEGY, ACTIVE_REPAIR_SHA256)
     # Validate all named identities/configs/wrappers before stopping any worker.
     for key in account_keys:
         spec = next(spec for spec in NEW_SIEVE_ACCOUNTS if spec.key == key)
         try:
-            tree, before, observed = _active_restart_preflight(record, spec)
+            tree, before, observed = _active_restart_preflight(
+                record, spec, reviewed_strategy=reviewed_strategy,
+            )
             prepared.append((spec, tree, before, observed))
             results.append({"account": key, "status": "would_restart_active", "worker_left_running": True,
                 "open_trade_ids_before": sorted(before), "heartbeat": observed,
@@ -915,12 +968,71 @@ def restart_active(record: dict, account_keys: list[str], *, apply: bool, repair
     results = []
     for spec, tree, before, observed in prepared:
         try:
-            result = _restart_exact_account(record, spec, tree, before, observed, repair_reason=repair_reason)
+            result = _restart_exact_account(record, spec, tree, before, observed,
+                                            repair_reason=repair_reason,
+                                            reviewed_strategy=reviewed_strategy)
         except (OSError, RuntimeError, ValueError, KeyError, sqlite3.Error, psutil.Error) as error:
             # No retry or further account actions, even when shutdown evidence is uncertain.
             result = _restart_event(record, spec, {"account": spec.key, "status": "active_restart_pending",
                 "at_utc": utc_now(), "blocker": str(error), "repair_reason": repair_reason,
                 "reviewed_strategy_sha256": ACTIVE_REPAIR_SHA256})
+        results.append(result)
+        if result["status"] != "active_restart_completed":
+            break
+    return results
+
+
+def restart_swing(record: dict, account_keys: list[str], *, apply: bool,
+                  repair_reason: str) -> list[dict]:
+    """Attended restart of exact original swing accounts, preserving their databases."""
+    _preflight_write_environment()
+    if (not account_keys or len(account_keys) != len(set(account_keys))
+            or not set(account_keys) <= SWING_RESTART_ACCOUNT_KEYS):
+        raise ValueError("Swing restart requires unique exact names from the original two swing accounts")
+    if (not isinstance(repair_reason, str) or repair_reason != repair_reason.strip()
+            or not 12 <= len(repair_reason) <= 500 or len(repair_reason.split()) < 3
+            or any(ord(character) < 32 for character in repair_reason)):
+        raise ValueError("A meaningful single-line --repair-reason (12-500 characters, at least three words) is required")
+    specs = account_specs_for_record(record)
+    policy = record["process_recovery"]
+    if (frozenset(spec.key for spec in specs) not in REVIEWED_REGISTRIES
+            or policy.get("enabled") is not True
+            or set(policy.get("allowed_accounts", [])) != {spec.key for spec in specs}
+            or set(policy.get("paused_accounts", [])) !=
+                {key for key, state in policy["account_lifecycle"].items() if state == "PARKED"}):
+        raise RuntimeError("Swing restart requires an enabled reviewed account lifecycle registry")
+    reviewed_strategy = (SWING_RESTART_STRATEGY,
+        hashlib.sha256((ROOT / SWING_RESTART_STRATEGY).read_bytes()).hexdigest())
+    prepared, results = [], []
+    for key in account_keys:
+        spec = next(spec for spec in NEW_SWING_ACCOUNTS if spec.key == key)
+        try:
+            tree, before, observed = _active_restart_preflight(
+                record, spec, reviewed_strategy=reviewed_strategy,
+            )
+            prepared.append((spec, tree, before, observed))
+            results.append({"account": key, "status": "would_restart_swing",
+                "worker_left_running": True, "preserved_database": f"{key}_trades.sqlite",
+                "open_trade_ids_before": sorted(before), "heartbeat": observed,
+                "repair_reason": repair_reason, "reviewed_strategy": reviewed_strategy[0],
+                "reviewed_strategy_sha256": reviewed_strategy[1]})
+        except (OSError, RuntimeError, ValueError, KeyError, TypeError, sqlite3.Error, psutil.Error) as error:
+            results.append({"account": key, "status": "blocked_swing_restart_preflight",
+                            "error": str(error), "worker_left_untouched": True})
+    if not apply or len(prepared) != len(account_keys):
+        return results
+    results = []
+    for spec, tree, before, observed in prepared:
+        try:
+            result = _restart_exact_account(record, spec, tree, before, observed,
+                                            repair_reason=repair_reason,
+                                            reviewed_strategy=reviewed_strategy)
+        except (OSError, RuntimeError, ValueError, KeyError, TypeError, sqlite3.Error, psutil.Error) as error:
+            result = _restart_event(record, spec, {"account": spec.key,
+                "status": "active_restart_pending", "at_utc": utc_now(),
+                "blocker": str(error), "repair_reason": repair_reason,
+                "reviewed_strategy": reviewed_strategy[0],
+                "reviewed_strategy_sha256": reviewed_strategy[1]})
         results.append(result)
         if result["status"] != "active_restart_completed":
             break
@@ -933,7 +1045,7 @@ def initialize_new_accounts(record: dict, account_keys: list[str]) -> list[dict]
     specs = account_specs_for_record(record)
     registered_keys = frozenset(spec.key for spec in specs)
     if registered_keys not in REVIEWED_REGISTRIES:
-        raise ValueError("Initialization requires an exact reviewed16/17/19/23 registry")
+        raise ValueError("Initialization requires an exact reviewed account registry")
     new_specs = tuple(spec for spec in specs if spec.new_identity)
     new_keys = {spec.key for spec in new_specs}
     if not account_keys or not set(account_keys) <= new_keys:
@@ -1075,21 +1187,29 @@ def main(argv: list[str] | None = None) -> int:
                         help="Attended, exact-list restart onto paused overlays; requires --apply")
     parser.add_argument("--restart-active", nargs="+", choices=sorted(ACTIVE_REPAIR_ACCOUNT_KEYS),
                         help="Attended repaired-wrapper restart; without --apply performs read-only preflight")
-    parser.add_argument("--initialize-new", nargs="+", choices=sorted(spec.key for spec in (NEW_SIEVE_ACCOUNTS + NEW_MANUAL_ACCOUNTS + NEW_SWING_ACCOUNTS + NEW_AGGRESSIVE_ACCOUNTS)),
+    parser.add_argument("--restart-swing", nargs="+", choices=sorted(SWING_RESTART_ACCOUNT_KEYS),
+                        help="Attended restart of original swing accounts; without --apply performs read-only preflight")
+    parser.add_argument("--initialize-new", nargs="+", choices=sorted(spec.key for spec in (NEW_SIEVE_ACCOUNTS + NEW_MANUAL_ACCOUNTS + NEW_SWING_ACCOUNTS + NEW_SWING_CONTEXT_ACCOUNTS + NEW_AGGRESSIVE_ACCOUNTS)),
                         help="Attended first launch for isolated new PAPER accounts; requires --apply")
     parser.add_argument("--acknowledge-fixed-startup", nargs="+", choices=("fast_auto", "fast_context"))
     parser.add_argument("--repair-reason")
     args = parser.parse_args(argv)
-    attended = (args.restart_active, args.restart_draining, args.initialize_new, args.acknowledge_fixed_startup)
+    attended = (args.restart_active, args.restart_swing, args.restart_draining,
+                args.initialize_new, args.acknowledge_fixed_startup)
     if sum(bool(action) for action in attended) > 1:
         raise ValueError("Choose one attended lifecycle/repair action per lock acquisition")
     if args.restart_active and args.accounts is not None:
         raise ValueError("--restart-active supplies its own exact list; do not combine --accounts")
-    if args.repair_reason is not None and not (args.restart_active or args.acknowledge_fixed_startup):
+    if args.restart_swing and args.accounts is not None:
+        raise ValueError("--restart-swing supplies its own exact list; do not combine --accounts")
+    if args.repair_reason is not None and not (args.restart_active or args.restart_swing or args.acknowledge_fixed_startup):
         raise ValueError("--repair-reason requires a named attended repair action")
     with recovery_lock():
         record = json.loads(RECORD.read_text(encoding="utf-8"))
-        if args.restart_active:
+        if args.restart_swing:
+            results = restart_swing(record, args.restart_swing, apply=args.apply, repair_reason=args.repair_reason)
+            applied = args.apply
+        elif args.restart_active:
             results = restart_active(record, args.restart_active, apply=args.apply, repair_reason=args.repair_reason)
             applied = args.apply
         elif args.restart_draining or args.initialize_new:

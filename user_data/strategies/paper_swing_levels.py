@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from math import isfinite
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -17,6 +18,8 @@ from user_data.strategies.paper_fast_reaction import (
     PaperFastAuto,
     validate_fast_plan,
 )
+from user_data.strategies.integrated_paper_context import CONTEXT_FILE
+from user_data.strategies.paper_fast_context import FastControl, load_fast_control
 
 LOGICAL_LEVELS = (
     ("range_high_20", "4h_rolling20_high"),
@@ -40,6 +43,59 @@ VOLATILITY_TARGET_R = 2.0
 EMERGENCY_MARGIN_LOSS_PCT = 0.20
 COLUMN_SOURCE = {f"{column}_{'1d' if column.startswith('day_') else '4h'}": source
                  for column, source in LOGICAL_LEVELS}
+REPORT = CONTEXT_FILE.parent
+SWING_CONTEXT_ACCOUNT_KEYS = (
+    "swing_level_bounce_context", "swing_level_break_hold_context",
+)
+SWING_CONTEXT_CONTROL_FILES = {
+    key: REPORT / f"{key}_control.json" for key in SWING_CONTEXT_ACCOUNT_KEYS
+}
+SWING_CONTEXT_CONTROL_JOURNALS = {
+    key: REPORT / f"{key}_control_decisions.jsonl" for key in SWING_CONTEXT_ACCOUNT_KEYS
+}
+
+
+class SwingContextControl:
+    """Fast schema-1 controls adapted to fixed-3x, stake-only swing decisions."""
+
+    def __init__(self, control: FastControl) -> None:
+        self._control = control
+
+    @property
+    def status(self):
+        return self._control.status
+
+    @property
+    def decision_id(self):
+        return self._control.decision_id
+
+    @property
+    def bias(self):
+        return self._control.bias
+
+    @property
+    def exposure(self):
+        return self._control.exposure
+
+    @property
+    def entry_permission(self):
+        return self._control.entry_permission
+
+    @property
+    def blackouts(self):
+        return self._control.blackouts
+
+    @property
+    def size_factor(self):
+        return 1.0 if self.exposure == "normal" else 0.5
+
+    def leverage_for(self, side: str, now: datetime) -> float:
+        """Gate entries without using fast_context's bias-to-leverage table."""
+        if (side not in {"long", "short"} or self.status != "observed"
+                or self.entry_permission == "paused"
+                or any(start <= now < end for start, end in self.blackouts)):
+            return 0.0
+        return 3.0
 
 
 def swing_stop_price(side: str, entry_rate: float, atr: float, level: float) -> float:
@@ -115,6 +171,18 @@ def validate_swing_plan(plan: dict, *, actual_leverage: float | None = None) -> 
     if actual_leverage is not None and abs(float(actual_leverage) - float(plan["leverage"])) > 1e-9:
         raise ValueError("Swing protection leverage differs from the persisted trade")
 
+    signal_fields = ("signal_at_utc", "signal_close", "confirmation_buffer")
+    signal_fields_present = [key in plan for key in signal_fields]
+    if any(signal_fields_present):
+        if not all(signal_fields_present):
+            raise ValueError("Swing signal confirmation metadata is incomplete")
+        signal_at = pd.Timestamp(plan["signal_at_utc"])
+        if pd.isna(signal_at) or signal_at.tzinfo is None:
+            raise ValueError("Swing signal clock must be timezone-aware")
+        for key in ("signal_close", "confirmation_buffer"):
+            if not isfinite(float(plan[key])) or float(plan[key]) <= 0:
+                raise ValueError(f"Invalid swing signal value: {key}")
+
     side = plan["side"]
     entry = float(plan["open_rate"])
     atr = float(plan["entry_atr"])
@@ -164,6 +232,19 @@ class PaperSwingLevels(PaperFastAuto):
     paper_hold_hours = 48
     account_key = "swing_level_bounce"
     signal_kind = "bounce"
+    control_file: Path | None = None
+
+    def _control(self, now: datetime):
+        if not self.contextual:
+            return FastControl("observed", "automatic_baseline", 0, "normal", "normal")
+        if self.control_file is None:
+            raise RuntimeError("Contextual swing account has no account-specific control path")
+        return SwingContextControl(load_fast_control(now, path=self.control_file))
+
+    def leverage(self, pair, current_time, current_rate, proposed_leverage,
+                 max_leverage, entry_tag, side, **kwargs):
+        # Context changes entry size only. The matched swing pair remains fixed at 3x.
+        return max(1.0, min(3.0, float(max_leverage)))
 
     def informative_pairs(self):
         return sorted({(pair, tf) for pair in self.dp.current_whitelist() for tf in ("4h", "1d")})
@@ -274,6 +355,9 @@ class PaperSwingLevels(PaperFastAuto):
         frame["fast_strong"] = False
         frame["swing_level_source"], frame["swing_target_source"] = None, None
         frame["swing_target_level"] = np.nan
+        frame["swing_signal_close"], frame["swing_confirmation_buffer"] = np.nan, np.nan
+        frame["swing_signal_at"] = pd.Series(pd.NaT, index=frame.index, dtype="datetime64[ns, UTC]")
+        frame["swing_signal_side"] = None
         long_level, long_source, short_level, short_source = self._signals(frame)
         long_target, long_target_source = self._target_levels(frame, "long")
         short_target, short_target_source = self._target_levels(frame, "short")
@@ -291,6 +375,15 @@ class PaperSwingLevels(PaperFastAuto):
         frame.loc[short, "swing_target_level"] = short_target[short]
         frame.loc[long, "swing_target_source"] = long_target_source[long].map(COLUMN_SOURCE)
         frame.loc[short, "swing_target_source"] = short_target_source[short].map(COLUMN_SOURCE)
+        signal = long | short
+        confirmation_atr = frame["paper_atr"].shift(2) if self.signal_kind == "break_hold" else frame["paper_atr"]
+        frame.loc[signal, "swing_signal_close"] = frame.loc[signal, "close"]
+        frame.loc[signal, "swing_confirmation_buffer"] = (0.25 * confirmation_atr[signal])
+        frame.loc[signal, "swing_signal_at"] = (
+            pd.to_datetime(frame.loc[signal, "date"], utc=True) + pd.Timedelta(hours=1)
+        )
+        frame.loc[long, "swing_signal_side"] = "long"
+        frame.loc[short, "swing_signal_side"] = "short"
         frame["fast_strong"] = frame["volume"].ge(1.5 * frame["prior_volume"]) & (frame["close"]-frame["open"]).abs().ge(.5*frame["paper_atr"])
         return frame
 
@@ -315,8 +408,155 @@ class PaperSwingLevels(PaperFastAuto):
             target_source = None
         elif target_source not in LEVEL_SOURCES:
             raise ValueError("Swing entry has a target level without its frozen source")
+        signal_at = pd.Timestamp(row.get("swing_signal_at"))
+        if pd.isna(signal_at):
+            raise ValueError("Swing entry is missing its confirming H1 close clock")
+        if signal_at.tzinfo is None:
+            signal_at = signal_at.tz_localize("UTC")
+        signal_close = float(row.get("swing_signal_close"))
+        confirmation_buffer = float(row.get("swing_confirmation_buffer"))
+        if (row.get("swing_signal_side") != side or not isfinite(signal_close)
+                or signal_close <= 0 or not isfinite(confirmation_buffer)
+                or confirmation_buffer <= 0):
+            raise ValueError("Swing entry is missing its exact confirmation evidence")
         return {"level_source": level_source, "signal_kind": self.signal_kind,
-            "target_level": target_level, "target_source": target_source}
+            "target_level": target_level, "target_source": target_source,
+            "signal_at_utc": signal_at.isoformat(), "signal_close": signal_close,
+            "confirmation_buffer": confirmation_buffer}
+
+    @staticmethod
+    def _entry_price_gate(*, signal_at, signal_close, confirmation_buffer,
+                          signal_atr, level, signal_side, current_rate,
+                          side, current_time) -> bool:
+        """Enforce the original H1 confirmation and bounded post-close entry window."""
+        if side not in {"long", "short"} or signal_side != side:
+            return False
+        try:
+            signal_clock = pd.Timestamp(signal_at)
+            now = pd.Timestamp(current_time)
+            if pd.isna(signal_clock) or pd.isna(now):
+                return False
+            if signal_clock.tzinfo is None:
+                signal_clock = signal_clock.tz_localize("UTC")
+            else:
+                signal_clock = signal_clock.tz_convert("UTC")
+            if now.tzinfo is None:
+                now = now.tz_localize("UTC")
+            else:
+                now = now.tz_convert("UTC")
+            signal_close = float(signal_close)
+            confirmation_buffer = float(confirmation_buffer)
+            signal_atr = float(signal_atr)
+            level = float(level)
+            current_rate = float(current_rate)
+        except (TypeError, ValueError, OverflowError):
+            return False
+        if (not all(isfinite(value) for value in
+                    (signal_close, confirmation_buffer, signal_atr, level, current_rate))
+                or min(signal_close, confirmation_buffer, signal_atr, level, current_rate) <= 0
+                or not timedelta(0) <= now - signal_clock <= timedelta(minutes=5)
+                or abs(current_rate - signal_close) > MAX_ENTRY_SLIPPAGE_ATR * signal_atr):
+            return False
+        return (current_rate > level + confirmation_buffer if side == "long"
+                else current_rate < level - confirmation_buffer)
+
+    def _entry_row_allowed(self, row: pd.Series, current_rate: float,
+                           side: str, current_time: datetime) -> bool:
+        return self._entry_price_gate(
+            signal_at=row.get("swing_signal_at"),
+            signal_close=row.get("swing_signal_close"),
+            confirmation_buffer=row.get("swing_confirmation_buffer"),
+            signal_atr=row.get("paper_atr"),
+            level=row.get("fast_trigger_level"),
+            signal_side=row.get("swing_signal_side"),
+            current_rate=current_rate, side=side, current_time=current_time,
+        )
+
+    def _entry_plan_allowed(self, plan: dict, current_rate: float,
+                            side: str, current_time: datetime) -> bool:
+        return self._entry_price_gate(
+            signal_at=plan.get("signal_at_utc"),
+            signal_close=plan.get("signal_close"),
+            confirmation_buffer=plan.get("confirmation_buffer"),
+            signal_atr=plan.get("entry_atr"),
+            level=plan.get("trigger_level"),
+            signal_side=plan.get("side"),
+            current_rate=current_rate, side=side, current_time=current_time,
+        )
+
+    @staticmethod
+    def _directional_size_factor(bias: int, side: str) -> float:
+        if type(bias) is not int or bias not in {-2, -1, 0, 1, 2} or side not in {"long", "short"}:
+            raise ValueError("Invalid contextual swing sizing inputs")
+        if bias == 0:
+            return 1.0
+        favored_side = "long" if bias > 0 else "short"
+        if side == favored_side:
+            return 1.0
+        return 0.75 if abs(bias) == 1 else 0.5
+
+    def custom_stake_amount(self, pair, current_time, current_rate, proposed_stake,
+                            min_stake, max_stake, leverage, entry_tag, side, **kwargs):
+        key = (pair, side, str(entry_tag))
+        try:
+            row = self._current_row(pair, current_time)
+        except (KeyError, TypeError, ValueError, OverflowError):
+            self._pending.pop(key, None)
+            return 0.0
+        if not self._entry_row_allowed(row, current_rate, side, current_time):
+            self._pending.pop(key, None)
+            return 0.0
+
+        stake = super().custom_stake_amount(
+            pair, current_time, current_rate, proposed_stake, min_stake,
+            max_stake, leverage, entry_tag, side, **kwargs,
+        )
+        if not self.contextual or stake <= 0:
+            return stake
+
+        pending = self._pending.get(key)
+        control = self._control(current_time)
+        if (pending is None or control.status != "observed"
+                or pending.get("decision_id") != control.decision_id):
+            self._pending.pop(key, None)
+            return 0.0
+        directional = self._directional_size_factor(control.bias, side)
+        scaled_stake = float(stake) * directional
+        if (not isfinite(scaled_stake) or scaled_stake <= 0
+                or (min_stake is not None and scaled_stake + 1e-9 < float(min_stake))):
+            self._pending.pop(key, None)
+            return 0.0
+        pending["stake_usdt"] = float(pending["stake_usdt"]) * directional
+        pending["planned_loss_usdt"] = float(pending["planned_loss_usdt"]) * directional
+        pending.update(
+            context_bias=control.bias,
+            context_exposure=control.exposure,
+            context_directional_size_factor=directional,
+            context_effective_size_factor=control.size_factor * directional,
+        )
+        return scaled_stake
+
+    def confirm_trade_entry(self, pair, order_type, amount, rate, time_in_force,
+                            current_time, entry_tag, side, **kwargs):
+        key = (pair, side, str(entry_tag))
+        pending = self._pending.get(key)
+        if pending is None or not self._entry_plan_allowed(pending, rate, side, current_time):
+            return False
+        if self.contextual:
+            control = self._control(current_time)
+            if (control.status != "observed"
+                    or control.decision_id != pending.get("decision_id")
+                    or control.bias != pending.get("context_bias")
+                    or control.exposure != pending.get("context_exposure")
+                    or self._directional_size_factor(control.bias, side)
+                       != pending.get("context_directional_size_factor")
+                    or control.size_factor * self._directional_size_factor(control.bias, side)
+                       != pending.get("context_effective_size_factor")):
+                return False
+        return super().confirm_trade_entry(
+            pair, order_type, amount, rate, time_in_force, current_time,
+            entry_tag, side, **kwargs,
+        )
 
     def _sizing_geometry(
         self, side: str, reference_rate: float, atr: float, level: float,
@@ -435,3 +675,15 @@ class PaperSwingLevelBounce(PaperSwingLevels):
 class PaperSwingLevelBreakHold(PaperSwingLevels):
     account_key = "swing_level_break_hold"
     signal_kind = "break_hold"
+
+
+class PaperSwingLevelBounceContext(PaperSwingLevelBounce):
+    account_key = "swing_level_bounce_context"
+    contextual = True
+    control_file = SWING_CONTEXT_CONTROL_FILES[account_key]
+
+
+class PaperSwingLevelBreakHoldContext(PaperSwingLevelBreakHold):
+    account_key = "swing_level_break_hold_context"
+    contextual = True
+    control_file = SWING_CONTEXT_CONTROL_FILES[account_key]
