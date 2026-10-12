@@ -55,13 +55,25 @@ is valid; do not demand unknowable seconds), publication/update time, first-seen
 time, and direct source URL separately. Use UTC clocks or explicitly say
 `unknown`. Classify it as `new event`, `substantive update`, `historical
 background`, or `unresolved`. A new article timestamp, repeated headline, or
-rephrased previously known fact is not a new event. Compare against the last
-established fact and event date in compact memory. Resolve identity and timing
-from the article body or another allowed source before calling a report a new
-verified action. If the fact remains unresolved but a credible report is urgent,
-surface it as an unconfirmed claim with the specific unknown; do not present it
-as a verified action or suppress it merely while waiting for price movement or
-additional confirmation.
+rephrased previously known fact is not a new event. Keep a stable underlying
+event key and its original first-seen clock across memory rewrites; compare each
+candidate with the last established material fact and event date before calling
+it new. A publisher/time change or casualty attribution/detail alone does not
+reset first-seen or retrigger an alert without a material financial difference.
+News breadth is for discovery, not an alert rule: surface a candidate as
+financially material only when it contains an exact new fact and a credible,
+conditional channel to crypto/global risk, liquidity, rates, energy, supply
+chains, regulation, exchanges, or financial infrastructure. Name a plausible
+horizon; do not require a confirmed price response. A domestic crime, local
+casualty, or weather update is not material by geography or severity alone;
+include it only when evidence supports a broader financial channel. Unknown
+impact is unknown, not zero. Consider related modest developments together if
+their combined facts could change the financial narrative; do not automatically
+discard each one in isolation. Resolve identity and timing from the article body
+or another allowed source before calling a report a new verified action. If an
+unresolved report is credible and urgent and could plausibly have a major
+financial channel, surface it as an explicitly unconfirmed claim with the
+specific unknown; do not present it as verified or wait for price movement.
 
 When something is unknown, name the specific missing fact and verification
 attempted; avoid generic `unclear` wording. If no route yields actually usable
@@ -74,7 +86,27 @@ Do not provide trading advice, positions, orders, account-level actions, or
 claims of market causation. Plain facts need direct citations. A conditional
 market opinion is allowed if clearly labeled as opinion, bounded, and paired
 with contrary evidence and unknowns. Urgent reporting may state a possible
-market channel without claiming that it caused a price move.
+market channel without claiming that it caused a price move. Do not force scores
+or probabilities. Distinguish observed response from forecast; compare actual
+with expected only when a genuine sourced expectation is available.
+
+The following are short, hypothetical examples only; never reuse them as live
+facts or evidence:
+
+- Poor: recycle yesterday's airport casualty count. Better: stay quiet on that
+  fact; alert on a verified new energy/shipping closure with its conditional
+  supply or liquidity channel, even before a price response.
+- Poor: treat a local shooting or weather casualty as a crypto signal. Better:
+  omit it absent a channel; if a verified bank, exchange, or payment-system
+  disruption exists, explain that conditional availability channel.
+- Poor: CPI at 2.8% versus a genuine 3.0% expectation proves easing pressure and
+  a BTC forecast. Better: it may ease rate pressure, but a concurrent BTC fall
+  is a conflicting observed move, not proof of a prediction.
+- Poor: discard several modest de-escalation facts one by one. Better: assess
+  whether together they conditionally change an energy or supply-risk narrative.
+- Poor: rising stale equities plus current breadth proves broad risk-on. Better:
+  name the observed breadth claim and leave broader direction unknown if
+  coverage is incomplete.
 
 ## Thirty-minute news watch
 
@@ -86,14 +118,21 @@ trading state.
 Search for material new events and substantive updates across the broad coverage
 areas above. Deduplicate the underlying event, not publication date or headline
 text. Track only live or important events in memory, with the last established
-material fact, event date/time, last-checked UTC clock, and a short source
-reference or direct link. Prune irrelevant keys rather than accumulating names
-or old headlines. Keep memory to about 300 words.
+material fact, event date/time, original first-seen and last-checked UTC clocks,
+and a short source reference or direct link. Preserve important unresolved
+facts/claims and stable keys when revising memory; update the task's compact
+memory once per run as a complete update, preserving each event's first-seen
+clock. Prune irrelevant keys rather than accumulating names or old headlines.
+Keep memory to about 300 words; do not sync it with another task or read
+historical briefs.
 
-Send one concise alert to root only for a meaningful new event, substantive
-update, or material loss of usable coverage. Include the exact new fact, event
-key/classification, separate event/publication/first-seen clocks, source URL,
-and specific unknowns. A quiet no-change run needs no commentary or footer.
+Send one concise alert to root only for a meaningful, financially relevant new
+event/substantive update or material loss of usable coverage. Normally keep an
+alert to about 120 words; exceed only when critical detail requires it. Use this
+compact order: exact change; known baseline; event key/classification; separate
+event, publication, and original first-seen clocks; body-verified source URL;
+conditional channel and horizon; contrary evidence; specific unknowns. A quiet
+no-change run needs no commentary or footer.
 If delivery is failed or uncertain, do not retry or claim delivery.
 
 ## Four-hour market brief
@@ -102,8 +141,12 @@ The four-hour task has one coordinator. It reads only these shared rules, this
 four-hour section, and its own compact news memory; it does not read Objective
 03, prior shared context, old `luna_context.json` content, account files, bot
 history, or code. Keep memory to about 300 words and the same
-last-established-fact/event-time/last-checked-clock/source-reference fields as
-the 30-minute task; prune irrelevant keys.
+last-established-fact/event-time/original-first-seen/last-checked-clock/source-
+reference fields and stable event keys as the 30-minute task. Preserve important
+unresolved facts when revising it, update this task's memory once per run, and
+complete that update while preserving event keys and first-seen clocks. Prune
+irrelevant keys; do not sync memories with another task or read historical
+briefs.
 
 The coordinator prepares one frozen, numeric-plus-headline packet per run, then
 gives each reporter only its clock-matched role slice:
@@ -133,7 +176,10 @@ crypto global metrics, order-book pressure/coverage, crypto-derivative symbol
 summaries and breadth, delivered public positioning samples, and BTC/ETH
 completed four-hour and daily windows. The global slice contains explicitly
 mapped global/macro metrics plus any unmapped source rows marked unknown. Source
-timestamps and collection/fetch times remain separate. Missing or truncated
+timestamps and collection/fetch times remain separate; collection time does not
+refresh the age of the underlying observation. A previous-session or calendar-
+day label alone does not make an input stale: use its actual source clock and
+the family-specific freshness and coverage evidence. Missing or truncated
 inputs stay explicit; never convert missing inputs into a neutral signal or
 drop an unknown mapping. Report each input family as observed, stale, degraded,
 unavailable, or unknown from the supplied status and clocks; a collector
@@ -145,7 +191,11 @@ its complete source inventory and total/selected counts once as the completeness
 reference, then reads the other three parts for their data and selected source
 IDs; those parts intentionally omit repeated inventory rows. Tool-output
 clipping is a read limitation, not collector absence; read the relevant part
-before reporting absence. Collector source
+before reporting absence. Prepare the frozen packet once and read each role
+slice once; if output is clipped, reread only that exact section/part, not the
+whole packet or other slices. Do not repeat extraction commands except to
+reread that exact clipped part; do not browse code for completeness. Collector
+source
 totals cover the whole collector, not an individual slice, so keep role-specific
 counts explicit. Use only these family statuses: `observed`, `stale`,
 `degraded`, `unavailable`, or `unknown`. Do not dump or request raw collector
@@ -176,15 +226,18 @@ status and exact gaps/unknowns, and direct source URLs. The news reporter may
 include an optional watch proposal and news `update`; other reporters may state
 that no news watch applies. Do not claim an input was considered if it was not.
 
-The coordinator alone reconciles those results and publishes once through the
-existing schema-1 publisher. A failed or late reporter is named explicitly;
+The coordinator alone reconciles those results and makes one successful
+publication through the existing schema-1 publisher. A failed or late reporter is named explicitly;
 never imply complete or healthy coverage when one is missing. Keep the brief at
 400 words or fewer, with separate compact role findings, contrary evidence,
 clocks, specific unknowns, update state, direct URLs, and optional watches.
-Include compact `input_use` rows for news/web, global markets/macro, crypto
-candles/breadth, derivatives/options/positioning, book pressure, chain/flows/
-whale/address activity, and attention/trends. Do not invent voting, probabilities,
-or nonzero weights from reporter agreement. Omit `main_review`,
+Keep all three scoped reporter findings; do not reduce the news finding to a
+headline. News should retain relevant body-verified facts, baseline, clocks,
+conditional channel, and unknowns. Consider related modest developments
+together where they change a conditional narrative. Include one compact
+`input_use` row for each of the seven families specified below, including
+unavailable families. Do not invent voting, probabilities, or nonzero weights
+from reporter agreement. Omit `main_review`,
 `decision_options`, and `manual_candidates`. Root alone weighs evidence and
 owns paper decisions; the 30-minute watch remains news-only.
 
@@ -208,24 +261,50 @@ The brief is 400 words or fewer and includes a news-only `update` object:
 {"material_change": false, "changes": [], "coverage": "..."}
 ```
 
-Within the existing `brief` object, include compact `input_use` rows for each
-family: news/web, global markets/macro, crypto candles/breadth,
+Within the existing `brief` object, include exactly one compact `input_use` row
+for each family: news/web, global markets/macro, crypto candles/breadth,
 derivatives/options/positioning, book pressure, chain/flows/whale/address
-activity, and attention/trends. Each row records the supplied status
-(`observed`, `stale`, `degraded`, `unavailable`, or `unknown`), delivered source
-IDs/metric keys and clocks actually considered (`none` if absent or not
-considered), `effect` (`supports`, `contradicts`, `mixed`, or `not_used`) with a
-concise reason, and a disposition that distinguishes `absent_not_available`,
-`delivered_but_unused`, `considered_not_retained_as_material`, and material
-input retained in the brief. Use `applicability: unknown` when a family's
-relevance cannot be assessed. Keep rows compact enough to remain within the
-400-word brief; do not enumerate every metric. Do not force nonzero weights or
-infer causation or predictive value from feed delivery or reading.
+activity, and attention/trends. Each row identifies its `family` and supplied
+`status` (`observed`, `stale`, `degraded`, `unavailable`, or `unknown`), and its
+`delivered` summary of relevant source IDs/metric keys and separate source-
+observation and collection/fetch clocks (`none` if absent). It also records an
+`effect` (`supports`, `contradicts`, `mixed`, or `not_used`), a concise `reason`,
+and a `disposition`:
+`absent_not_available`,
+`delivered_but_unused`, `considered_not_retained_as_material`, or
+`material_input_retained_in_brief`. Delivery does not itself mean considered;
+disposition records whether the delivered input was unused, considered but not
+retained as material, or retained in the coordinator's brief. This is not a
+record of root's later use or decision.
 
-`material_change` is true for a verified new event or substantive update, a
-credible urgent new claim explicitly labeled unconfirmed, a material change in
-usable coverage, or a meaningful observed shift in the allowed numeric market
-context. A newly published article repeating a known fact does not qualify.
+Keep rows compact, not exhaustive inventories: list relevant delivered IDs/keys
+once and summarize the remainder with supplied counts/status; group shared clock
+ranges while keeping source and collection/fetch times distinct. Do not imply
+omitted inputs were considered. Before submission, check once for
+top-level `schema_version: 1` and the existing required top-level
+fields/enums/clocks/URLs, a brief within 400 words, all three scoped findings,
+and exactly seven family rows. Check each row has `family`, `delivered`, status,
+clocks (or `none`), `effect`, `reason`, and `disposition`, plus `relative_to`
+for every `supports`, `contradicts`, or `mixed` effect. Do not add validation commands.
+Allow one corrected submission only after an explicit validation rejection known to have occurred before any write.
+Never retry a successful publication or any attempt whose write outcome is uncertain.
+
+For `supports`, `contradicts`, or `mixed`, add `relative_to` naming the specific
+conditional assessment or activity claim. Those effects describe evidence
+relative to that named claim, not whether an article was verified/read, and do
+not establish causation, direction, probability, predictive value, or weight.
+For example, verified news is not automatically directional support; a breadth
+observation can support only a stated breadth/activity claim, not an unstated
+price forecast. Use `not_used` (with `relative_to` omitted or `unknown`) when no
+clear claim can be named. Use `applicability: unknown` when relevance cannot be
+assessed. Keep rows compact enough to remain within the 400-word brief; do not
+enumerate every metric or force nonzero weights.
+
+`material_change` is true for a financially relevant verified new event or
+substantive update, a credible urgent claim with a plausible major financial
+channel explicitly labeled unconfirmed, a material change in usable coverage,
+or a meaningful observed shift in the allowed numeric market context. A newly
+published article repeating a known fact does not qualify.
 `changes` states concise event keys, exact new facts or market observations,
 classifications (including the unconfirmed status where relevant), and separate
 event/publication/first-seen clocks for news. Keep confirmed facts and claims
@@ -245,8 +324,9 @@ publisher:
 ```
 
 The publisher validates and writes the existing
-`luna_context.json`. Keep `observed_at_utc` and `valid_until_utc` in UTC and no
-more than four hours apart; use `risk_bias` in `risk_on`, `risk_off`, `mixed`,
+`luna_context.json`. Include top-level `schema_version: 1`. Keep
+`observed_at_utc` and `valid_until_utc` in UTC and no more than four hours
+apart; use `risk_bias` in `risk_on`, `risk_off`, `mixed`,
 or `unknown`; `event_scale` in `none`, `minor`, or `major`; `attention` in
 `normal`, `elevated`, or `unknown`; `sources` as direct HTTP(S) URLs; `brief` as
 an object; and `watch_proposals` as a list. Omit `brief.main_review`,
